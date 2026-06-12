@@ -20,6 +20,8 @@ final class WorkoutRouteCell: UICollectionViewCell {
     private var representedID: String?
     private var currentWorkout: TrackedWorkout?
     private var renderedSize: CGSize = .zero
+    private var currentColumnCount: CGFloat = 2
+    private var currentShowsMap = true
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -36,6 +38,8 @@ final class WorkoutRouteCell: UICollectionViewCell {
         representedID = nil
         currentWorkout = nil
         renderedSize = .zero
+        currentColumnCount = 2
+        currentShowsMap = true
         imageView.image = nil
         symbolView.image = nil
         distanceLabel.text = nil
@@ -52,14 +56,25 @@ final class WorkoutRouteCell: UICollectionViewCell {
         renderSnapshot(for: currentWorkout)
     }
 
-    func configure(with workout: TrackedWorkout) {
+    func configure(with workout: TrackedWorkout, columnCount: CGFloat, showsMap: Bool) {
+        let needsSnapshot = representedID != workout.id
+            || currentShowsMap != showsMap
+            || imageView.image == nil
+            || renderedSize != contentView.bounds.size
+
         symbolView.image = UIImage(systemName: workout.symbolName)
         distanceLabel.text = workout.distanceText
         dateLabel.text = workout.dateText
         representedID = workout.id
         currentWorkout = workout
+        currentColumnCount = columnCount
+        currentShowsMap = showsMap
+        updateBackgroundVisibility(showsMap: showsMap)
+        updateOverlayVisibility(for: columnCount)
 
-        renderSnapshot(for: workout)
+        if needsSnapshot {
+            renderSnapshot(for: workout)
+        }
     }
 
     private func renderSnapshot(for workout: TrackedWorkout) {
@@ -75,6 +90,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
         WorkoutRouteSnapshotRenderer.cachedSnapshot(
             for: workout,
             size: targetSize,
+            showsMap: currentShowsMap,
             traitCollection: traitCollection
         ) { [weak self] image in
             DispatchQueue.main.async {
@@ -84,7 +100,38 @@ final class WorkoutRouteCell: UICollectionViewCell {
         }
     }
 
+    private func updateBackgroundVisibility(showsMap: Bool) {
+        contentView.backgroundColor = showsMap ? .secondarySystemBackground : .clear
+        imageView.backgroundColor = showsMap ? .tertiarySystemBackground : .clear
+        backgroundColor = .clear
+    }
+
+    private func updateOverlayVisibility(for columnCount: CGFloat) {
+        let roundedColumnCount = Int(round(columnCount))
+        let shouldShowOverlays = roundedColumnCount <= 3
+        infoContainer.isHidden = !shouldShowOverlays
+        dateContainer.isHidden = !shouldShowOverlays
+
+        guard shouldShowOverlays else {
+            return
+        }
+
+        let scale: CGFloat
+        switch roundedColumnCount {
+        case 1:
+            scale = 1
+        case 2:
+            scale = 0.84
+        default:
+            scale = 0.68
+        }
+
+        infoContainer.transform = CGAffineTransform(scaleX: scale, y: scale)
+        dateContainer.transform = CGAffineTransform(scaleX: scale, y: scale)
+    }
+
     private func configureViews() {
+        backgroundColor = .clear
         contentView.backgroundColor = .secondarySystemBackground
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true

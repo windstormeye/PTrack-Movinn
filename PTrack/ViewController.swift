@@ -14,13 +14,16 @@ class ViewController: UIViewController {
     private var workouts: [TrackedWorkout] = []
     private var collectionView: UICollectionView!
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
-    private var columnCount: CGFloat = 2
-    private var pinchStartColumnCount: CGFloat = 2
+    private let mapVisibilityButton = UIButton(type: .system)
+    private var columnCount: CGFloat = 3
+    private var pinchStartColumnCount: CGFloat = 3
+    private var showsMap = false
     private let itemSpacing: CGFloat = 12
-    private let sectionInset = UIEdgeInsets(top: 44, left: 12, bottom: 16, right: 12)
+    private let sectionInset = UIEdgeInsets(top: 12, left: 12, bottom: 16, right: 12)
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        configureNavigationItem()
         configureCollectionView()
         configureLoadingIndicator()
         store.progressHandler = { message in
@@ -30,9 +33,20 @@ class ViewController: UIViewController {
         loadHealthWorkouts()
     }
 
+    private func configureNavigationItem() {
+        title = "Movinn"
+        navigationItem.largeTitleDisplayMode = .always
+
+        mapVisibilityButton.addTarget(self, action: #selector(handleMapVisibilityButton), for: .touchUpInside)
+        mapVisibilityButton.snp.makeConstraints { make in
+            make.size.equalTo(CGSize(width: 32, height: 32))
+        }
+        updateMapVisibilityButton()
+        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: mapVisibilityButton)
+    }
+
     private func configureCollectionView() {
         view.backgroundColor = .systemBackground
-        title = "运动轨迹"
 
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = itemSpacing
@@ -62,7 +76,7 @@ class ViewController: UIViewController {
         view.addSubview(loadingIndicator)
 
         loadingIndicator.snp.makeConstraints { make in
-            make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(12)
+            make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(10)
             make.leading.equalToSuperview().offset(16)
         }
     }
@@ -151,9 +165,33 @@ class ViewController: UIViewController {
             collectionView.performBatchUpdates {
                 collectionView.collectionViewLayout.invalidateLayout()
             }
+            collectionView.visibleCells.compactMap { $0 as? WorkoutRouteCell }.forEach { cell in
+                if let indexPath = collectionView.indexPath(for: cell) {
+                    cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: showsMap)
+                }
+            }
         default:
             break
         }
+    }
+
+    @objc private func handleMapVisibilityButton() {
+        showsMap.toggle()
+        updateMapVisibilityButton()
+        collectionView.visibleCells.compactMap { $0 as? WorkoutRouteCell }.forEach { cell in
+            if let indexPath = collectionView.indexPath(for: cell) {
+                cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: showsMap)
+            }
+        }
+    }
+
+    private func updateMapVisibilityButton() {
+        let symbolName = showsMap ? "map.fill" : "map"
+        mapVisibilityButton.setImage(UIImage(systemName: symbolName), for: .normal)
+        mapVisibilityButton.tintColor = showsMap
+            ? UIColor(red: 0.88, green: 0.31, blue: 0.08, alpha: 1)
+            : .secondaryLabel
+        mapVisibilityButton.accessibilityLabel = showsMap ? "隐藏地图" : "显示地图"
     }
 }
 
@@ -172,7 +210,7 @@ extension ViewController: UICollectionViewDataSource {
         )
 
         if let cell = cell as? WorkoutRouteCell {
-            cell.configure(with: workouts[indexPath.item])
+            cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: showsMap)
         }
 
         return cell
@@ -191,6 +229,7 @@ extension ViewController: UICollectionViewDataSourcePrefetching {
             WorkoutRouteSnapshotRenderer.cachedSnapshot(
                 for: workouts[indexPath.item],
                 size: itemSize,
+                showsMap: showsMap,
                 traitCollection: traitCollection
             ) { _ in }
         }
