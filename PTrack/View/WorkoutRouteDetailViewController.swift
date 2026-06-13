@@ -11,6 +11,7 @@ import UIKit
 
 final class WorkoutRouteDetailViewController: UIViewController {
     private let workout: TrackedWorkout
+    private let mediaStore = RouteMediaStore()
     private let mapView = MKMapView()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
@@ -25,6 +26,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var isPanelExpanded = false
     private var hasFittedRoute = false
     private var panStartHeight: CGFloat = 0
+    private var routeMediaItems: [RouteMediaItem] = []
 
     private let collapsedPanelHeight: CGFloat = 82
     private let expandedPanelHeight: CGFloat = 194
@@ -47,6 +49,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         configureNavigationBackgroundView()
         configurePanelView()
         drawRoute()
+        loadRouteMedia()
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
@@ -266,6 +269,25 @@ final class WorkoutRouteDetailViewController: UIViewController {
         )
     }
 
+    private func loadRouteMedia() {
+        mediaStore.loadMedia(for: workout) { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            switch result {
+            case .success(let mediaItems):
+                Task { @MainActor in
+                    self.routeMediaItems = mediaItems
+                    let annotations = mediaItems.map(RouteMediaAnnotation.init)
+                    self.mapView.addAnnotations(annotations)
+                }
+            case .failure(let error):
+                print("PTrack Photos: failed to load route media: \(error)")
+            }
+        }
+    }
+
     @objc private func handlePanelPan(_ recognizer: UIPanGestureRecognizer) {
         switch recognizer.state {
         case .began:
@@ -335,6 +357,15 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
     }
 
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        if let mediaAnnotation = annotation as? RouteMediaAnnotation {
+            let identifier = RouteMediaAnnotationView.reuseIdentifier
+            let annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? RouteMediaAnnotationView
+                ?? RouteMediaAnnotationView(annotation: mediaAnnotation, reuseIdentifier: identifier)
+            annotationView.annotation = mediaAnnotation
+            annotationView.configure(with: mediaAnnotation.mediaItem)
+            return annotationView
+        }
+
         guard let endpointAnnotation = annotation as? RouteEndpointAnnotation else {
             return nil
         }
@@ -345,6 +376,17 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
         annotationView.annotation = endpointAnnotation
         annotationView.configure(kind: endpointAnnotation.kind)
         return annotationView
+    }
+
+    func mapView(_ mapView: MKMapView, didSelect annotation: MKAnnotation) {
+        mapView.deselectAnnotation(annotation, animated: true)
+        guard let mediaAnnotation = annotation as? RouteMediaAnnotation,
+              let index = routeMediaItems.firstIndex(where: { $0.id == mediaAnnotation.mediaItem.id }) else {
+            return
+        }
+
+        let browser = RouteMediaBrowserViewController(mediaItems: routeMediaItems, initialIndex: index)
+        navigationController?.pushViewController(browser, animated: true)
     }
 }
 
