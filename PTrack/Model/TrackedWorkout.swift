@@ -62,16 +62,7 @@ struct TrackedWorkout: Codable {
     }
 
     var routeColor: UIColor {
-        switch activityType {
-        case .cycling:
-            return .systemRed
-        case .hiking, .walking:
-            return .systemGreen
-        case .running:
-            return .systemYellow
-        default:
-            return .systemBlue
-        }
+        .black
     }
 
     var distanceText: String {

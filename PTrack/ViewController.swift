@@ -13,6 +13,7 @@ class ViewController: UIViewController {
     private let cacheStore = WorkoutCacheStore()
     private var workouts: [TrackedWorkout] = []
     private var collectionView: UICollectionView!
+    private let gridLayout = WorkoutGridLayout()
     private let headerView = UIView()
     private let titleLabel = UILabel()
     private let totalDistanceLabel = UILabel()
@@ -23,6 +24,20 @@ class ViewController: UIViewController {
     private let lineSpacing: CGFloat = 2
     private let headerBottomPadding: CGFloat = 8
     private let sectionInset = UIEdgeInsets(top: 0, left: 12, bottom: 16, right: 12)
+    private var pinchAnchorIndexPath: IndexPath?
+    private var pinchAnchorUnitPoint = CGPoint(x: 0.5, y: 0.5)
+    private let pinchResponse: CGFloat = 0.86
+    private let pinchUpdateThreshold: CGFloat = 0.006
+    private var columnSnapDisplayLink: CADisplayLink?
+    private var columnSnapStartTime: CFTimeInterval = 0
+    private var columnSnapStartCount: CGFloat = 3
+    private var columnSnapTargetCount: CGFloat = 3
+    private var columnSnapVisibleAnchorPoint = CGPoint.zero
+    private let columnSnapDuration: CFTimeInterval = 0.28
+
+    deinit {
+        columnSnapDisplayLink?.invalidate()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -64,12 +79,12 @@ class ViewController: UIViewController {
     private func configureCollectionView() {
         view.backgroundColor = .systemBackground
 
-        let layout = UICollectionViewFlowLayout()
-        layout.minimumInteritemSpacing = itemSpacing
-        layout.minimumLineSpacing = lineSpacing
-        layout.sectionInset = sectionInset
+        gridLayout.columns = columnCount
+        gridLayout.itemSpacing = itemSpacing
+        gridLayout.lineSpacing = lineSpacing
+        gridLayout.sectionInset = sectionInset
 
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: gridLayout)
         collectionView.backgroundColor = .systemBackground
         collectionView.dataSource = self
         collectionView.delegate = self
@@ -242,23 +257,171 @@ class ViewController: UIViewController {
     @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
         switch recognizer.state {
         case .began:
+            stopColumnSnap()
             pinchStartColumnCount = columnCount
+            collectionView.isScrollEnabled = false
+            capturePinchAnchor(at: recognizer.location(in: collectionView))
         case .changed:
-            let scaledColumns = pinchStartColumnCount / recognizer.scale
-            let newColumnCount = min(max(round(scaledColumns), 2), 6)
-            guard newColumnCount != columnCount else { return }
-            columnCount = newColumnCount
-            collectionView.performBatchUpdates {
-                collectionView.collectionViewLayout.invalidateLayout()
+            let scaledColumns = pinchStartColumnCount / pow(recognizer.scale, pinchResponse)
+            let newColumnCount = min(max(scaledColumns, 2), 6)
+            guard abs(newColumnCount - columnCount) > pinchUpdateThreshold else { return }
+            updateColumnCount(newColumnCount, anchoredAt: recognizer.location(in: collectionView))
+        case .ended, .cancelled, .failed:
+            let snappedColumnCount = min(max(round(columnCount), 2), 6)
+            guard abs(snappedColumnCount - columnCount) > pinchUpdateThreshold else {
+                syncColumnCountWithoutAnchor(snappedColumnCount)
+                finishColumnSnap()
+                return
             }
-            collectionView.visibleCells.compactMap { $0 as? WorkoutRouteCell }.forEach { cell in
-                if let indexPath = collectionView.indexPath(for: cell) {
-                    cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: false)
-                }
-            }
+            animateColumnSnap(to: snappedColumnCount, anchoredAt: recognizer.location(in: collectionView))
         default:
             break
         }
+    }
+
+    private func capturePinchAnchor(at location: CGPoint) {
+        collectionView.layoutIfNeeded()
+        guard let indexPath = collectionView.indexPathForItem(at: location) ?? nearestVisibleIndexPath(to: location),
+              let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(at: indexPath) else {
+            pinchAnchorIndexPath = nil
+            pinchAnchorUnitPoint = CGPoint(x: 0.5, y: 0.5)
+            return
+        }
+
+        let frame = attributes.frame
+        pinchAnchorIndexPath = indexPath
+        pinchAnchorUnitPoint = CGPoint(
+            x: min(max((location.x - frame.minX) / frame.width, 0), 1),
+            y: min(max((location.y - frame.minY) / frame.height, 0), 1)
+        )
+    }
+
+    private func nearestVisibleIndexPath(to location: CGPoint) -> IndexPath? {
+        collectionView.indexPathsForVisibleItems.min { lhs, rhs in
+            let lhsDistance = distance(from: location, toCenterOfItemAt: lhs)
+            let rhsDistance = distance(from: location, toCenterOfItemAt: rhs)
+            return lhsDistance < rhsDistance
+        }
+    }
+
+    private func distance(from location: CGPoint, toCenterOfItemAt indexPath: IndexPath) -> CGFloat {
+        guard let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(at: indexPath) else {
+            return .greatestFiniteMagnitude
+        }
+
+        let dx = location.x - attributes.center.x
+        let dy = location.y - attributes.center.y
+        return dx * dx + dy * dy
+    }
+
+    private func updateColumnCount(_ newColumnCount: CGFloat, anchoredAt location: CGPoint) {
+        let visibleAnchorPoint = CGPoint(
+            x: location.x - collectionView.contentOffset.x,
+            y: location.y - collectionView.contentOffset.y
+        )
+        updateColumnCount(newColumnCount, preservingVisibleAnchor: visibleAnchorPoint)
+    }
+
+    private func updateColumnCount(_ newColumnCount: CGFloat, preservingVisibleAnchor visibleAnchorPoint: CGPoint) {
+        columnCount = newColumnCount
+
+        UIView.performWithoutAnimation {
+            self.gridLayout.columns = newColumnCount
+            self.collectionView.layoutIfNeeded()
+            self.restorePinchAnchor(toVisiblePoint: visibleAnchorPoint)
+        }
+    }
+
+    private func animateColumnSnap(to targetColumnCount: CGFloat, anchoredAt location: CGPoint) {
+        let visibleAnchorPoint = CGPoint(
+            x: location.x - collectionView.contentOffset.x,
+            y: location.y - collectionView.contentOffset.y
+        )
+
+        guard abs(targetColumnCount - columnCount) > 0.001 else {
+            syncColumnCountWithoutAnchor(targetColumnCount)
+            finishColumnSnap()
+            return
+        }
+
+        stopColumnSnap()
+        columnSnapStartTime = CACurrentMediaTime()
+        columnSnapStartCount = columnCount
+        columnSnapTargetCount = targetColumnCount
+        columnSnapVisibleAnchorPoint = visibleAnchorPoint
+
+        let displayLink = CADisplayLink(target: self, selector: #selector(handleColumnSnapFrame(_:)))
+        displayLink.add(to: .main, forMode: .common)
+        columnSnapDisplayLink = displayLink
+    }
+
+    private func syncColumnCountWithoutAnchor(_ newColumnCount: CGFloat) {
+        columnCount = newColumnCount
+        UIView.performWithoutAnimation {
+            self.gridLayout.columns = newColumnCount
+            self.collectionView.layoutIfNeeded()
+        }
+    }
+
+    @objc private func handleColumnSnapFrame(_ displayLink: CADisplayLink) {
+        let elapsed = displayLink.timestamp - columnSnapStartTime
+        let progress = min(max(elapsed / columnSnapDuration, 0), 1)
+        let easedProgress = easeOutCubic(CGFloat(progress))
+        let currentColumnCount = columnSnapStartCount + (columnSnapTargetCount - columnSnapStartCount) * easedProgress
+
+        updateColumnCount(currentColumnCount, preservingVisibleAnchor: columnSnapVisibleAnchorPoint)
+
+        if progress >= 1 {
+            updateColumnCount(columnSnapTargetCount, preservingVisibleAnchor: columnSnapVisibleAnchorPoint)
+            finishColumnSnap()
+        }
+    }
+
+    private func finishColumnSnap() {
+        stopColumnSnap()
+        pinchAnchorIndexPath = nil
+        collectionView.isScrollEnabled = true
+    }
+
+    private func stopColumnSnap() {
+        columnSnapDisplayLink?.invalidate()
+        columnSnapDisplayLink = nil
+    }
+
+    private func easeOutCubic(_ progress: CGFloat) -> CGFloat {
+        let inverse = 1 - min(max(progress, 0), 1)
+        return 1 - inverse * inverse * inverse
+    }
+
+    private func restorePinchAnchor(toVisiblePoint visiblePoint: CGPoint) {
+        guard let pinchAnchorIndexPath,
+              pinchAnchorIndexPath.item < workouts.count,
+              let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(at: pinchAnchorIndexPath) else {
+            return
+        }
+
+        let frame = attributes.frame
+        let anchorContentPoint = CGPoint(
+            x: frame.minX + frame.width * pinchAnchorUnitPoint.x,
+            y: frame.minY + frame.height * pinchAnchorUnitPoint.y
+        )
+        let proposedOffset = CGPoint(
+            x: anchorContentPoint.x - visiblePoint.x,
+            y: anchorContentPoint.y - visiblePoint.y
+        )
+        collectionView.contentOffset = clampedContentOffset(proposedOffset)
+    }
+
+    private func clampedContentOffset(_ offset: CGPoint) -> CGPoint {
+        let minimumX = -collectionView.contentInset.left
+        let minimumY = -collectionView.contentInset.top
+        let maximumX = max(minimumX, collectionView.contentSize.width - collectionView.bounds.width + collectionView.contentInset.right)
+        let maximumY = max(minimumY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)
+
+        return CGPoint(
+            x: min(max(offset.x, minimumX), maximumX),
+            y: min(max(offset.y, minimumY), maximumY)
+        )
     }
 }
 
@@ -286,63 +449,11 @@ extension ViewController: UICollectionViewDataSource {
 
 extension ViewController: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-        let itemSize = self.collectionView(
-            collectionView,
-            layout: collectionView.collectionViewLayout,
-            sizeForItemAt: IndexPath(item: 0, section: 0)
-        )
-
-        for indexPath in indexPaths where indexPath.item < workouts.count {
-            WorkoutRouteSnapshotRenderer.cachedSnapshot(
-                for: workouts[indexPath.item],
-                size: itemSize,
-                showsMap: false,
-                traitCollection: traitCollection
-            ) { _ in }
-        }
+        // Home cells render route-only thumbnails as vector layers, so there is nothing to prefetch.
     }
 }
 
-extension ViewController: UICollectionViewDelegateFlowLayout {
-    func collectionView(
-        _ collectionView: UICollectionView,
-        layout collectionViewLayout: UICollectionViewLayout,
-        sizeForItemAt indexPath: IndexPath
-    ) -> CGSize {
-        let columns = min(max(columnCount, 2), 6)
-        let availableWidth = collectionView.bounds.width - sectionInset.left - sectionInset.right
-        let totalSpacing = itemSpacing * (columns - 1)
-        let width = floor((availableWidth - totalSpacing) / columns)
-        let height = max(72, floor(width * 0.74))
-        return CGSize(width: width, height: height)
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        layout collectionViewLayout: UICollectionViewLayout,
-        insetForSectionAt section: Int
-    ) -> UIEdgeInsets {
-        sectionInset
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        layout collectionViewLayout: UICollectionViewLayout,
-        minimumInteritemSpacingForSectionAt section: Int
-    ) -> CGFloat {
-        itemSpacing
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        layout collectionViewLayout: UICollectionViewLayout,
-        minimumLineSpacingForSectionAt section: Int
-    ) -> CGFloat {
-        lineSpacing
-    }
-}
-
-extension ViewController {
+extension ViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard indexPath.item < workouts.count else {
             return

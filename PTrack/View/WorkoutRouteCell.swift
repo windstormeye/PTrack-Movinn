@@ -12,6 +12,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
     static let reuseIdentifier = "WorkoutRouteCell"
 
     private let imageView = UIImageView()
+    private let pathView = WorkoutRoutePathView()
     private var representedID: String?
     private var currentWorkout: TrackedWorkout?
     private var renderedSize: CGSize = .zero
@@ -39,7 +40,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
     override func layoutSubviews() {
         super.layoutSubviews()
 
-        guard let currentWorkout, renderedSize != contentView.bounds.size else {
+        guard currentShowsMap, let currentWorkout, renderedSize != contentView.bounds.size else {
             return
         }
 
@@ -61,6 +62,13 @@ final class WorkoutRouteCell: UICollectionViewCell {
         currentWorkout = workout
         currentShowsMap = showsMap
         updateBackgroundVisibility(showsMap: showsMap)
+
+        guard showsMap else {
+            imageView.image = nil
+            renderedSize = .zero
+            pathView.configure(with: workout)
+            return
+        }
 
         if needsSnapshot {
             renderSnapshot(for: workout)
@@ -92,6 +100,8 @@ final class WorkoutRouteCell: UICollectionViewCell {
     private func updateBackgroundVisibility(showsMap: Bool) {
         contentView.backgroundColor = showsMap ? .secondarySystemBackground : .clear
         imageView.backgroundColor = showsMap ? .tertiarySystemBackground : .clear
+        imageView.isHidden = !showsMap
+        pathView.isHidden = showsMap
         backgroundColor = .clear
     }
 
@@ -103,10 +113,16 @@ final class WorkoutRouteCell: UICollectionViewCell {
 
         imageView.contentMode = .scaleAspectFill
         imageView.backgroundColor = .tertiarySystemBackground
+        pathView.isHidden = true
 
         contentView.addSubview(imageView)
+        contentView.addSubview(pathView)
 
         imageView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        pathView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
     }
