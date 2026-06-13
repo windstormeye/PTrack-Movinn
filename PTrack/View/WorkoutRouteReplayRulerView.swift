@@ -70,7 +70,7 @@ final class WorkoutRouteReplayRulerView: UIControl {
 
         profileView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
-            make.height.equalTo(58)
+            make.height.equalTo(70)
         }
 
         indicatorView.snp.makeConstraints { make in
@@ -120,6 +120,7 @@ private final class ElevationProfileView: UIView {
     private let fillGradientLayer = CAGradientLayer()
     private let fillLayer = CAShapeLayer()
     private let curveLayer = CAShapeLayer()
+    private let peakLabel = UILabel()
     private var samples: [RouteElevationSample] = []
     private var renderedSize = CGSize.zero
     private let horizontalPadding: CGFloat = 2
@@ -172,6 +173,12 @@ private final class ElevationProfileView: UIView {
 
         layer.addSublayer(fillGradientLayer)
         layer.addSublayer(curveLayer)
+
+        peakLabel.text = "⛰️"
+        peakLabel.font = .systemFont(ofSize: 15)
+        peakLabel.textAlignment = .center
+        peakLabel.isHidden = true
+        addSubview(peakLabel)
     }
 
     private func updatePathIfNeeded() {
@@ -186,6 +193,7 @@ private final class ElevationProfileView: UIView {
             fillLayer.path = nil
             fillGradientLayer.frame = bounds
             curveLayer.path = nil
+            peakLabel.isHidden = true
             CATransaction.commit()
             return
         }
@@ -205,13 +213,15 @@ private final class ElevationProfileView: UIView {
         fillLayer.path = fillPath
         curveLayer.path = curvePath
         CATransaction.commit()
+
+        updatePeakLabel(with: points)
     }
 
     private func normalizedPoints(
         for samples: [RouteElevationSample],
         in size: CGSize
     ) -> [CGPoint] {
-        let topPadding: CGFloat = 7
+        let topPadding: CGFloat = 30
         let bottomPadding: CGFloat = 9
         let drawableWidth = max(size.width - horizontalPadding * 2, 1)
         let usableHeight = max(size.height - topPadding - bottomPadding, 1)
@@ -256,5 +266,29 @@ private final class ElevationProfileView: UIView {
         }
 
         return path
+    }
+
+    private func updatePeakLabel(with points: [CGPoint]) {
+        guard points.count == samples.count,
+              let peakIndex = samples.indices.max(by: { samples[$0].altitudeMeters < samples[$1].altitudeMeters }) else {
+            peakLabel.isHidden = true
+            return
+        }
+
+        let peakPoint = points[peakIndex]
+        let labelSize = CGSize(width: 24, height: 24)
+        let centerX = min(max(peakPoint.x, labelSize.width / 2), bounds.width - labelSize.width / 2)
+        let centerY = min(
+            max(peakPoint.y - labelSize.height / 2 - 6, labelSize.height / 2),
+            bounds.height - labelSize.height / 2
+        )
+
+        peakLabel.isHidden = false
+        peakLabel.frame = CGRect(
+            x: centerX - labelSize.width / 2,
+            y: centerY - labelSize.height / 2,
+            width: labelSize.width,
+            height: labelSize.height
+        )
     }
 }

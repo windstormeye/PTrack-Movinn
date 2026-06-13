@@ -35,7 +35,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayAnnotation: RouteReplayAnnotation?
 
     private let collapsedPanelHeight: CGFloat = 82
-    private let expandedPanelHeight: CGFloat = 300
+    private let expandedPanelHeight: CGFloat = 316
     private let navigationBackgroundHeight: CGFloat = 124
     private let maximumElevationSampleCount = 120
 
@@ -223,7 +223,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         replayRulerView.snp.makeConstraints { make in
-            make.height.equalTo(82)
+            make.height.equalTo(98)
         }
     }
 
@@ -378,17 +378,27 @@ final class WorkoutRouteDetailViewController: UIViewController {
         if let replayAnnotation {
             replayAnnotation.coordinate = replayState.coordinate
             replayAnnotation.statusText = statusText
+            replayAnnotation.isFacingLeft = replayState.isFacingLeft
             if let annotationView = mapView.view(for: replayAnnotation) as? RouteReplayAnnotationView {
-                annotationView.configure(emoji: replayAnnotation.emoji, statusText: statusText)
+                annotationView.configure(
+                    emoji: replayAnnotation.emoji,
+                    statusText: statusText,
+                    isFacingLeft: replayState.isFacingLeft
+                )
+                annotationView.superview?.bringSubviewToFront(annotationView)
             }
         } else {
             let annotation = RouteReplayAnnotation(
                 coordinate: replayState.coordinate,
                 emoji: replayEmoji,
-                statusText: statusText
+                statusText: statusText,
+                isFacingLeft: replayState.isFacingLeft
             )
             replayAnnotation = annotation
             mapView.addAnnotation(annotation)
+            if let annotationView = mapView.view(for: annotation) {
+                annotationView.superview?.bringSubviewToFront(annotationView)
+            }
         }
     }
 
@@ -440,7 +450,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return ReplayState(
                 coordinate: coordinate,
                 distanceMeters: 0,
-                altitudeMeters: replayAltitude(at: 0)
+                altitudeMeters: replayAltitude(at: 0),
+                isFacingLeft: replayFacingLeft(at: 0)
             )
         }
 
@@ -449,7 +460,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return ReplayState(
             coordinate: replayCoordinates[index],
             distanceMeters: replayDistances[index],
-            altitudeMeters: replayAltitude(at: index)
+            altitudeMeters: replayAltitude(at: index),
+            isFacingLeft: replayFacingLeft(at: index)
         )
     }
 
@@ -490,6 +502,23 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return nil
         }
         return replayAltitudes[index]
+    }
+
+    private func replayFacingLeft(at index: Int) -> Bool {
+        guard replayCoordinates.count > 1 else {
+            return true
+        }
+
+        let previousIndex = max(index - 1, 0)
+        let nextIndex = min(index + 1, replayCoordinates.count - 1)
+        guard previousIndex != nextIndex else {
+            return true
+        }
+
+        let previousCoordinate = replayCoordinates[previousIndex]
+        let nextCoordinate = replayCoordinates[nextIndex]
+        let longitudeDelta = nextCoordinate.longitude - previousCoordinate.longitude
+        return longitudeDelta < 0
     }
 
     private func elevationSamples() -> [RouteElevationSample] {
@@ -565,6 +594,7 @@ private struct ReplayState {
     let coordinate: CLLocationCoordinate2D
     let distanceMeters: CLLocationDistance
     let altitudeMeters: Double?
+    let isFacingLeft: Bool
 }
 
 extension WorkoutRouteDetailViewController: MKMapViewDelegate {
@@ -587,7 +617,12 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
             let annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? RouteReplayAnnotationView
                 ?? RouteReplayAnnotationView(annotation: replayAnnotation, reuseIdentifier: identifier)
             annotationView.annotation = replayAnnotation
-            annotationView.configure(emoji: replayAnnotation.emoji, statusText: replayAnnotation.statusText)
+            annotationView.configure(
+                emoji: replayAnnotation.emoji,
+                statusText: replayAnnotation.statusText,
+                isFacingLeft: replayAnnotation.isFacingLeft
+            )
+            annotationView.superview?.bringSubviewToFront(annotationView)
             return annotationView
         }
 
@@ -610,6 +645,12 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
         annotationView.annotation = endpointAnnotation
         annotationView.configure(kind: endpointAnnotation.kind)
         return annotationView
+    }
+
+    func mapView(_ mapView: MKMapView, didAdd views: [MKAnnotationView]) {
+        views
+            .filter { $0.annotation is RouteReplayAnnotation }
+            .forEach { $0.superview?.bringSubviewToFront($0) }
     }
 
     func mapView(_ mapView: MKMapView, didSelect annotation: MKAnnotation) {
@@ -679,11 +720,18 @@ private final class RouteReplayAnnotation: NSObject, MKAnnotation {
     @objc dynamic var coordinate: CLLocationCoordinate2D
     let emoji: String
     var statusText: String
+    var isFacingLeft: Bool
 
-    init(coordinate: CLLocationCoordinate2D, emoji: String, statusText: String) {
+    init(
+        coordinate: CLLocationCoordinate2D,
+        emoji: String,
+        statusText: String,
+        isFacingLeft: Bool
+    ) {
         self.coordinate = coordinate
         self.emoji = emoji
         self.statusText = statusText
+        self.isFacingLeft = isFacingLeft
         super.init()
     }
 }
@@ -705,9 +753,10 @@ private final class RouteReplayAnnotationView: MKAnnotationView {
         configureBaseView()
     }
 
-    func configure(emoji: String, statusText: String) {
+    func configure(emoji: String, statusText: String, isFacingLeft: Bool) {
         emojiLabel.text = emoji
         statusLabel.text = statusText
+        emojiLabel.transform = isFacingLeft ? .identity : CGAffineTransform(scaleX: -1, y: 1)
     }
 
     private func configureBaseView() {
@@ -715,6 +764,7 @@ private final class RouteReplayAnnotationView: MKAnnotationView {
         centerOffset = CGPoint(x: 0, y: -18)
         collisionMode = .circle
         displayPriority = .required
+        zPriority = .max
         backgroundColor = .clear
         clipsToBounds = false
 
