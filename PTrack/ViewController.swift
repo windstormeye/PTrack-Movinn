@@ -18,6 +18,7 @@ class ViewController: UIViewController {
     private let titleLabel = UILabel()
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
+    private let heatmapButton = UIButton(type: .system)
     private var columnCount: CGFloat = 3
     private var pinchStartColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
@@ -102,7 +103,7 @@ class ViewController: UIViewController {
     }
 
     private func configureHeaderView() {
-        headerView.isUserInteractionEnabled = false
+        headerView.isUserInteractionEnabled = true
         headerView.backgroundColor = .white
 
         titleLabel.text = "Movinn"
@@ -117,10 +118,21 @@ class ViewController: UIViewController {
         totalDistanceLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         totalDistanceLabel.lineBreakMode = .byTruncatingTail
 
+        var buttonConfiguration = UIButton.Configuration.plain()
+        buttonConfiguration.image = UIImage(
+            systemName: "map",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        )
+        buttonConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
+        heatmapButton.configuration = buttonConfiguration
+        heatmapButton.tintColor = .label
+        heatmapButton.addTarget(self, action: #selector(showHeatmap), for: .touchUpInside)
+
         view.addSubview(headerView)
         headerView.addSubview(titleLabel)
         headerView.addSubview(totalDistanceLabel)
         headerView.addSubview(loadingIndicator)
+        headerView.addSubview(heatmapButton)
 
         headerView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
@@ -141,7 +153,13 @@ class ViewController: UIViewController {
         loadingIndicator.snp.makeConstraints { make in
             make.leading.equalTo(totalDistanceLabel.snp.trailing).offset(8)
             make.centerY.equalTo(totalDistanceLabel)
-            make.trailing.lessThanOrEqualToSuperview().offset(-16)
+            make.trailing.lessThanOrEqualTo(heatmapButton.snp.leading).offset(-10)
+        }
+
+        heatmapButton.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().inset(16)
+            make.centerY.equalTo(titleLabel)
+            make.size.equalTo(36)
         }
 
         updateTotalDistanceText()
@@ -252,6 +270,11 @@ class ViewController: UIViewController {
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")
         }
+    }
+
+    @objc private func showHeatmap() {
+        let heatmapViewController = WorkoutRouteHeatmapViewController(workouts: workouts)
+        navigationController?.pushViewController(heatmapViewController, animated: true)
     }
 
     @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
