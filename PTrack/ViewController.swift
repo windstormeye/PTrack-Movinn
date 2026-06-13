@@ -13,18 +13,22 @@ class ViewController: UIViewController {
     private let cacheStore = WorkoutCacheStore()
     private var workouts: [TrackedWorkout] = []
     private var collectionView: UICollectionView!
+    private let headerView = UIView()
+    private let titleLabel = UILabel()
+    private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
-    private let mapVisibilityButton = UIButton(type: .system)
     private var columnCount: CGFloat = 3
     private var pinchStartColumnCount: CGFloat = 3
-    private var showsMap = false
     private let itemSpacing: CGFloat = 12
-    private let sectionInset = UIEdgeInsets(top: 12, left: 12, bottom: 16, right: 12)
+    private let lineSpacing: CGFloat = 2
+    private let headerBottomPadding: CGFloat = 8
+    private let sectionInset = UIEdgeInsets(top: 0, left: 12, bottom: 16, right: 12)
 
     override func viewDidLoad() {
         super.viewDidLoad()
         configureNavigationItem()
         configureCollectionView()
+        configureHeaderView()
         configureLoadingIndicator()
         store.progressHandler = { message in
             print("PTrack HealthKit: \(message)")
@@ -33,16 +37,28 @@ class ViewController: UIViewController {
         loadHealthWorkouts()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateFullScreenInsets()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        navigationController?.setNavigationBarHidden(true, animated: animated)
+        updateFullScreenInsets(force: true)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        updateFullScreenInsets(force: true)
+        DispatchQueue.main.async { [weak self] in
+            self?.updateFullScreenInsets(force: true)
+        }
+    }
+
     private func configureNavigationItem() {
         title = "Movinn"
-        navigationItem.largeTitleDisplayMode = .always
-
-        mapVisibilityButton.addTarget(self, action: #selector(handleMapVisibilityButton), for: .touchUpInside)
-        mapVisibilityButton.snp.makeConstraints { make in
-            make.size.equalTo(CGSize(width: 32, height: 32))
-        }
-        updateMapVisibilityButton()
-        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: mapVisibilityButton)
+        navigationItem.largeTitleDisplayMode = .never
     }
 
     private func configureCollectionView() {
@@ -50,7 +66,7 @@ class ViewController: UIViewController {
 
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = itemSpacing
-        layout.minimumLineSpacing = itemSpacing
+        layout.minimumLineSpacing = lineSpacing
         layout.sectionInset = sectionInset
 
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
@@ -59,30 +75,99 @@ class ViewController: UIViewController {
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
         collectionView.alwaysBounceVertical = true
+        collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.register(WorkoutRouteCell.self, forCellWithReuseIdentifier: WorkoutRouteCell.reuseIdentifier)
         collectionView.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:))))
 
         view.addSubview(collectionView)
 
         collectionView.snp.makeConstraints { make in
-            make.top.equalTo(view.safeAreaLayoutGuide.snp.top)
-            make.leading.trailing.bottom.equalToSuperview()
+            make.edges.equalToSuperview()
         }
+    }
+
+    private func configureHeaderView() {
+        headerView.isUserInteractionEnabled = false
+        headerView.backgroundColor = .white
+
+        titleLabel.text = "Movinn"
+        titleLabel.textColor = .label
+        titleLabel.font = .systemFont(ofSize: 40, weight: .bold)
+        titleLabel.adjustsFontForContentSizeCategory = true
+
+        totalDistanceLabel.textColor = .secondaryLabel
+        totalDistanceLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        totalDistanceLabel.adjustsFontForContentSizeCategory = true
+        totalDistanceLabel.setContentHuggingPriority(.required, for: .horizontal)
+        totalDistanceLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        totalDistanceLabel.lineBreakMode = .byTruncatingTail
+
+        view.addSubview(headerView)
+        headerView.addSubview(titleLabel)
+        headerView.addSubview(totalDistanceLabel)
+        headerView.addSubview(loadingIndicator)
+
+        headerView.snp.makeConstraints { make in
+            make.top.leading.trailing.equalToSuperview()
+            make.height.equalTo(122)
+        }
+
+        titleLabel.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(16)
+            make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(10)
+        }
+
+        totalDistanceLabel.snp.makeConstraints { make in
+            make.leading.equalTo(titleLabel.snp.trailing).offset(10)
+            make.trailing.lessThanOrEqualTo(loadingIndicator.snp.leading).offset(-8)
+            make.lastBaseline.equalTo(titleLabel.snp.lastBaseline).offset(-3)
+        }
+
+        loadingIndicator.snp.makeConstraints { make in
+            make.leading.equalTo(totalDistanceLabel.snp.trailing).offset(8)
+            make.centerY.equalTo(totalDistanceLabel)
+            make.trailing.lessThanOrEqualToSuperview().offset(-16)
+        }
+
+        updateTotalDistanceText()
     }
 
     private func configureLoadingIndicator() {
         loadingIndicator.hidesWhenStopped = true
+    }
 
-        view.addSubview(loadingIndicator)
-
-        loadingIndicator.snp.makeConstraints { make in
-            make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(10)
-            make.leading.equalToSuperview().offset(16)
+    private func updateFullScreenInsets(force: Bool = false) {
+        guard let collectionView else {
+            return
         }
+
+        view.layoutIfNeeded()
+        let headerMaxY = headerView.convert(headerView.bounds, to: view).maxY
+
+        let contentInset = UIEdgeInsets(top: headerMaxY + headerBottomPadding, left: 0, bottom: 0, right: 0)
+        guard force || collectionView.contentInset != contentInset else {
+            return
+        }
+
+        let oldTopInset = collectionView.contentInset.top
+        let oldContentOffsetY = collectionView.contentOffset.y
+        let wasAtTop = oldContentOffsetY <= -oldTopInset + 2
+
+        collectionView.contentInset = contentInset
+        collectionView.scrollIndicatorInsets = contentInset
+        if wasAtTop {
+            collectionView.contentOffset.y = -contentInset.top
+        }
+    }
+
+    private func updateTotalDistanceText() {
+        let totalKilometers = workouts.reduce(0) { $0 + $1.distanceMeters } / 1000
+        totalDistanceLabel.text = "总距离：\(Int(totalKilometers.rounded()))KM"
     }
 
     private func loadCachedWorkouts() {
         workouts = cacheStore.load()
+        updateTotalDistanceText()
         collectionView.reloadData()
     }
 
@@ -132,6 +217,7 @@ class ViewController: UIViewController {
         workouts.append(workout)
         workouts.sort { $0.startDate > $1.startDate }
         cacheStore.save(workouts)
+        updateTotalDistanceText()
 
         guard let index = workouts.firstIndex(where: { $0.id == workout.id }) else {
             collectionView.reloadData()
@@ -159,7 +245,7 @@ class ViewController: UIViewController {
             pinchStartColumnCount = columnCount
         case .changed:
             let scaledColumns = pinchStartColumnCount / recognizer.scale
-            let newColumnCount = min(max(round(scaledColumns), 1), 6)
+            let newColumnCount = min(max(round(scaledColumns), 2), 6)
             guard newColumnCount != columnCount else { return }
             columnCount = newColumnCount
             collectionView.performBatchUpdates {
@@ -167,31 +253,12 @@ class ViewController: UIViewController {
             }
             collectionView.visibleCells.compactMap { $0 as? WorkoutRouteCell }.forEach { cell in
                 if let indexPath = collectionView.indexPath(for: cell) {
-                    cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: showsMap)
+                    cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: false)
                 }
             }
         default:
             break
         }
-    }
-
-    @objc private func handleMapVisibilityButton() {
-        showsMap.toggle()
-        updateMapVisibilityButton()
-        collectionView.visibleCells.compactMap { $0 as? WorkoutRouteCell }.forEach { cell in
-            if let indexPath = collectionView.indexPath(for: cell) {
-                cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: showsMap)
-            }
-        }
-    }
-
-    private func updateMapVisibilityButton() {
-        let symbolName = showsMap ? "map.fill" : "map"
-        mapVisibilityButton.setImage(UIImage(systemName: symbolName), for: .normal)
-        mapVisibilityButton.tintColor = showsMap
-            ? UIColor(red: 0.88, green: 0.31, blue: 0.08, alpha: 1)
-            : .secondaryLabel
-        mapVisibilityButton.accessibilityLabel = showsMap ? "隐藏地图" : "显示地图"
     }
 }
 
@@ -210,7 +277,7 @@ extension ViewController: UICollectionViewDataSource {
         )
 
         if let cell = cell as? WorkoutRouteCell {
-            cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: showsMap)
+            cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: false)
         }
 
         return cell
@@ -229,7 +296,7 @@ extension ViewController: UICollectionViewDataSourcePrefetching {
             WorkoutRouteSnapshotRenderer.cachedSnapshot(
                 for: workouts[indexPath.item],
                 size: itemSize,
-                showsMap: showsMap,
+                showsMap: false,
                 traitCollection: traitCollection
             ) { _ in }
         }
@@ -242,11 +309,11 @@ extension ViewController: UICollectionViewDelegateFlowLayout {
         layout collectionViewLayout: UICollectionViewLayout,
         sizeForItemAt indexPath: IndexPath
     ) -> CGSize {
-        let columns = max(columnCount, 1)
+        let columns = min(max(columnCount, 2), 6)
         let availableWidth = collectionView.bounds.width - sectionInset.left - sectionInset.right
         let totalSpacing = itemSpacing * (columns - 1)
         let width = floor((availableWidth - totalSpacing) / columns)
-        let height = max(88, floor(width * 0.92))
+        let height = max(72, floor(width * 0.74))
         return CGSize(width: width, height: height)
     }
 
@@ -271,6 +338,17 @@ extension ViewController: UICollectionViewDelegateFlowLayout {
         layout collectionViewLayout: UICollectionViewLayout,
         minimumLineSpacingForSectionAt section: Int
     ) -> CGFloat {
-        itemSpacing
+        lineSpacing
+    }
+}
+
+extension ViewController {
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard indexPath.item < workouts.count else {
+            return
+        }
+
+        let detailViewController = WorkoutRouteDetailViewController(workout: workouts[indexPath.item])
+        navigationController?.pushViewController(detailViewController, animated: true)
     }
 }

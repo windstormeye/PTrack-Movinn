@@ -14,6 +14,8 @@ struct TrackedWorkout: Codable {
     let id: String
     let activityTypeRawValue: UInt
     let startDate: Date
+    let endDate: Date?
+    let durationSeconds: TimeInterval?
     let distanceMeters: Double
     let coordinates: [RouteCoordinate]
 
@@ -21,6 +23,8 @@ struct TrackedWorkout: Codable {
         id = workout.uuid.uuidString
         activityTypeRawValue = workout.workoutActivityType.rawValue
         startDate = workout.startDate
+        endDate = workout.endDate
+        durationSeconds = workout.duration
         distanceMeters = workout.totalDistance?.doubleValue(for: .meter()) ?? 0
         coordinates = RouteSampler.downsample(locations.map(RouteCoordinate.init), limit: 1_200)
     }
@@ -84,6 +88,34 @@ struct TrackedWorkout: Codable {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: startDate)
+    }
+
+    var timeRangeText: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+
+        guard let endDate else {
+            return formatter.string(from: startDate)
+        }
+
+        let endFormatter = DateFormatter()
+        endFormatter.dateFormat = Calendar.current.isDate(startDate, inSameDayAs: endDate) ? "HH:mm" : "yyyy-MM-dd HH:mm"
+        return "\(formatter.string(from: startDate)) - \(endFormatter.string(from: endDate))"
+    }
+
+    var durationText: String {
+        guard let durationSeconds, durationSeconds > 0 else {
+            return "未知时长"
+        }
+
+        let totalMinutes = Int(durationSeconds / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if hours > 0 {
+            return "\(hours)小时\(minutes)分钟"
+        }
+        return "\(max(minutes, 1))分钟"
     }
 
     var displayCoordinates: [CLLocationCoordinate2D] {

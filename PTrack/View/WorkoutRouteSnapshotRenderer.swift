@@ -9,8 +9,14 @@ import MapKit
 import UIKit
 
 enum WorkoutRouteSnapshotRenderer {
-    private static let imageCache = NSCache<NSString, UIImage>()
-    private static let routeLineWidth: CGFloat = 4.5
+    private static let imageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 360
+        cache.totalCostLimit = 80 * 1024 * 1024
+        return cache
+    }()
+    private static let renderQueue = DispatchQueue(label: "studio.pj.PTrack.route-render", qos: .userInitiated, attributes: .concurrent)
+    private static let routeLineWidth: CGFloat = 3.6
     private static let mapPaddingRatio = 0.10
     private static let routeOnlyPaddingRatio = 0.18
 
@@ -24,15 +30,23 @@ enum WorkoutRouteSnapshotRenderer {
         let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
         let cacheSizeKey = "\(Int(size.width * scale))x\(Int(size.height * scale))"
         let cacheKey = "\(workout.id)-\(cacheSizeKey)-\(showsMap)-\(traitCollection.userInterfaceStyle.rawValue)" as NSString
+        let userInterfaceStyle = traitCollection.userInterfaceStyle
 
         if let image = imageCache.object(forKey: cacheKey) {
             completion(image)
             return
         }
 
-        makeSnapshot(for: workout, size: size, showsMap: showsMap, traitCollection: traitCollection) { image in
+        makeSnapshot(
+            for: workout,
+            size: size,
+            showsMap: showsMap,
+            displayScale: scale,
+            userInterfaceStyle: userInterfaceStyle
+        ) { image in
             if let image {
-                imageCache.setObject(image, forKey: cacheKey)
+                let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+                imageCache.setObject(image, forKey: cacheKey, cost: cost)
             }
             completion(image)
         }
@@ -42,7 +56,8 @@ enum WorkoutRouteSnapshotRenderer {
         for workout: TrackedWorkout,
         size: CGSize,
         showsMap: Bool,
-        traitCollection: UITraitCollection,
+        displayScale: CGFloat,
+        userInterfaceStyle: UIUserInterfaceStyle,
         completion: @escaping (UIImage?) -> Void
     ) {
         let coordinates = workout.displayCoordinates
@@ -52,14 +67,16 @@ enum WorkoutRouteSnapshotRenderer {
         }
 
         guard showsMap else {
-            completion(drawRouteOnly(coordinates, color: workout.routeColor, size: size))
+            renderQueue.async {
+                completion(drawRouteOnly(coordinates, color: workout.routeColor, size: size, scale: displayScale))
+            }
             return
         }
 
         let options = MKMapSnapshotter.Options()
         options.size = size
-        options.scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
-        options.traitCollection = traitCollection
+        options.scale = displayScale
+        options.traitCollection = UITraitCollection(userInterfaceStyle: userInterfaceStyle)
         options.mapType = .standard
         options.pointOfInterestFilter = .excludingAll
         options.mapRect = paddedMapRect(for: coordinates, aspectRatio: Double(size.width / size.height), paddingRatio: mapPaddingRatio)
@@ -140,23 +157,14 @@ enum WorkoutRouteSnapshotRenderer {
             path.lineJoinStyle = .round
             path.lineCapStyle = .round
             path.stroke()
-
-            context.cgContext.setFillColor(color.cgColor)
-            if let first = coordinates.first {
-                let point = snapshot.point(for: first)
-                context.cgContext.fillEllipse(in: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8))
-            }
-            if let last = coordinates.last {
-                let point = snapshot.point(for: last)
-                context.cgContext.fillEllipse(in: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
-            }
         }
     }
 
     private static func drawRouteOnly(
         _ coordinates: [CLLocationCoordinate2D],
         color: UIColor,
-        size: CGSize
+        size: CGSize,
+        scale: CGFloat
     ) -> UIImage {
         let mapRect = paddedMapRect(
             for: coordinates,
@@ -164,6 +172,7 @@ enum WorkoutRouteSnapshotRenderer {
             paddingRatio: routeOnlyPaddingRatio
         )
         let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
 
@@ -184,16 +193,6 @@ enum WorkoutRouteSnapshotRenderer {
             path.lineJoinStyle = .round
             path.lineCapStyle = .round
             path.stroke()
-
-            context.cgContext.setFillColor(color.cgColor)
-            if let first = coordinates.first {
-                let point = point(for: first, in: mapRect, canvasSize: size)
-                context.cgContext.fillEllipse(in: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8))
-            }
-            if let last = coordinates.last {
-                let point = point(for: last, in: mapRect, canvasSize: size)
-                context.cgContext.fillEllipse(in: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
-            }
         }
     }
 
