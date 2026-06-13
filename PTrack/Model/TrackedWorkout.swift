@@ -110,6 +110,6 @@ struct TrackedWorkout: Codable {
     }
 
     var displayCoordinates: [CLLocationCoordinate2D] {
-        coordinates.map { CoordinateTransformer.displayCoordinate(for: $0.coordinate) }
+        CoordinateTransformer.displayCoordinates(for: coordinates.map(\.coordinate))
     }
 }

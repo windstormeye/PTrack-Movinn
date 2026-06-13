@@ -32,14 +32,15 @@ final class RouteMediaStore {
 
             switch authorizationResult {
             case .success:
-                if let cachedResult = Self.resultCache.object(forKey: workout.id as NSString) {
+                let cacheKey = Self.cacheKey(for: workout)
+                if let cachedResult = Self.resultCache.object(forKey: cacheKey) {
                     completion(.success(cachedResult.items))
                     return
                 }
 
                 DispatchQueue.global(qos: .userInitiated).async {
                     let mediaItems = self.findMedia(for: workout)
-                    Self.resultCache.setObject(RouteMediaResultBox(items: mediaItems), forKey: workout.id as NSString)
+                    Self.resultCache.setObject(RouteMediaResultBox(items: mediaItems), forKey: cacheKey)
                     DispatchQueue.main.async {
                         completion(.success(mediaItems))
                     }
@@ -50,6 +51,10 @@ final class RouteMediaStore {
                 }
             }
         }
+    }
+
+    private static func cacheKey(for workout: TrackedWorkout) -> NSString {
+        "\(workout.id)-gcj\(CoordinateTransformer.version)" as NSString
     }
 
     private func requestAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
@@ -169,13 +174,13 @@ final class RouteMediaStore {
             return []
         }
 
+        let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sourceCoordinates.map(\.coordinate))
         let targetCount = min(sourceCoordinates.count, 760)
         let step = Double(sourceCoordinates.count - 1) / Double(max(targetCount - 1, 1))
 
         return (0..<targetCount).map { index in
             let sourceIndex = min(Int(round(Double(index) * step)), sourceCoordinates.count - 1)
-            let coordinate = CoordinateTransformer.displayCoordinate(for: sourceCoordinates[sourceIndex].coordinate)
-            return MKMapPoint(coordinate)
+            return MKMapPoint(displayCoordinates[sourceIndex])
         }
     }
 

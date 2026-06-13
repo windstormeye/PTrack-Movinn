@@ -64,10 +64,10 @@ final class WorkoutRoutePathView: UIView {
         shapeLayer.lineWidth = lineWidth
         shapeLayer.lineJoin = .round
         shapeLayer.lineCap = .round
-        shapeLayer.contentsScale = UIScreen.main.scale
+        shapeLayer.contentsScale = contentScaleFactor
         shapeLayer.drawsAsynchronously = true
         shapeLayer.shouldRasterize = true
-        shapeLayer.rasterizationScale = UIScreen.main.scale
+        shapeLayer.rasterizationScale = contentScaleFactor
 
         layer.addSublayer(shapeLayer)
     }
@@ -151,7 +151,7 @@ final class WorkoutRoutePathView: UIView {
     }
 
     private static func source(for workout: TrackedWorkout) -> RouteSource {
-        let cacheKey = NSString(string: workout.id)
+        let cacheKey = NSString(string: "\(workout.id)-gcj\(CoordinateTransformer.version)")
         if let cachedSource = sourceCache.object(forKey: cacheKey) {
             return cachedSource
         }

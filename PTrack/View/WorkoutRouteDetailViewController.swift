@@ -35,7 +35,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayAnnotation: RouteReplayAnnotation?
 
     private let collapsedPanelHeight: CGFloat = 82
-    private let expandedPanelHeight: CGFloat = 316
+    private let expandedPanelHeight: CGFloat = 214
     private let navigationBackgroundHeight: CGFloat = 124
     private let maximumElevationSampleCount = 120
 
@@ -76,9 +76,93 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func configureNavigationItem() {
-        title = workout.title
+        title = nil
+        navigationItem.titleView = makeNavigationTitleView()
         navigationItem.largeTitleDisplayMode = .never
         edgesForExtendedLayout = [.top, .bottom]
+    }
+
+    private func makeNavigationTitleView() -> UIView {
+        let label = UILabel()
+        label.attributedText = navigationTitleText()
+        label.textAlignment = .center
+        label.lineBreakMode = .byTruncatingTail
+        label.adjustsFontSizeToFitWidth = true
+        label.minimumScaleFactor = 0.82
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        label.sizeToFit()
+        return label
+    }
+
+    private func navigationTitleText() -> NSAttributedString {
+        let dateText = navigationDateText(for: workout.startDate)
+        let durationText = navigationDurationText()
+        let titleText = "\(dateText) ・ \(durationText)"
+        let attributedText = NSMutableAttributedString(
+            string: titleText,
+            attributes: [
+                .font: UIFont.systemFont(ofSize: 15, weight: .semibold),
+                .foregroundColor: UIColor.label
+            ]
+        )
+
+        if let durationRange = titleText.range(of: "・ \(durationText)") {
+            attributedText.addAttributes(
+                [
+                    .font: UIFont.systemFont(ofSize: 15, weight: .medium),
+                    .foregroundColor: UIColor.secondaryLabel
+                ],
+                range: NSRange(durationRange, in: titleText)
+            )
+        }
+
+        return attributedText
+    }
+
+    private func navigationDateText(for date: Date) -> String {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        let startOfDate = calendar.startOfDay(for: date)
+
+        if let dayDifference = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day {
+            switch dayDifference {
+            case 0:
+                return "今天"
+            case 1:
+                return "昨天"
+            case 2:
+                return "前天"
+            default:
+                break
+            }
+        }
+
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        let currentYear = calendar.component(.year, from: Date())
+        let year = components.year ?? currentYear
+        let month = components.month ?? 1
+        let day = components.day ?? 1
+
+        if year == currentYear {
+            return "\(month) 月 \(day) 日"
+        }
+        return "\(year) 年 \(month) 月 \(day) 日"
+    }
+
+    private func navigationDurationText() -> String {
+        guard let durationSeconds = workout.durationSeconds, durationSeconds > 0 else {
+            return "未知时长"
+        }
+
+        let totalMinutes = max(Int(durationSeconds / 60), 1)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if hours > 0 {
+            return minutes > 0 ? "\(hours) 小时 \(minutes) 分" : "\(hours) 小时"
+        }
+        return "\(totalMinutes) 分"
     }
 
     private func configureDefaultNavigationBar() {
@@ -160,17 +244,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
         distanceLabel.minimumScaleFactor = 0.78
 
         detailStackView.axis = .vertical
-        detailStackView.spacing = 12
+        detailStackView.spacing = 0
         detailStackView.alpha = 0
 
         replayRulerView.configure(totalDistanceText: replayTotalDistanceText(totalMeters: workout.distanceMeters))
         replayRulerView.addTarget(self, action: #selector(handleReplayProgressChanged(_:)), for: .valueChanged)
 
-        let timeRow = makeDetailRow(title: "时间", value: workout.timeRangeText)
-        let distanceRow = makeDetailRow(title: "距离", value: workout.distanceText)
-        detailStackView.addArrangedSubview(timeRow)
-        detailStackView.addArrangedSubview(distanceRow)
-        detailStackView.setCustomSpacing(18, after: distanceRow)
         detailStackView.addArrangedSubview(replayRulerView)
 
         view.addSubview(panelView)
@@ -225,38 +304,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
         replayRulerView.snp.makeConstraints { make in
             make.height.equalTo(98)
         }
-    }
-
-    private func makeDetailRow(title: String, value: String) -> UIView {
-        let container = UIView()
-        let titleLabel = UILabel()
-        let valueLabel = UILabel()
-
-        titleLabel.text = title
-        titleLabel.font = .preferredFont(forTextStyle: .subheadline)
-        titleLabel.textColor = .secondaryLabel
-
-        valueLabel.text = value
-        valueLabel.font = .preferredFont(forTextStyle: .subheadline)
-        valueLabel.textColor = .label
-        valueLabel.textAlignment = .right
-        valueLabel.adjustsFontSizeToFitWidth = true
-        valueLabel.minimumScaleFactor = 0.78
-
-        container.addSubview(titleLabel)
-        container.addSubview(valueLabel)
-
-        titleLabel.snp.makeConstraints { make in
-            make.leading.top.bottom.equalToSuperview()
-            make.width.greaterThanOrEqualTo(46)
-        }
-
-        valueLabel.snp.makeConstraints { make in
-            make.leading.greaterThanOrEqualTo(titleLabel.snp.trailing).offset(12)
-            make.trailing.top.bottom.equalToSuperview()
-        }
-
-        return container
     }
 
     private func drawRoute() {

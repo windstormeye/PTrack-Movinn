@@ -29,7 +29,7 @@ enum WorkoutRouteSnapshotRenderer {
     ) {
         let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
         let cacheSizeKey = "\(Int(size.width * scale))x\(Int(size.height * scale))"
-        let cacheKey = "\(workout.id)-\(cacheSizeKey)-\(showsMap)-\(traitCollection.userInterfaceStyle.rawValue)" as NSString
+        let cacheKey = "\(workout.id)-gcj\(CoordinateTransformer.version)-\(cacheSizeKey)-\(showsMap)-\(traitCollection.userInterfaceStyle.rawValue)" as NSString
         let userInterfaceStyle = traitCollection.userInterfaceStyle
 
         if let image = imageCache.object(forKey: cacheKey) {

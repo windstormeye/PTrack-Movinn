@@ -296,12 +296,13 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
         let targetCount = max(Int(Double(sourceCoordinates.count) * samplingRatio), 2)
         let coordinateIndexes = sampledIndexes(sourceCount: sourceCoordinates.count, targetCount: targetCount)
+        let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sourceCoordinates.map(\.coordinate))
         var coordinates: [CLLocationCoordinate2D] = []
         coordinates.reserveCapacity(coordinateIndexes.count)
         var boundingMapRect = MKMapRect.null
 
         for index in coordinateIndexes {
-            let coordinate = CoordinateTransformer.displayCoordinate(for: sourceCoordinates[index].coordinate)
+            let coordinate = displayCoordinates[index]
             guard CLLocationCoordinate2DIsValid(coordinate) else {
                 continue
             }

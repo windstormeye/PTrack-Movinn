@@ -16,6 +16,9 @@ final class WorkoutRouteReplayRulerView: UIControl {
 
     private var indicatorCenterXConstraint: Constraint?
     private let horizontalPadding: CGFloat = 2
+    private var peakProgress: CGFloat?
+    private var isPeakActive = false
+    private let peakFeedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
 
     private(set) var progress: CGFloat = 0
 
@@ -37,12 +40,33 @@ final class WorkoutRouteReplayRulerView: UIControl {
     func configure(totalDistanceText: String, elevationSamples: [RouteElevationSample] = []) {
         startLabel.text = "0km"
         endLabel.text = totalDistanceText
+        peakProgress = Self.peakProgress(for: elevationSamples)
+        isPeakActive = false
         profileView.configure(samples: elevationSamples)
+        profileView.setPeakHighlighted(false, animated: false)
     }
 
     func setProgress(_ progress: CGFloat, sendsAction: Bool = false) {
-        self.progress = min(max(progress, 0), 1)
+        setProgress(progress, sendsAction: sendsAction, allowsPeakCrossing: false)
+    }
+
+    private func setProgress(
+        _ progress: CGFloat,
+        sendsAction: Bool,
+        allowsPeakCrossing: Bool
+    ) {
+        let previousProgress = self.progress
+        let targetProgress = min(max(progress, 0), 1)
+        let peakHit = peakAdjustedProgress(
+            from: previousProgress,
+            to: targetProgress,
+            allowsSnap: sendsAction,
+            allowsCrossing: allowsPeakCrossing
+        )
+
+        self.progress = peakHit.progress
         updateProgressLayout(flushLayout: true)
+        setPeakActive(peakHit.isPeakPosition, shouldEmitFeedback: sendsAction && peakHit.didHitPeak)
 
         if sendsAction {
             sendActions(for: .valueChanged)
@@ -109,11 +133,81 @@ final class WorkoutRouteReplayRulerView: UIControl {
         }
     }
 
+    private func setPeakActive(_ active: Bool, shouldEmitFeedback: Bool) {
+        guard active != isPeakActive else {
+            return
+        }
+
+        isPeakActive = active
+        profileView.setPeakHighlighted(active, animated: true)
+
+        if active, shouldEmitFeedback {
+            peakFeedbackGenerator.impactOccurred(intensity: 0.82)
+            peakFeedbackGenerator.prepare()
+        }
+    }
+
+    private func peakAdjustedProgress(
+        from previousProgress: CGFloat,
+        to targetProgress: CGFloat,
+        allowsSnap: Bool,
+        allowsCrossing: Bool
+    ) -> PeakHit {
+        guard allowsSnap,
+              let peakProgress,
+              profileView.bounds.width > 0 else {
+            return PeakHit(progress: targetProgress, isPeakPosition: false, didHitPeak: false)
+        }
+
+        let tolerance = peakSinglePositionTolerance()
+        let isOnPeakPosition = abs(targetProgress - peakProgress) <= tolerance
+        let crossesPeak = allowsCrossing
+            && ((previousProgress < peakProgress && targetProgress > peakProgress)
+                || (previousProgress > peakProgress && targetProgress < peakProgress))
+
+        guard isOnPeakPosition || crossesPeak else {
+            return PeakHit(progress: targetProgress, isPeakPosition: false, didHitPeak: false)
+        }
+
+        return PeakHit(progress: peakProgress, isPeakPosition: true, didHitPeak: true)
+    }
+
+    private func peakSinglePositionTolerance() -> CGFloat {
+        let drawableWidth = max(profileView.bounds.width - horizontalPadding * 2, 1)
+        return 1 / drawableWidth
+    }
+
     @objc private func handleProgressGesture(_ recognizer: UIGestureRecognizer) {
+        if recognizer.state == .began {
+            peakFeedbackGenerator.prepare()
+        }
+
         let location = recognizer.location(in: profileView)
         let drawableWidth = max(profileView.bounds.width - horizontalPadding * 2, 1)
-        setProgress((location.x - horizontalPadding) / drawableWidth, sendsAction: true)
+        let allowsPeakCrossing = recognizer is UIPanGestureRecognizer && recognizer.state == .changed
+        setProgress(
+            (location.x - horizontalPadding) / drawableWidth,
+            sendsAction: true,
+            allowsPeakCrossing: allowsPeakCrossing
+        )
     }
+
+    private static func peakProgress(for samples: [RouteElevationSample]) -> CGFloat? {
+        guard samples.count > 1,
+              let totalDistance = samples.last?.distanceMeters,
+              totalDistance > 0,
+              let peakIndex = samples.indices.max(by: { samples[$0].altitudeMeters < samples[$1].altitudeMeters }) else {
+            return nil
+        }
+
+        return CGFloat(samples[peakIndex].distanceMeters / totalDistance)
+    }
+}
+
+private struct PeakHit {
+    let progress: CGFloat
+    let isPeakPosition: Bool
+    let didHitPeak: Bool
 }
 
 private final class ElevationProfileView: UIView {
@@ -146,6 +240,24 @@ private final class ElevationProfileView: UIView {
         updatePathIfNeeded()
     }
 
+    func setPeakHighlighted(_ highlighted: Bool, animated: Bool) {
+        let transform = highlighted ? CGAffineTransform(scaleX: 1.24, y: 1.24) : .identity
+        guard animated else {
+            peakLabel.transform = transform
+            return
+        }
+
+        UIView.animate(
+            withDuration: 0.2,
+            delay: 0,
+            usingSpringWithDamping: 0.72,
+            initialSpringVelocity: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction]
+        ) {
+            self.peakLabel.transform = transform
+        }
+    }
+
     private func configureLayers() {
         isOpaque = false
 
@@ -156,11 +268,11 @@ private final class ElevationProfileView: UIView {
         fillGradientLayer.locations = [0, 1]
         fillGradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
         fillGradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
-        fillGradientLayer.contentsScale = UIScreen.main.scale
+        fillGradientLayer.contentsScale = contentScaleFactor
 
         fillLayer.fillColor = UIColor.black.cgColor
         fillLayer.strokeColor = UIColor.clear.cgColor
-        fillLayer.contentsScale = UIScreen.main.scale
+        fillLayer.contentsScale = contentScaleFactor
         fillGradientLayer.mask = fillLayer
 
         curveLayer.fillColor = UIColor.clear.cgColor
@@ -168,7 +280,7 @@ private final class ElevationProfileView: UIView {
         curveLayer.lineWidth = 2
         curveLayer.lineJoin = .round
         curveLayer.lineCap = .round
-        curveLayer.contentsScale = UIScreen.main.scale
+        curveLayer.contentsScale = contentScaleFactor
         curveLayer.drawsAsynchronously = true
 
         layer.addSublayer(fillGradientLayer)

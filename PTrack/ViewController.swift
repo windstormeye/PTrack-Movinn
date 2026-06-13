@@ -23,6 +23,7 @@ class ViewController: UIViewController {
     private let gridLayout = WorkoutGridLayout()
     private let headerView = UIView()
     private let titleLabel = UILabel()
+    private let titleAccentLabel = UILabel()
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let heatmapButton = UIButton(type: .system)
@@ -118,10 +119,16 @@ class ViewController: UIViewController {
         headerView.isUserInteractionEnabled = true
         headerView.backgroundColor = .white
 
-        titleLabel.text = "Movinn"
+        let titleFont = UIFont.systemFont(ofSize: 40, weight: .bold)
+        titleLabel.text = "Movin"
+        titleLabel.font = titleFont
         titleLabel.textColor = .label
-        titleLabel.font = .systemFont(ofSize: 40, weight: .bold)
         titleLabel.adjustsFontForContentSizeCategory = true
+
+        titleAccentLabel.text = "n"
+        titleAccentLabel.font = titleFont
+        titleAccentLabel.textColor = UIColor(red: 141 / 255, green: 189 / 255, blue: 0, alpha: 1)
+        titleAccentLabel.adjustsFontForContentSizeCategory = true
 
         totalDistanceLabel.textColor = .secondaryLabel
         totalDistanceLabel.font = .systemFont(ofSize: 11, weight: .medium)
@@ -142,6 +149,7 @@ class ViewController: UIViewController {
 
         view.addSubview(headerView)
         headerView.addSubview(titleLabel)
+        headerView.addSubview(titleAccentLabel)
         headerView.addSubview(totalDistanceLabel)
         headerView.addSubview(loadingIndicator)
         headerView.addSubview(heatmapButton)
@@ -156,8 +164,13 @@ class ViewController: UIViewController {
             make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(10)
         }
 
+        titleAccentLabel.snp.makeConstraints { make in
+            make.leading.equalTo(titleLabel.snp.trailing).offset(-1)
+            make.lastBaseline.equalTo(titleLabel.snp.lastBaseline)
+        }
+
         totalDistanceLabel.snp.makeConstraints { make in
-            make.leading.equalTo(titleLabel.snp.trailing).offset(10)
+            make.leading.equalTo(titleAccentLabel.snp.trailing).offset(10)
             make.trailing.lessThanOrEqualTo(loadingIndicator.snp.leading).offset(-8)
             make.lastBaseline.equalTo(titleLabel.snp.lastBaseline).offset(-3)
         }

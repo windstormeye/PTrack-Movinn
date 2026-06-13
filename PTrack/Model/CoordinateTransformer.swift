@@ -9,39 +9,145 @@ import CoreLocation
 import Foundation
 
 enum CoordinateTransformer {
+    static let version = 2
+
     private static let pi = Double.pi
     private static let axis = 6378245.0
     private static let offset = 0.00669342162296594323
+    private static let maximumRouteDecisionSampleCount = 180
 
     static func displayCoordinate(for coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
-        guard isInMainlandChina(coordinate) else {
+        displayCoordinate(for: coordinate, routeNeedsTransform: false)
+    }
+
+    static func displayCoordinates(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        let routeNeedsTransform = shouldTransformRoute(coordinates)
+        return coordinates.map { displayCoordinate(for: $0, routeNeedsTransform: routeNeedsTransform) }
+    }
+
+    private static func displayCoordinate(
+        for coordinate: CLLocationCoordinate2D,
+        routeNeedsTransform: Bool
+    ) -> CLLocationCoordinate2D {
+        guard shouldTransform(coordinate, routeNeedsTransform: routeNeedsTransform) else {
             return coordinate
         }
 
         return wgs84ToGCJ02(coordinate)
     }
 
-    private static func isInMainlandChina(_ coordinate: CLLocationCoordinate2D) -> Bool {
+    private static func shouldTransform(
+        _ coordinate: CLLocationCoordinate2D,
+        routeNeedsTransform: Bool
+    ) -> Bool {
+        guard CLLocationCoordinate2DIsValid(coordinate),
+              isInChinaTransformBounds(coordinate),
+              !isInTaiwan(coordinate) else {
+            return false
+        }
+
+        if routeNeedsTransform {
+            return !isClearlyHongKongOrMacau(coordinate)
+        }
+
+        return isLikelyMainlandChina(coordinate)
+    }
+
+    private static func shouldTransformRoute(_ coordinates: [CLLocationCoordinate2D]) -> Bool {
+        let sampledCoordinates = routeDecisionSample(from: coordinates)
+        guard !sampledCoordinates.isEmpty else {
+            return false
+        }
+
+        let mainlandCount = sampledCoordinates.filter { isLikelyMainlandChina($0) }.count
+        let minimumMainlandCount = min(3, sampledCoordinates.count)
+        guard mainlandCount >= minimumMainlandCount else {
+            return false
+        }
+
+        return Double(mainlandCount) / Double(sampledCoordinates.count) >= 0.58
+    }
+
+    private static func routeDecisionSample(from coordinates: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        let validCoordinates = coordinates.filter(CLLocationCoordinate2DIsValid)
+        guard validCoordinates.count > maximumRouteDecisionSampleCount else {
+            return validCoordinates
+        }
+
+        let step = Double(validCoordinates.count - 1) / Double(maximumRouteDecisionSampleCount - 1)
+        return (0..<maximumRouteDecisionSampleCount).map { index in
+            validCoordinates[Int(round(Double(index) * step))]
+        }
+    }
+
+    private static func isLikelyMainlandChina(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        isInChinaTransformBounds(coordinate)
+            && !isInTaiwan(coordinate)
+            && !isClearlyHongKongOrMacau(coordinate)
+    }
+
+    private static func isInChinaTransformBounds(_ coordinate: CLLocationCoordinate2D) -> Bool {
         let longitude = coordinate.longitude
         let latitude = coordinate.latitude
 
-        guard longitude >= 73.66, longitude <= 135.05, latitude >= 3.86, latitude <= 53.55 else {
+        return longitude >= 72.004
+            && longitude <= 137.8347
+            && latitude >= 0.8293
+            && latitude <= 55.8271
+    }
+
+    private static func isInTaiwan(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        let longitude = coordinate.longitude
+        let latitude = coordinate.latitude
+
+        return longitude >= 119.30
+            && longitude <= 122.10
+            && latitude >= 21.70
+            && latitude <= 25.50
+    }
+
+    private static func isClearlyHongKongOrMacau(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        isInMacauCore(coordinate) || isInHongKongCore(coordinate)
+    }
+
+    private static func isInMacauCore(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        let longitude = coordinate.longitude
+        let latitude = coordinate.latitude
+
+        return longitude >= 113.528
+            && longitude <= 113.598
+            && latitude >= 22.105
+            && latitude <= 22.215
+    }
+
+    private static func isInHongKongCore(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        let longitude = coordinate.longitude
+        let latitude = coordinate.latitude
+
+        guard longitude >= 113.80,
+              longitude <= 114.45,
+              latitude >= 22.13,
+              latitude <= 22.58 else {
             return false
         }
 
-        if longitude >= 113.52, longitude <= 113.63, latitude >= 22.10, latitude <= 22.22 {
-            return false
+        if latitude <= 22.38 {
+            return true
         }
 
-        if longitude >= 113.80, longitude <= 114.50, latitude >= 22.13, latitude <= 22.60 {
-            return false
+        return latitude <= hongKongNorthernBoundaryLatitude(for: longitude)
+    }
+
+    private static func hongKongNorthernBoundaryLatitude(for longitude: Double) -> Double {
+        if longitude < 113.95 {
+            return 22.43 + (longitude - 113.80) / 0.15 * 0.04
         }
 
-        if longitude >= 119.30, longitude <= 122.10, latitude >= 21.70, latitude <= 25.50 {
-            return false
+        if longitude < 114.15 {
+            return 22.50
         }
 
-        return true
+        return 22.53
     }
 
     private static func wgs84ToGCJ02(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
