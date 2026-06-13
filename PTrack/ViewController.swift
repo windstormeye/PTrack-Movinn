@@ -11,7 +11,14 @@ import UIKit
 class ViewController: UIViewController {
     private let store = HealthWorkoutStore()
     private let cacheStore = WorkoutCacheStore()
+    private let cacheSaveQueue = DispatchQueue(label: "studio.pj.PTrack.cache-save", qos: .utility)
+    private let routeSourcePrewarmQueue = DispatchQueue(label: "studio.pj.PTrack.route-source-prewarm", qos: .utility)
     private var workouts: [TrackedWorkout] = []
+    private var knownWorkoutIDs = Set<String>()
+    private var pendingWorkouts: [TrackedWorkout] = []
+    private var pendingFlushWorkItem: DispatchWorkItem?
+    private var pendingCacheSaveWorkItem: DispatchWorkItem?
+    private var totalDistanceMeters: Double = 0
     private var collectionView: UICollectionView!
     private let gridLayout = WorkoutGridLayout()
     private let headerView = UIView()
@@ -29,6 +36,9 @@ class ViewController: UIViewController {
     private var pinchAnchorUnitPoint = CGPoint(x: 0.5, y: 0.5)
     private let pinchResponse: CGFloat = 0.86
     private let pinchUpdateThreshold: CGFloat = 0.006
+    private let pendingWorkoutFlushDelay: TimeInterval = 0.35
+    private let activeScrollFlushDelay: TimeInterval = 0.45
+    private let cacheSaveDebounceDelay: TimeInterval = 1.0
     private var columnSnapDisplayLink: CADisplayLink?
     private var columnSnapStartTime: CFTimeInterval = 0
     private var columnSnapStartCount: CGFloat = 3
@@ -38,6 +48,8 @@ class ViewController: UIViewController {
 
     deinit {
         columnSnapDisplayLink?.invalidate()
+        pendingFlushWorkItem?.cancel()
+        pendingCacheSaveWorkItem?.cancel()
     }
 
     override func viewDidLoad() {
@@ -194,12 +206,14 @@ class ViewController: UIViewController {
     }
 
     private func updateTotalDistanceText() {
-        let totalKilometers = workouts.reduce(0) { $0 + $1.distanceMeters } / 1000
+        let totalKilometers = totalDistanceMeters / 1000
         totalDistanceLabel.text = "总距离：\(Int(totalKilometers.rounded()))KM"
     }
 
     private func loadCachedWorkouts() {
         workouts = cacheStore.load()
+        knownWorkoutIDs = Set(workouts.map(\.id))
+        totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
         updateTotalDistanceText()
         collectionView.reloadData()
     }
@@ -224,7 +238,7 @@ class ViewController: UIViewController {
 
     private func loadIncrementalHealthWorkouts() {
         let newestCachedDate = workouts.map(\.startDate).max()
-        let cachedIDs = Set(workouts.map(\.id))
+        let cachedIDs = knownWorkoutIDs
 
         store.loadTrackedWorkouts(
             after: newestCachedDate,
@@ -243,36 +257,103 @@ class ViewController: UIViewController {
     }
 
     private func appendTrackedWorkout(_ workout: TrackedWorkout) {
-        guard !workouts.contains(where: { $0.id == workout.id }) else {
+        guard knownWorkoutIDs.insert(workout.id).inserted else {
             return
         }
 
-        workouts.append(workout)
+        pendingWorkouts.append(workout)
+        prewarmRouteSource(for: workout)
+        schedulePendingWorkoutFlush()
+    }
+
+    private func schedulePendingWorkoutFlush(delay: TimeInterval? = nil) {
+        guard pendingFlushWorkItem == nil else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.flushPendingWorkouts()
+        }
+        pendingFlushWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + (delay ?? pendingWorkoutFlushDelay),
+            execute: workItem
+        )
+    }
+
+    @discardableResult
+    private func flushPendingWorkouts(force: Bool = false) -> Bool {
+        pendingFlushWorkItem?.cancel()
+        pendingFlushWorkItem = nil
+
+        guard !pendingWorkouts.isEmpty else {
+            return false
+        }
+
+        if !force, isCollectionViewBusy {
+            schedulePendingWorkoutFlush(delay: activeScrollFlushDelay)
+            return false
+        }
+
+        let incomingWorkouts = pendingWorkouts
+        pendingWorkouts.removeAll()
+
+        workouts.append(contentsOf: incomingWorkouts)
         workouts.sort { $0.startDate > $1.startDate }
-        cacheStore.save(workouts)
+        totalDistanceMeters += incomingWorkouts.reduce(0) { $0 + $1.distanceMeters }
         updateTotalDistanceText()
 
-        guard let index = workouts.firstIndex(where: { $0.id == workout.id }) else {
+        UIView.performWithoutAnimation {
             collectionView.reloadData()
-            return
         }
+        scheduleCacheSave()
+        return true
+    }
 
-        collectionView.performBatchUpdates {
-            collectionView.insertItems(at: [IndexPath(item: index, section: 0)])
+    private var isCollectionViewBusy: Bool {
+        collectionView.isTracking
+            || collectionView.isDragging
+            || collectionView.isDecelerating
+            || !collectionView.isScrollEnabled
+            || columnSnapDisplayLink != nil
+    }
+
+    private func scheduleCacheSave(delay: TimeInterval? = nil) {
+        pendingCacheSaveWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let cachedWorkouts = self.workouts
+            self.cacheSaveQueue.async { [cacheStore = self.cacheStore] in
+                cacheStore.save(cachedWorkouts)
+            }
+        }
+        pendingCacheSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + (delay ?? cacheSaveDebounceDelay), execute: workItem)
+    }
+
+    private func prewarmRouteSource(for workout: TrackedWorkout) {
+        routeSourcePrewarmQueue.async {
+            WorkoutRoutePathView.prewarmSource(for: workout)
         }
     }
 
     private func handleLoadResult(_ result: Result<Int, Error>) {
         loadingIndicator.stopAnimating()
+        let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
             print("PTrack HealthKit: incremental route query completed, new routes: \(count)")
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")
         }
+        if didFlushPendingWorkouts {
+            scheduleCacheSave(delay: 0)
+        }
     }
 
     @objc private func showHeatmap() {
+        flushPendingWorkouts(force: true)
         let heatmapViewController = WorkoutRouteHeatmapViewController(workouts: workouts)
         navigationController?.pushViewController(heatmapViewController, animated: true)
     }
@@ -404,6 +485,7 @@ class ViewController: UIViewController {
         stopColumnSnap()
         pinchAnchorIndexPath = nil
         collectionView.isScrollEnabled = true
+        flushPendingWorkouts()
     }
 
     private func stopColumnSnap() {
@@ -484,5 +566,15 @@ extension ViewController: UICollectionViewDelegate {
 
         let detailViewController = WorkoutRouteDetailViewController(workout: workouts[indexPath.item])
         navigationController?.pushViewController(detailViewController, animated: true)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate {
+            flushPendingWorkouts()
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        flushPendingWorkouts()
     }
 }

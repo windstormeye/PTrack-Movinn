@@ -6,6 +6,7 @@
 //
 
 import MapKit
+import HealthKit
 import SnapKit
 import UIKit
 
@@ -22,14 +23,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let titleLabel = UILabel()
     private let distanceLabel = UILabel()
     private let detailStackView = UIStackView()
+    private let replayRulerView = WorkoutRouteReplayRulerView()
     private var panelHeightConstraint: Constraint?
     private var isPanelExpanded = false
     private var hasFittedRoute = false
     private var panStartHeight: CGFloat = 0
     private var routeMediaItems: [RouteMediaItem] = []
+    private var replayCoordinates: [CLLocationCoordinate2D] = []
+    private var replayDistances: [CLLocationDistance] = []
+    private var replayAnnotation: RouteReplayAnnotation?
 
     private let collapsedPanelHeight: CGFloat = 82
-    private let expandedPanelHeight: CGFloat = 194
+    private let expandedPanelHeight: CGFloat = 262
     private let navigationBackgroundHeight: CGFloat = 124
 
     init(workout: TrackedWorkout) {
@@ -156,8 +161,15 @@ final class WorkoutRouteDetailViewController: UIViewController {
         detailStackView.spacing = 12
         detailStackView.alpha = 0
 
-        detailStackView.addArrangedSubview(makeDetailRow(title: "时间", value: workout.timeRangeText))
-        detailStackView.addArrangedSubview(makeDetailRow(title: "距离", value: workout.distanceText))
+        replayRulerView.configure(totalDistanceText: replayTotalDistanceText(totalMeters: workout.distanceMeters))
+        replayRulerView.addTarget(self, action: #selector(handleReplayProgressChanged(_:)), for: .valueChanged)
+
+        let timeRow = makeDetailRow(title: "时间", value: workout.timeRangeText)
+        let distanceRow = makeDetailRow(title: "距离", value: workout.distanceText)
+        detailStackView.addArrangedSubview(timeRow)
+        detailStackView.addArrangedSubview(distanceRow)
+        detailStackView.setCustomSpacing(18, after: distanceRow)
+        detailStackView.addArrangedSubview(replayRulerView)
 
         view.addSubview(panelView)
         panelView.contentView.addSubview(handleTouchView)
@@ -207,6 +219,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
             make.leading.trailing.equalToSuperview().inset(18)
             make.top.equalTo(iconView.snp.bottom).offset(24)
         }
+
+        replayRulerView.snp.makeConstraints { make in
+            make.height.equalTo(48)
+        }
     }
 
     private func makeDetailRow(title: String, value: String) -> UIView {
@@ -246,6 +262,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         guard coordinates.count > 1 else {
             return
         }
+
+        configureReplayRoute(with: coordinates)
 
         let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
         mapView.addOverlay(polyline)
@@ -319,6 +337,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func setPanelExpanded(_ expanded: Bool, animated: Bool) {
         isPanelExpanded = expanded
+        if !expanded {
+            removeReplayAnnotation()
+            replayRulerView.setProgress(0)
+        }
         updatePanel(height: expanded ? expandedPanelHeight : collapsedPanelHeight, animated: animated)
     }
 
@@ -340,6 +362,118 @@ final class WorkoutRouteDetailViewController: UIViewController {
             changes()
         }
     }
+
+    @objc private func handleReplayProgressChanged(_ sender: WorkoutRouteReplayRulerView) {
+        guard let coordinate = replayCoordinate(for: sender.progress) else {
+            return
+        }
+
+        if let replayAnnotation {
+            replayAnnotation.coordinate = coordinate
+        } else {
+            let annotation = RouteReplayAnnotation(coordinate: coordinate, emoji: replayEmoji)
+            replayAnnotation = annotation
+            mapView.addAnnotation(annotation)
+        }
+    }
+
+    private func configureReplayRoute(with coordinates: [CLLocationCoordinate2D]) {
+        replayCoordinates = coordinates
+        replayDistances = cumulativeDistances(for: coordinates)
+
+        if let totalDistance = replayDistances.last, workout.distanceMeters <= 0 {
+            replayRulerView.configure(totalDistanceText: replayTotalDistanceText(totalMeters: totalDistance))
+        }
+    }
+
+    private func cumulativeDistances(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationDistance] {
+        guard let firstCoordinate = coordinates.first else {
+            return []
+        }
+
+        var distances: [CLLocationDistance] = [0]
+        distances.reserveCapacity(coordinates.count)
+
+        var totalDistance: CLLocationDistance = 0
+        var previousLocation = CLLocation(latitude: firstCoordinate.latitude, longitude: firstCoordinate.longitude)
+
+        for coordinate in coordinates.dropFirst() {
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            totalDistance += location.distance(from: previousLocation)
+            distances.append(totalDistance)
+            previousLocation = location
+        }
+
+        return distances
+    }
+
+    private func replayCoordinate(for progress: CGFloat) -> CLLocationCoordinate2D? {
+        guard replayCoordinates.count == replayDistances.count,
+              let totalDistance = replayDistances.last,
+              totalDistance > 0 else {
+            return replayCoordinates.first
+        }
+
+        let targetDistance = CLLocationDistance(progress) * totalDistance
+        let index = nearestReplayCoordinateIndex(for: targetDistance)
+        return replayCoordinates[index]
+    }
+
+    private func nearestReplayCoordinateIndex(for targetDistance: CLLocationDistance) -> Int {
+        var lowerBound = 0
+        var upperBound = replayDistances.count - 1
+
+        while lowerBound < upperBound {
+            let middle = (lowerBound + upperBound) / 2
+            if replayDistances[middle] < targetDistance {
+                lowerBound = middle + 1
+            } else {
+                upperBound = middle
+            }
+        }
+
+        guard lowerBound > 0 else {
+            return 0
+        }
+
+        let previousIndex = lowerBound - 1
+        let previousDelta = abs(replayDistances[previousIndex] - targetDistance)
+        let currentDelta = abs(replayDistances[lowerBound] - targetDistance)
+        return previousDelta <= currentDelta ? previousIndex : lowerBound
+    }
+
+    private func removeReplayAnnotation() {
+        guard let replayAnnotation else {
+            return
+        }
+
+        mapView.removeAnnotation(replayAnnotation)
+        self.replayAnnotation = nil
+    }
+
+    private var replayEmoji: String {
+        switch workout.activityType {
+        case .cycling:
+            return "🚴"
+        case .running:
+            return "🏃‍♂️"
+        case .hiking, .walking:
+            return "🚶"
+        default:
+            return "🚶"
+        }
+    }
+
+    private func replayTotalDistanceText(totalMeters: CLLocationDistance) -> String {
+        let kilometers = max(totalMeters, 0) / 1000
+        if kilometers >= 100 {
+            return String(format: "%.0fkm", kilometers)
+        }
+        if kilometers >= 10 {
+            return String(format: "%.1fkm", kilometers)
+        }
+        return String(format: "%.2fkm", kilometers)
+    }
 }
 
 extension WorkoutRouteDetailViewController: MKMapViewDelegate {
@@ -357,6 +491,15 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
     }
 
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        if let replayAnnotation = annotation as? RouteReplayAnnotation {
+            let identifier = RouteReplayAnnotationView.reuseIdentifier
+            let annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? RouteReplayAnnotationView
+                ?? RouteReplayAnnotationView(annotation: replayAnnotation, reuseIdentifier: identifier)
+            annotationView.annotation = replayAnnotation
+            annotationView.configure(emoji: replayAnnotation.emoji)
+            return annotationView
+        }
+
         if let mediaAnnotation = annotation as? RouteMediaAnnotation {
             let identifier = RouteMediaAnnotationView.reuseIdentifier
             let annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? RouteMediaAnnotationView
@@ -438,5 +581,57 @@ private final class RouteEndpointAnnotationView: MKAnnotationView {
         layer.shadowOpacity = 0.16
         layer.shadowRadius = 4
         layer.shadowOffset = CGSize(width: 0, height: 1)
+    }
+}
+
+private final class RouteReplayAnnotation: NSObject, MKAnnotation {
+    @objc dynamic var coordinate: CLLocationCoordinate2D
+    let emoji: String
+
+    init(coordinate: CLLocationCoordinate2D, emoji: String) {
+        self.coordinate = coordinate
+        self.emoji = emoji
+        super.init()
+    }
+}
+
+private final class RouteReplayAnnotationView: MKAnnotationView {
+    static let reuseIdentifier = "RouteReplayAnnotationView"
+
+    private let emojiLabel = UILabel()
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        configureBaseView()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureBaseView()
+    }
+
+    func configure(emoji: String) {
+        emojiLabel.text = emoji
+    }
+
+    private func configureBaseView() {
+        bounds = CGRect(x: 0, y: 0, width: 44, height: 44)
+        centerOffset = .zero
+        collisionMode = .circle
+        displayPriority = .required
+        backgroundColor = .clear
+
+        emojiLabel.font = .systemFont(ofSize: 31)
+        emojiLabel.textAlignment = .center
+        emojiLabel.layer.shadowColor = UIColor.black.cgColor
+        emojiLabel.layer.shadowOpacity = 0.22
+        emojiLabel.layer.shadowRadius = 3
+        emojiLabel.layer.shadowOffset = CGSize(width: 0, height: 1)
+
+        addSubview(emojiLabel)
+
+        emojiLabel.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
     }
 }

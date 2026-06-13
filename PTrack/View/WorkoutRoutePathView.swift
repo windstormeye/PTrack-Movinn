@@ -51,6 +51,10 @@ final class WorkoutRoutePathView: UIView {
         updatePathIfNeeded()
     }
 
+    static func prewarmSource(for workout: TrackedWorkout) {
+        _ = source(for: workout)
+    }
+
     private func configureLayer() {
         backgroundColor = .clear
         isOpaque = false
