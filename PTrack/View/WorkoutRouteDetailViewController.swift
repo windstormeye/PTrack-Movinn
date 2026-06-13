@@ -31,11 +31,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var routeMediaItems: [RouteMediaItem] = []
     private var replayCoordinates: [CLLocationCoordinate2D] = []
     private var replayDistances: [CLLocationDistance] = []
+    private var replayAltitudes: [Double?] = []
     private var replayAnnotation: RouteReplayAnnotation?
 
     private let collapsedPanelHeight: CGFloat = 82
-    private let expandedPanelHeight: CGFloat = 262
+    private let expandedPanelHeight: CGFloat = 300
     private let navigationBackgroundHeight: CGFloat = 124
+    private let maximumElevationSampleCount = 120
 
     init(workout: TrackedWorkout) {
         self.workout = workout
@@ -221,7 +223,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         replayRulerView.snp.makeConstraints { make in
-            make.height.equalTo(48)
+            make.height.equalTo(82)
         }
     }
 
@@ -263,7 +265,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return
         }
 
-        configureReplayRoute(with: coordinates)
+        configureReplayRoute(with: coordinates, routeCoordinates: workout.coordinates)
 
         let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
         mapView.addOverlay(polyline)
@@ -364,26 +366,47 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     @objc private func handleReplayProgressChanged(_ sender: WorkoutRouteReplayRulerView) {
-        guard let coordinate = replayCoordinate(for: sender.progress) else {
+        guard let replayState = replayState(for: sender.progress) else {
             return
         }
 
+        let statusText = replayStatusText(
+            distanceMeters: replayState.distanceMeters,
+            altitudeMeters: replayState.altitudeMeters
+        )
+
         if let replayAnnotation {
-            replayAnnotation.coordinate = coordinate
+            replayAnnotation.coordinate = replayState.coordinate
+            replayAnnotation.statusText = statusText
+            if let annotationView = mapView.view(for: replayAnnotation) as? RouteReplayAnnotationView {
+                annotationView.configure(emoji: replayAnnotation.emoji, statusText: statusText)
+            }
         } else {
-            let annotation = RouteReplayAnnotation(coordinate: coordinate, emoji: replayEmoji)
+            let annotation = RouteReplayAnnotation(
+                coordinate: replayState.coordinate,
+                emoji: replayEmoji,
+                statusText: statusText
+            )
             replayAnnotation = annotation
             mapView.addAnnotation(annotation)
         }
     }
 
-    private func configureReplayRoute(with coordinates: [CLLocationCoordinate2D]) {
+    private func configureReplayRoute(
+        with coordinates: [CLLocationCoordinate2D],
+        routeCoordinates: [RouteCoordinate]
+    ) {
         replayCoordinates = coordinates
         replayDistances = cumulativeDistances(for: coordinates)
+        replayAltitudes = routeCoordinates.map(\.altitudeMeters)
 
-        if let totalDistance = replayDistances.last, workout.distanceMeters <= 0 {
-            replayRulerView.configure(totalDistanceText: replayTotalDistanceText(totalMeters: totalDistance))
-        }
+        let measuredDistance = replayDistances.last ?? workout.distanceMeters
+        let totalDistance = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
+        replayRulerView.configure(
+            totalDistanceText: replayTotalDistanceText(totalMeters: totalDistance),
+            elevationSamples: elevationSamples()
+        )
+
     }
 
     private func cumulativeDistances(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationDistance] {
@@ -407,16 +430,27 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return distances
     }
 
-    private func replayCoordinate(for progress: CGFloat) -> CLLocationCoordinate2D? {
+    private func replayState(for progress: CGFloat) -> ReplayState? {
         guard replayCoordinates.count == replayDistances.count,
               let totalDistance = replayDistances.last,
               totalDistance > 0 else {
-            return replayCoordinates.first
+            guard let coordinate = replayCoordinates.first else {
+                return nil
+            }
+            return ReplayState(
+                coordinate: coordinate,
+                distanceMeters: 0,
+                altitudeMeters: replayAltitude(at: 0)
+            )
         }
 
         let targetDistance = CLLocationDistance(progress) * totalDistance
         let index = nearestReplayCoordinateIndex(for: targetDistance)
-        return replayCoordinates[index]
+        return ReplayState(
+            coordinate: replayCoordinates[index],
+            distanceMeters: replayDistances[index],
+            altitudeMeters: replayAltitude(at: index)
+        )
     }
 
     private func nearestReplayCoordinateIndex(for targetDistance: CLLocationDistance) -> Int {
@@ -451,6 +485,42 @@ final class WorkoutRouteDetailViewController: UIViewController {
         self.replayAnnotation = nil
     }
 
+    private func replayAltitude(at index: Int) -> Double? {
+        guard index >= 0, index < replayAltitudes.count else {
+            return nil
+        }
+        return replayAltitudes[index]
+    }
+
+    private func elevationSamples() -> [RouteElevationSample] {
+        guard replayDistances.count == replayAltitudes.count else {
+            return []
+        }
+
+        let samples = replayAltitudes.enumerated().compactMap { index, altitude -> RouteElevationSample? in
+            guard let altitude else {
+                return nil
+            }
+            return RouteElevationSample(distanceMeters: replayDistances[index], altitudeMeters: altitude)
+        }
+
+        return downsampleElevationSamples(samples, maximumCount: maximumElevationSampleCount)
+    }
+
+    private func downsampleElevationSamples(
+        _ samples: [RouteElevationSample],
+        maximumCount: Int
+    ) -> [RouteElevationSample] {
+        guard samples.count > maximumCount, maximumCount > 2 else {
+            return samples
+        }
+
+        let step = Double(samples.count - 1) / Double(maximumCount - 1)
+        return (0..<maximumCount).map { index in
+            samples[Int(round(Double(index) * step))]
+        }
+    }
+
     private var replayEmoji: String {
         switch workout.activityType {
         case .cycling:
@@ -474,6 +544,27 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
         return String(format: "%.2fkm", kilometers)
     }
+
+    private func replayStatusText(
+        distanceMeters: CLLocationDistance,
+        altitudeMeters: Double?
+    ) -> String {
+        let distanceText: String
+        if distanceMeters >= 1000 {
+            distanceText = String(format: "%.2f km", distanceMeters / 1000)
+        } else {
+            distanceText = String(format: "%.0f m", max(distanceMeters, 0))
+        }
+
+        let altitudeText = altitudeMeters.map { "\(Int(round($0))) m" } ?? "-- m"
+        return "\(distanceText) · \(altitudeText)"
+    }
+}
+
+private struct ReplayState {
+    let coordinate: CLLocationCoordinate2D
+    let distanceMeters: CLLocationDistance
+    let altitudeMeters: Double?
 }
 
 extension WorkoutRouteDetailViewController: MKMapViewDelegate {
@@ -496,7 +587,7 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
             let annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? RouteReplayAnnotationView
                 ?? RouteReplayAnnotationView(annotation: replayAnnotation, reuseIdentifier: identifier)
             annotationView.annotation = replayAnnotation
-            annotationView.configure(emoji: replayAnnotation.emoji)
+            annotationView.configure(emoji: replayAnnotation.emoji, statusText: replayAnnotation.statusText)
             return annotationView
         }
 
@@ -587,10 +678,12 @@ private final class RouteEndpointAnnotationView: MKAnnotationView {
 private final class RouteReplayAnnotation: NSObject, MKAnnotation {
     @objc dynamic var coordinate: CLLocationCoordinate2D
     let emoji: String
+    var statusText: String
 
-    init(coordinate: CLLocationCoordinate2D, emoji: String) {
+    init(coordinate: CLLocationCoordinate2D, emoji: String, statusText: String) {
         self.coordinate = coordinate
         self.emoji = emoji
+        self.statusText = statusText
         super.init()
     }
 }
@@ -598,6 +691,8 @@ private final class RouteReplayAnnotation: NSObject, MKAnnotation {
 private final class RouteReplayAnnotationView: MKAnnotationView {
     static let reuseIdentifier = "RouteReplayAnnotationView"
 
+    private let statusContainerView = UIView()
+    private let statusLabel = UILabel()
     private let emojiLabel = UILabel()
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
@@ -610,16 +705,31 @@ private final class RouteReplayAnnotationView: MKAnnotationView {
         configureBaseView()
     }
 
-    func configure(emoji: String) {
+    func configure(emoji: String, statusText: String) {
         emojiLabel.text = emoji
+        statusLabel.text = statusText
     }
 
     private func configureBaseView() {
-        bounds = CGRect(x: 0, y: 0, width: 44, height: 44)
-        centerOffset = .zero
+        bounds = CGRect(x: 0, y: 0, width: 150, height: 80)
+        centerOffset = CGPoint(x: 0, y: -18)
         collisionMode = .circle
         displayPriority = .required
         backgroundColor = .clear
+        clipsToBounds = false
+
+        statusContainerView.backgroundColor = UIColor.systemBackground.withAlphaComponent(0.96)
+        statusContainerView.layer.cornerRadius = 13
+        statusContainerView.layer.shadowColor = UIColor.black.cgColor
+        statusContainerView.layer.shadowOpacity = 0.14
+        statusContainerView.layer.shadowRadius = 5
+        statusContainerView.layer.shadowOffset = CGSize(width: 0, height: 2)
+
+        statusLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        statusLabel.textColor = .label
+        statusLabel.textAlignment = .center
+        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         emojiLabel.font = .systemFont(ofSize: 31)
         emojiLabel.textAlignment = .center
@@ -628,10 +738,26 @@ private final class RouteReplayAnnotationView: MKAnnotationView {
         emojiLabel.layer.shadowRadius = 3
         emojiLabel.layer.shadowOffset = CGSize(width: 0, height: 1)
 
+        addSubview(statusContainerView)
+        statusContainerView.addSubview(statusLabel)
         addSubview(emojiLabel)
 
+        statusContainerView.snp.makeConstraints { make in
+            make.top.equalToSuperview()
+            make.centerX.equalToSuperview()
+            make.height.equalTo(26)
+            make.leading.greaterThanOrEqualToSuperview()
+            make.trailing.lessThanOrEqualToSuperview()
+        }
+
+        statusLabel.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(UIEdgeInsets(top: 4, left: 10, bottom: 4, right: 10))
+        }
+
         emojiLabel.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
+            make.centerX.equalToSuperview()
+            make.bottom.equalToSuperview()
+            make.size.equalTo(44)
         }
     }
 }
