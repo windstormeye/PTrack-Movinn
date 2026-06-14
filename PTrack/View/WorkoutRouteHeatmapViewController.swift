@@ -20,6 +20,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private let workouts: [TrackedWorkout]
     private let mapView = MKMapView()
     private let mapToneOverlay = HeatmapToneTileOverlay()
+    private let routesOverlay = HeatmapRoutesOverlay()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
@@ -30,11 +31,18 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private var loadGeneration = 0
     private var hasFittedRoutes = false
     private var selectedFilter: HeatmapFilter = .all
-    private var routeOverlays: [MKPolyline] = []
+    var routesOverlayRenderer: HeatmapRoutesOverlayRenderer?
+    private var renderedRoutesByID: [String: HeatmapRenderedRoute] = [:]
+    private var overlayUpdateWorkItem: DispatchWorkItem?
+    private var progressiveOverlayWorkItem: DispatchWorkItem?
+    private var overlayUpdateGeneration = 0
 
     private let routeSamplingRatio = 0.8
     private let maximumRoutePointCount = 360
     private let navigationBackgroundHeight: CGFloat = 124
+    private let routeLoadingPaddingRatio = 0.42
+    private let routeOverlayBatchSize = 28
+    private let maximumActiveRouteOverlayCount = 420
 
     init(workouts: [TrackedWorkout]) {
         self.workouts = workouts
@@ -65,6 +73,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         super.viewDidLayoutSubviews()
         updateNavigationBackgroundMask()
         fitRoutesIfNeeded()
+        scheduleVisibleRouteOverlayUpdate()
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
@@ -134,6 +143,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
 
         mapView.addOverlay(mapToneOverlay, level: .aboveRoads)
+        mapView.addOverlay(routesOverlay, level: .aboveLabels)
     }
 
     private func configureHeatmapMapStyle() {
@@ -282,15 +292,14 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         visibleRoutes = preparedRoutes.filter { route in
             filter.includes(route.activityType)
         }
-        updateRouteOverlay()
+        clearRouteOverlays()
 
         if resetCamera {
             fitMap(to: visibleRoutes, animated: true)
         }
 
-        guard !visibleRoutes.isEmpty else {
-            loadingIndicator.stopAnimating()
-            return
+        if !visibleRoutes.isEmpty {
+            scheduleVisibleRouteOverlayUpdate(immediate: true)
         }
 
         loadingIndicator.stopAnimating()
@@ -315,21 +324,228 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         )
     }
 
-    private func updateRouteOverlay() {
-        if !routeOverlays.isEmpty {
-            mapView.removeOverlays(routeOverlays)
-            routeOverlays.removeAll(keepingCapacity: true)
-        }
+    private func clearRouteOverlays() {
+        overlayUpdateGeneration += 1
+        overlayUpdateWorkItem?.cancel()
+        progressiveOverlayWorkItem?.cancel()
+        overlayUpdateWorkItem = nil
+        progressiveOverlayWorkItem = nil
 
-        guard !visibleRoutes.isEmpty else {
+        renderedRoutesByID.removeAll(keepingCapacity: true)
+        publishRenderedRoutes()
+    }
+
+    func suspendProgressiveRouteLoading() {
+        overlayUpdateGeneration += 1
+        overlayUpdateWorkItem?.cancel()
+        progressiveOverlayWorkItem?.cancel()
+        overlayUpdateWorkItem = nil
+        progressiveOverlayWorkItem = nil
+    }
+
+    func scheduleVisibleRouteOverlayUpdate(immediate: Bool = false) {
+        guard !visibleRoutes.isEmpty, mapView.bounds.width > 1, mapView.bounds.height > 1 else {
             return
         }
 
-        let polylines = visibleRoutes.map { route in
-            MKPolyline(coordinates: route.coordinates, count: route.coordinates.count)
+        overlayUpdateWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.updateVisibleRouteOverlays()
         }
-        routeOverlays = polylines
-        mapView.addOverlays(polylines, level: .aboveLabels)
+        overlayUpdateWorkItem = workItem
+
+        let delay: TimeInterval = immediate ? 0 : 0.08
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func updateVisibleRouteOverlays() {
+        guard !visibleRoutes.isEmpty, mapView.bounds.width > 1, mapView.bounds.height > 1 else {
+            return
+        }
+
+        let loadingMapRect = routeLoadingMapRect()
+        let candidateRoutes = visibleRoutes.filter { route in
+            route.boundingMapRect.intersects(loadingMapRect)
+        }
+        let targetRoutes = spatiallyDistributedRoutes(
+            candidateRoutes,
+            in: loadingMapRect,
+            maximumCount: maximumActiveRouteOverlayCount
+        )
+        let targetRouteIDs = Set(targetRoutes.map(\.id))
+        let obsoleteRouteIDs = renderedRoutesByID.keys.filter { !targetRouteIDs.contains($0) }
+
+        let pointLimit = overlayPointLimitForCurrentZoom()
+        let routesNeedingOverlay = targetRoutes.filter { route in
+            renderedRoutesByID[route.id]?.pointLimit != pointLimit
+        }
+        guard !routesNeedingOverlay.isEmpty else {
+            removeRenderedRoutes(withIDs: Array(obsoleteRouteIDs))
+            publishRenderedRoutes()
+            return
+        }
+
+        overlayUpdateGeneration += 1
+        progressiveOverlayWorkItem?.cancel()
+        addRouteOverlaysProgressively(
+            routesNeedingOverlay,
+            startIndex: 0,
+            generation: overlayUpdateGeneration,
+            pointLimit: pointLimit,
+            obsoleteRouteIDs: Array(obsoleteRouteIDs)
+        )
+    }
+
+    private func addRouteOverlaysProgressively(
+        _ routes: [HeatmapRoute],
+        startIndex: Int,
+        generation: Int,
+        pointLimit: Int,
+        obsoleteRouteIDs: [String] = []
+    ) {
+        guard generation == overlayUpdateGeneration, startIndex < routes.count else {
+            return
+        }
+
+        let endIndex = min(startIndex + routeOverlayBatchSize, routes.count)
+
+        for route in routes[startIndex..<endIndex] where renderedRoutesByID[route.id]?.pointLimit != pointLimit {
+            guard let renderedRoute = Self.renderedRoute(for: route, maximumCount: pointLimit) else {
+                continue
+            }
+
+            renderedRoutesByID[route.id] = renderedRoute
+        }
+
+        if startIndex == 0 {
+            removeRenderedRoutes(withIDs: obsoleteRouteIDs)
+        }
+        publishRenderedRoutes()
+
+        guard endIndex < routes.count else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.addRouteOverlaysProgressively(
+                routes,
+                startIndex: endIndex,
+                generation: generation,
+                pointLimit: pointLimit
+            )
+        }
+        progressiveOverlayWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016, execute: workItem)
+    }
+
+    private func removeRenderedRoutes(withIDs routeIDs: [String]) {
+        guard !routeIDs.isEmpty else {
+            return
+        }
+
+        for routeID in routeIDs {
+            renderedRoutesByID.removeValue(forKey: routeID)
+        }
+    }
+
+    private func publishRenderedRoutes() {
+        routesOverlay.renderedRoutes = Array(renderedRoutesByID.values)
+        routesOverlayRenderer?.setNeedsDisplay()
+    }
+
+    private func routeLoadingMapRect() -> MKMapRect {
+        let visibleMapRect = mapView.visibleMapRect
+        let dx = visibleMapRect.size.width * routeLoadingPaddingRatio
+        let dy = visibleMapRect.size.height * routeLoadingPaddingRatio
+        return visibleMapRect.insetBy(dx: -dx, dy: -dy)
+    }
+
+    private func overlayPointLimitForCurrentZoom() -> Int {
+        let longitudeDelta = abs(mapView.region.span.longitudeDelta)
+
+        switch longitudeDelta {
+        case 8...:
+            return min(maximumRoutePointCount, 88)
+        case 2..<8:
+            return min(maximumRoutePointCount, 144)
+        case 0.7..<2:
+            return min(maximumRoutePointCount, 220)
+        default:
+            return maximumRoutePointCount
+        }
+    }
+
+    private func spatiallyDistributedRoutes(
+        _ routes: [HeatmapRoute],
+        in mapRect: MKMapRect,
+        maximumCount: Int
+    ) -> [HeatmapRoute] {
+        guard routes.count > maximumCount, maximumCount > 0 else {
+            return routes
+        }
+
+        let gridSide = max(2, Int(sqrt(Double(maximumCount) / 2)))
+        let rectWidth = max(mapRect.size.width, 1)
+        let rectHeight = max(mapRect.size.height, 1)
+        var buckets: [[HeatmapRoute]] = Array(repeating: [], count: gridSide * gridSide)
+
+        for route in routes {
+            let centerX = route.boundingMapRect.origin.x + route.boundingMapRect.size.width / 2
+            let centerY = route.boundingMapRect.origin.y + route.boundingMapRect.size.height / 2
+            let normalizedX = (centerX - mapRect.origin.x) / rectWidth
+            let normalizedY = (centerY - mapRect.origin.y) / rectHeight
+            let column = min(max(Int(normalizedX * Double(gridSide)), 0), gridSide - 1)
+            let row = min(max(Int(normalizedY * Double(gridSide)), 0), gridSide - 1)
+            buckets[row * gridSide + column].append(route)
+        }
+
+        var result: [HeatmapRoute] = []
+        result.reserveCapacity(maximumCount)
+
+        while result.count < maximumCount {
+            var appendedRoute = false
+
+            for index in buckets.indices where !buckets[index].isEmpty {
+                result.append(buckets[index].removeFirst())
+                appendedRoute = true
+
+                if result.count == maximumCount {
+                    break
+                }
+            }
+
+            if !appendedRoute {
+                break
+            }
+        }
+
+        return result
+    }
+
+    private static func coordinates(for route: HeatmapRoute, maximumCount: Int) -> [CLLocationCoordinate2D] {
+        guard route.coordinates.count > maximumCount, maximumCount > 2 else {
+            return route.coordinates
+        }
+
+        let indexes = sampledIndexes(sourceCount: route.coordinates.count, targetCount: maximumCount)
+        return indexes.map { route.coordinates[$0] }
+    }
+
+    private static func renderedRoute(
+        for route: HeatmapRoute,
+        maximumCount: Int
+    ) -> HeatmapRenderedRoute? {
+        let coordinates = coordinates(for: route, maximumCount: maximumCount)
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        return HeatmapRenderedRoute(
+            id: route.id,
+            coordinates: coordinates,
+            boundingMapRect: route.boundingMapRect,
+            pointLimit: maximumCount
+        )
     }
 
     private static func makeHeatmapRoute(
@@ -368,6 +584,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
 
         return HeatmapRoute(
+            id: workout.id,
             coordinates: displayCoordinates,
             boundingMapRect: boundingMapRect,
             activityType: workout.activityType

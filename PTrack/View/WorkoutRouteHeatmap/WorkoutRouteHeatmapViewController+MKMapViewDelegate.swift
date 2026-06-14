@@ -9,9 +9,23 @@ import MapKit
 import UIKit
 
 extension WorkoutRouteHeatmapViewController: MKMapViewDelegate {
+    func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
+        suspendProgressiveRouteLoading()
+    }
+
+    func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+        scheduleVisibleRouteOverlayUpdate()
+    }
+
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         if let tileOverlay = overlay as? HeatmapToneTileOverlay {
             return MKTileOverlayRenderer(tileOverlay: tileOverlay)
+        }
+
+        if let routesOverlay = overlay as? HeatmapRoutesOverlay {
+            let renderer = HeatmapRoutesOverlayRenderer(routeOverlay: routesOverlay)
+            routesOverlayRenderer = renderer
+            return renderer
         }
 
         if let polyline = overlay as? MKPolyline {
