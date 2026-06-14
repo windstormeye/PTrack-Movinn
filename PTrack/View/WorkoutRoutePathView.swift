@@ -13,6 +13,7 @@ final class WorkoutRoutePathView: UIView {
     private var routeSource: RouteSource?
     private var routeID: String?
     private var renderedSize = CGSize.zero
+    private var currentLayerScale: CGFloat = 0
     private var strokeColor: UIColor = .black
 
     private let paddingRatio: Double = 0.18
@@ -36,6 +37,7 @@ final class WorkoutRoutePathView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        updateLayerScaleIfNeeded()
         updatePathIfNeeded()
     }
 
@@ -64,12 +66,23 @@ final class WorkoutRoutePathView: UIView {
         shapeLayer.lineWidth = lineWidth
         shapeLayer.lineJoin = .round
         shapeLayer.lineCap = .round
-        shapeLayer.contentsScale = contentScaleFactor
+        shapeLayer.allowsEdgeAntialiasing = true
         shapeLayer.drawsAsynchronously = true
-        shapeLayer.shouldRasterize = true
-        shapeLayer.rasterizationScale = contentScaleFactor
+        shapeLayer.shouldRasterize = false
+        updateLayerScaleIfNeeded()
 
         layer.addSublayer(shapeLayer)
+    }
+
+    private func updateLayerScaleIfNeeded() {
+        let scale = max(traitCollection.displayScale, window?.screen.scale ?? 0, 2)
+        guard currentLayerScale != scale else {
+            return
+        }
+
+        currentLayerScale = scale
+        shapeLayer.contentsScale = scale
+        shapeLayer.rasterizationScale = scale
     }
 
     private func updatePathIfNeeded() {

@@ -28,6 +28,12 @@ final class RouteMediaAnnotationView: MKAnnotationView {
     private let badgeView = UIImageView()
     private let bubbleLayer = CAShapeLayer()
     private static let imageManager = PHCachingImageManager()
+    private static let annotationSize = CGSize(width: 50, height: 58)
+    private static let bodyHeight: CGFloat = 50
+    private static let imageInset: CGFloat = 4
+    private static let imageSide: CGFloat = 42
+    private static let imageCornerRadius: CGFloat = 7
+    private static let badgeSize: CGFloat = 14
     private var representedAssetID: String?
     private var imageRequestID: PHImageRequestID = PHInvalidImageRequestID
 
@@ -74,7 +80,7 @@ final class RouteMediaAnnotationView: MKAnnotationView {
 
         imageRequestID = Self.imageManager.requestImage(
             for: mediaItem.asset,
-            targetSize: CGSize(width: 144, height: 144),
+            targetSize: CGSize(width: 132, height: 132),
             contentMode: .aspectFill,
             options: options
         ) { [weak self] image, _ in
@@ -87,8 +93,8 @@ final class RouteMediaAnnotationView: MKAnnotationView {
     }
 
     private func configureViews() {
-        bounds = CGRect(x: 0, y: 0, width: 66, height: 76)
-        centerOffset = CGPoint(x: 0, y: -38)
+        bounds = CGRect(origin: .zero, size: Self.annotationSize)
+        centerOffset = CGPoint(x: 0, y: -Self.annotationSize.height / 2)
         displayPriority = .required
         collisionMode = .rectangle
         backgroundColor = .clear
@@ -102,12 +108,12 @@ final class RouteMediaAnnotationView: MKAnnotationView {
 
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
-        imageView.layer.cornerRadius = 9
+        imageView.layer.cornerRadius = Self.imageCornerRadius
         imageView.backgroundColor = .secondarySystemBackground
 
         badgeView.tintColor = .white
         badgeView.backgroundColor = UIColor.black.withAlphaComponent(0.46)
-        badgeView.layer.cornerRadius = 9
+        badgeView.layer.cornerRadius = Self.badgeSize / 2
         badgeView.contentMode = .center
         badgeView.isHidden = true
 
@@ -115,13 +121,13 @@ final class RouteMediaAnnotationView: MKAnnotationView {
         addSubview(badgeView)
 
         imageView.snp.makeConstraints { make in
-            make.top.leading.trailing.equalToSuperview().inset(5)
-            make.height.equalTo(56)
+            make.top.leading.trailing.equalToSuperview().inset(Self.imageInset)
+            make.height.equalTo(Self.imageSide)
         }
 
         badgeView.snp.makeConstraints { make in
-            make.trailing.bottom.equalTo(imageView).inset(4)
-            make.size.equalTo(18)
+            make.trailing.bottom.equalTo(imageView).inset(3)
+            make.size.equalTo(Self.badgeSize)
         }
     }
 
@@ -146,10 +152,10 @@ final class RouteMediaAnnotationView: MKAnnotationView {
     }
 
     private func bubblePath(in rect: CGRect) -> UIBezierPath {
-        let bodyRect = CGRect(x: 0, y: 0, width: rect.width, height: 66)
-        let radius: CGFloat = 16
-        let tailWidth: CGFloat = 18
-        let tailHeight: CGFloat = 12
+        let bodyRect = CGRect(x: 0, y: 0, width: rect.width, height: Self.bodyHeight)
+        let radius: CGFloat = 12
+        let tailWidth: CGFloat = 14
+        let tailHeight: CGFloat = 8
         let tailCenterX = bodyRect.midX
         let tailLeftX = tailCenterX - tailWidth / 2
         let tailRightX = tailCenterX + tailWidth / 2
