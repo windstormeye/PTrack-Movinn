@@ -11,6 +11,7 @@ import UIKit
 class ViewController: UIViewController {
     private let store = HealthWorkoutStore()
     private let cacheStore = WorkoutCacheStore()
+    let newWorkoutBadgeStore = NewWorkoutBadgeStore()
     private let cacheSaveQueue = DispatchQueue(label: "studio.pj.PTrack.cache-save", qos: .utility)
     private let routeSourcePrewarmQueue = DispatchQueue(label: "studio.pj.PTrack.route-source-prewarm", qos: .utility)
     var workouts: [TrackedWorkout] = []
@@ -32,7 +33,7 @@ class ViewController: UIViewController {
     private let itemSpacing: CGFloat = 12
     private let lineSpacing: CGFloat = 2
     private let headerBottomPadding: CGFloat = 8
-    private let sectionInset = UIEdgeInsets(top: 0, left: 12, bottom: 16, right: 12)
+    private let sectionInset = UIEdgeInsets(top: 12, left: 12, bottom: 16, right: 12)
     private var pinchAnchorIndexPath: IndexPath?
     private var pinchAnchorUnitPoint = CGPoint(x: 0.5, y: 0.5)
     private let pinchResponse: CGFloat = 0.86
@@ -100,6 +101,8 @@ class ViewController: UIViewController {
 
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: gridLayout)
         collectionView.backgroundColor = .systemBackground
+        collectionView.clipsToBounds = false
+        collectionView.layer.masksToBounds = false
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
@@ -127,7 +130,7 @@ class ViewController: UIViewController {
 
         titleAccentLabel.text = "n"
         titleAccentLabel.font = titleFont
-        titleAccentLabel.textColor = UIColor(red: 141 / 255, green: 189 / 255, blue: 0, alpha: 1)
+        titleAccentLabel.textColor = AppColors.movinnGreen
         titleAccentLabel.adjustsFontForContentSizeCategory = true
 
         totalDistanceLabel.textColor = .secondaryLabel
@@ -275,6 +278,7 @@ class ViewController: UIViewController {
         }
 
         pendingWorkouts.append(workout)
+        newWorkoutBadgeStore.markIfNeeded(workout)
         prewarmRouteSource(for: workout)
         schedulePendingWorkoutFlush()
     }
@@ -357,6 +361,7 @@ class ViewController: UIViewController {
         switch result {
         case .success(let count):
             print("PTrack HealthKit: incremental route query completed, new routes: \(count)")
+            newWorkoutBadgeStore.markInitialSyncCompleted()
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")
         }

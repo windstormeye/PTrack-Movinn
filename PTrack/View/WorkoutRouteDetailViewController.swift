@@ -14,6 +14,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     let workout: TrackedWorkout
     private let mediaStore = RouteMediaStore()
     private let mapView = MKMapView()
+    private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let panelView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
@@ -33,6 +34,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayDistances: [CLLocationDistance] = []
     private var replayAltitudes: [Double?] = []
     private var replayAnnotation: RouteReplayAnnotation?
+    private var routePolyline: MKPolyline?
 
     private let collapsedPanelHeight: CGFloat = 82
     private let expandedPanelHeight: CGFloat = 214
@@ -182,17 +184,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func configureMapView() {
         mapView.delegate = self
-        mapView.mapType = .standard
-        mapView.pointOfInterestFilter = .excludingAll
+        AppMapStyle.apply(to: mapView)
         mapView.showsCompass = false
         mapView.showsScale = true
-        mapView.backgroundColor = .systemBackground
 
         view.addSubview(mapView)
 
         mapView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+
+        mapView.addOverlay(mapToneOverlay, level: .aboveRoads)
     }
 
     private func configureNavigationBackgroundView() {
@@ -315,7 +317,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         configureReplayRoute(with: coordinates, routeCoordinates: workout.coordinates)
 
         let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
-        mapView.addOverlay(polyline)
+        routePolyline = polyline
+        mapView.addOverlay(polyline, level: .aboveLabels)
 
         mapView.addAnnotations([
             RouteEndpointAnnotation(coordinate: coordinates[0], kind: .start),
@@ -324,13 +327,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func fitRouteIfNeeded() {
-        guard !hasFittedRoute, let overlay = mapView.overlays.first else {
+        guard !hasFittedRoute, let routePolyline else {
             return
         }
 
         hasFittedRoute = true
         mapView.setVisibleMapRect(
-            overlay.boundingMapRect,
+            routePolyline.boundingMapRect,
             edgePadding: UIEdgeInsets(top: 96, left: 32, bottom: expandedPanelHeight + 28, right: 32),
             animated: false
         )

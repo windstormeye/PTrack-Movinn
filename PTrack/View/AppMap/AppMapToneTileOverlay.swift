@@ -1,5 +1,5 @@
 //
-//  HeatmapToneTileOverlay.swift
+//  AppMapToneTileOverlay.swift
 //  PTrack
 //
 //  Created by Codex on 2026/6/14.
@@ -8,7 +8,7 @@
 import MapKit
 import UIKit
 
-final class HeatmapToneTileOverlay: MKTileOverlay {
+final class AppMapToneTileOverlay: MKTileOverlay {
     private static let tileData: Data = {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

@@ -19,7 +19,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private let workouts: [TrackedWorkout]
     private let mapView = MKMapView()
-    private let mapToneOverlay = HeatmapToneTileOverlay()
+    private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let routesOverlay = HeatmapRoutesOverlay()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
@@ -128,13 +128,11 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private func configureMapView() {
         mapView.delegate = self
-        configureHeatmapMapStyle()
-        mapView.pointOfInterestFilter = .excludingAll
+        AppMapStyle.apply(to: mapView)
         mapView.showsCompass = false
         mapView.showsScale = true
         mapView.isPitchEnabled = false
         mapView.isRotateEnabled = false
-        mapView.backgroundColor = .systemBackground
 
         view.addSubview(mapView)
 
@@ -144,19 +142,6 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
         mapView.addOverlay(mapToneOverlay, level: .aboveRoads)
         mapView.addOverlay(routesOverlay, level: .aboveLabels)
-    }
-
-    private func configureHeatmapMapStyle() {
-        mapView.overrideUserInterfaceStyle = .light
-
-        if #available(iOS 16.0, *) {
-            let configuration = MKStandardMapConfiguration(elevationStyle: .flat)
-            configuration.emphasisStyle = .muted
-            configuration.pointOfInterestFilter = .excludingAll
-            mapView.preferredConfiguration = configuration
-        } else {
-            mapView.mapType = .mutedStandard
-        }
     }
 
     private func configureLoadingIndicator() {

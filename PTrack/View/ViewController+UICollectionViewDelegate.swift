@@ -13,7 +13,13 @@ extension ViewController: UICollectionViewDelegate {
             return
         }
 
-        let detailViewController = WorkoutRouteDetailViewController(workout: workouts[indexPath.item])
+        let workout = workouts[indexPath.item]
+        if newWorkoutBadgeStore.markSeen(workout),
+           let cell = collectionView.cellForItem(at: indexPath) as? WorkoutRouteCell {
+            cell.setShowsNewBadge(false)
+        }
+
+        let detailViewController = WorkoutRouteDetailViewController(workout: workout)
         navigationController?.pushViewController(detailViewController, animated: true)
     }
 

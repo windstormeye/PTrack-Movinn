@@ -22,7 +22,13 @@ extension ViewController: UICollectionViewDataSource {
         )
 
         if let cell = cell as? WorkoutRouteCell {
-            cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: false)
+            let workout = workouts[indexPath.item]
+            cell.configure(
+                with: workout,
+                columnCount: columnCount,
+                showsMap: false,
+                showsNewBadge: newWorkoutBadgeStore.contains(workout)
+            )
         }
 
         return cell

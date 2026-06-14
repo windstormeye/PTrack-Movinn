@@ -18,8 +18,8 @@ extension WorkoutRouteHeatmapViewController: MKMapViewDelegate {
     }
 
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-        if let tileOverlay = overlay as? HeatmapToneTileOverlay {
-            return MKTileOverlayRenderer(tileOverlay: tileOverlay)
+        if let renderer = AppMapStyle.renderer(for: overlay) {
+            return renderer
         }
 
         if let routesOverlay = overlay as? HeatmapRoutesOverlay {

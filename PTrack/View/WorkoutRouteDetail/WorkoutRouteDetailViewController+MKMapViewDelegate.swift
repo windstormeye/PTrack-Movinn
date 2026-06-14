@@ -10,6 +10,10 @@ import UIKit
 
 extension WorkoutRouteDetailViewController: MKMapViewDelegate {
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+        if let renderer = AppMapStyle.renderer(for: overlay) {
+            return renderer
+        }
+
         guard let polyline = overlay as? MKPolyline else {
             return MKOverlayRenderer(overlay: overlay)
         }

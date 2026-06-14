@@ -13,10 +13,12 @@ final class WorkoutRouteCell: UICollectionViewCell {
 
     private let imageView = UIImageView()
     private let pathView = WorkoutRoutePathView()
+    private let newBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
     private var representedID: String?
     private var currentWorkout: TrackedWorkout?
     private var renderedSize: CGSize = .zero
     private var currentShowsMap = true
+    private var showsNewBadge = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -35,10 +37,12 @@ final class WorkoutRouteCell: UICollectionViewCell {
         renderedSize = .zero
         currentShowsMap = true
         imageView.image = nil
+        setShowsNewBadge(false)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        layoutNewBadgeLabel()
 
         guard currentShowsMap, let currentWorkout, renderedSize != contentView.bounds.size else {
             return
@@ -47,7 +51,12 @@ final class WorkoutRouteCell: UICollectionViewCell {
         renderSnapshot(for: currentWorkout)
     }
 
-    func configure(with workout: TrackedWorkout, columnCount: CGFloat, showsMap: Bool) {
+    func configure(
+        with workout: TrackedWorkout,
+        columnCount: CGFloat,
+        showsMap: Bool,
+        showsNewBadge: Bool
+    ) {
         let isNewWorkout = representedID != workout.id
         let needsSnapshot = representedID != workout.id
             || currentShowsMap != showsMap
@@ -62,6 +71,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
         currentWorkout = workout
         currentShowsMap = showsMap
         updateBackgroundVisibility(showsMap: showsMap)
+        setShowsNewBadge(showsNewBadge)
 
         guard showsMap else {
             imageView.image = nil
@@ -73,6 +83,12 @@ final class WorkoutRouteCell: UICollectionViewCell {
         if needsSnapshot {
             renderSnapshot(for: workout)
         }
+    }
+
+    func setShowsNewBadge(_ showsNewBadge: Bool) {
+        self.showsNewBadge = showsNewBadge
+        newBadgeLabel.isHidden = !showsNewBadge
+        layer.zPosition = showsNewBadge ? 10 : 0
     }
 
     private func renderSnapshot(for workout: TrackedWorkout) {
@@ -107,6 +123,8 @@ final class WorkoutRouteCell: UICollectionViewCell {
 
     private func configureViews() {
         backgroundColor = .clear
+        clipsToBounds = false
+        layer.masksToBounds = false
         contentView.backgroundColor = .secondarySystemBackground
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
@@ -115,8 +133,20 @@ final class WorkoutRouteCell: UICollectionViewCell {
         imageView.backgroundColor = .tertiarySystemBackground
         pathView.isHidden = true
 
+        newBadgeLabel.translatesAutoresizingMaskIntoConstraints = true
+        newBadgeLabel.isHidden = true
+        newBadgeLabel.text = "新活动！"
+        newBadgeLabel.textColor = UIColor.black.withAlphaComponent(0.86)
+        newBadgeLabel.font = .systemFont(ofSize: 8, weight: .bold)
+        newBadgeLabel.backgroundColor = AppColors.movinnGreen
+        newBadgeLabel.layer.cornerRadius = 5
+        newBadgeLabel.layer.masksToBounds = true
+        newBadgeLabel.layer.zPosition = 21
+        newBadgeLabel.isUserInteractionEnabled = false
+
         contentView.addSubview(imageView)
         contentView.addSubview(pathView)
+        addSubview(newBadgeLabel)
 
         imageView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
@@ -125,5 +155,15 @@ final class WorkoutRouteCell: UICollectionViewCell {
         pathView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+    }
+
+    private func layoutNewBadgeLabel() {
+        let labelSize = newBadgeLabel.intrinsicContentSize
+        newBadgeLabel.frame = CGRect(
+            x: 0,
+            y: -labelSize.height + 2,
+            width: labelSize.width,
+            height: labelSize.height
+        )
     }
 }
