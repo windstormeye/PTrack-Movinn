@@ -17,7 +17,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
-    private let panelView = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+    private let panelShadowView = UIView()
+    private let panelView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterialLight))
     private let handleTouchView = UIView()
     private let handleView = UIView()
     private let iconView = UIImageView()
@@ -39,6 +40,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let collapsedPanelHeight: CGFloat = 82
     private let expandedPanelHeight: CGFloat = 214
     private let navigationBackgroundHeight: CGFloat = 124
+    private let mapBottomExtension: CGFloat = 72
     private let maximumElevationSampleCount = 120
 
     init(workout: TrackedWorkout) {
@@ -74,6 +76,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateNavigationBackgroundMask()
+        updatePanelShadowPath()
         fitRouteIfNeeded()
     }
 
@@ -191,7 +194,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         view.addSubview(mapView)
 
         mapView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
+            make.top.leading.trailing.equalToSuperview()
+            make.bottom.equalToSuperview().offset(mapBottomExtension)
         }
 
         mapView.addOverlay(mapToneOverlay, level: .aboveRoads)
@@ -223,24 +227,32 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func configurePanelView() {
+        panelShadowView.backgroundColor = .clear
+        panelShadowView.layer.cornerRadius = 18
+        panelShadowView.layer.shadowColor = UIColor.black.cgColor
+        panelShadowView.layer.shadowOpacity = 0.16
+        panelShadowView.layer.shadowRadius = 20
+        panelShadowView.layer.shadowOffset = CGSize(width: 0, height: 10)
+
         panelView.layer.cornerRadius = 18
         panelView.layer.masksToBounds = true
+        panelView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.74)
 
-        handleView.backgroundColor = .tertiaryLabel
+        handleView.backgroundColor = UIColor.black.withAlphaComponent(0.24)
         handleView.layer.cornerRadius = 2
         handleTouchView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handlePanelPan(_:))))
 
         iconView.image = UIImage(systemName: workout.symbolName)
-        iconView.tintColor = .label
+        iconView.tintColor = UIColor.black.withAlphaComponent(0.9)
         iconView.contentMode = .scaleAspectFit
 
         titleLabel.text = workout.title
         titleLabel.font = .preferredFont(forTextStyle: .headline)
-        titleLabel.textColor = .label
+        titleLabel.textColor = UIColor.black.withAlphaComponent(0.92)
 
         distanceLabel.text = workout.distanceText
         distanceLabel.font = .preferredFont(forTextStyle: .headline)
-        distanceLabel.textColor = .label
+        distanceLabel.textColor = UIColor.black.withAlphaComponent(0.92)
         distanceLabel.textAlignment = .right
         distanceLabel.adjustsFontSizeToFitWidth = true
         distanceLabel.minimumScaleFactor = 0.78
@@ -254,6 +266,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         detailStackView.addArrangedSubview(replayRulerView)
 
+        view.addSubview(panelShadowView)
         view.addSubview(panelView)
         panelView.contentView.addSubview(handleTouchView)
         handleTouchView.addSubview(handleView)
@@ -266,6 +279,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
             make.leading.trailing.equalToSuperview().inset(14)
             make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(12)
             panelHeightConstraint = make.height.equalTo(collapsedPanelHeight).constraint
+        }
+
+        panelShadowView.snp.makeConstraints { make in
+            make.edges.equalTo(panelView)
         }
 
         handleTouchView.snp.makeConstraints { make in
@@ -308,6 +325,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
+    private func updatePanelShadowPath() {
+        panelShadowView.layer.shadowPath = UIBezierPath(
+            roundedRect: panelShadowView.bounds,
+            cornerRadius: 18
+        ).cgPath
+    }
+
     private func drawRoute() {
         let coordinates = workout.displayCoordinates
         guard coordinates.count > 1 else {
@@ -334,7 +358,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
         hasFittedRoute = true
         mapView.setVisibleMapRect(
             routePolyline.boundingMapRect,
-            edgePadding: UIEdgeInsets(top: 96, left: 32, bottom: expandedPanelHeight + 28, right: 32),
+            edgePadding: UIEdgeInsets(
+                top: 96,
+                left: 32,
+                bottom: expandedPanelHeight + 28 + mapBottomExtension,
+                right: 32
+            ),
             animated: false
         )
     }
