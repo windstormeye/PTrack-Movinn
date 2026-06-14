@@ -10,17 +10,6 @@ import Photos
 import SnapKit
 import UIKit
 
-final class RouteMediaAnnotation: NSObject, MKAnnotation {
-    let mediaItem: RouteMediaItem
-    let coordinate: CLLocationCoordinate2D
-
-    init(mediaItem: RouteMediaItem) {
-        self.mediaItem = mediaItem
-        coordinate = mediaItem.coordinate
-        super.init()
-    }
-}
-
 final class RouteMediaAnnotationView: MKAnnotationView {
     static let reuseIdentifier = "RouteMediaAnnotationView"
 

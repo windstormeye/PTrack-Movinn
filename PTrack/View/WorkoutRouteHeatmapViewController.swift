@@ -6,14 +6,20 @@
 //
 
 import CoreLocation
-import HealthKit
 import MapKit
 import SnapKit
 import UIKit
 
 final class WorkoutRouteHeatmapViewController: UIViewController {
+    private static let routeCache: NSCache<NSString, HeatmapRouteCacheBox> = {
+        let cache = NSCache<NSString, HeatmapRouteCacheBox>()
+        cache.countLimit = 3
+        return cache
+    }()
+
     private let workouts: [TrackedWorkout]
     private let mapView = MKMapView()
+    private let mapToneOverlay = HeatmapToneTileOverlay()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
@@ -21,15 +27,13 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private var preparedRoutes: [HeatmapRoute] = []
     private var visibleRoutes: [HeatmapRoute] = []
-    private var nextRouteIndex = 0
     private var loadGeneration = 0
-    private var overlayGeneration = 0
     private var hasFittedRoutes = false
     private var selectedFilter: HeatmapFilter = .all
+    private var routeOverlays: [MKPolyline] = []
 
     private let routeSamplingRatio = 0.8
-    private let overlayBatchSize = 12
-    private let overlayBatchDelay: TimeInterval = 0.018
+    private let maximumRoutePointCount = 360
     private let navigationBackgroundHeight: CGFloat = 124
 
     init(workouts: [TrackedWorkout]) {
@@ -115,16 +119,33 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private func configureMapView() {
         mapView.delegate = self
-        mapView.mapType = .standard
+        configureHeatmapMapStyle()
         mapView.pointOfInterestFilter = .excludingAll
         mapView.showsCompass = false
         mapView.showsScale = true
+        mapView.isPitchEnabled = false
+        mapView.isRotateEnabled = false
         mapView.backgroundColor = .systemBackground
 
         view.addSubview(mapView)
 
         mapView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
+        }
+
+        mapView.addOverlay(mapToneOverlay, level: .aboveRoads)
+    }
+
+    private func configureHeatmapMapStyle() {
+        mapView.overrideUserInterfaceStyle = .light
+
+        if #available(iOS 16.0, *) {
+            let configuration = MKStandardMapConfiguration(elevationStyle: .flat)
+            configuration.emphasisStyle = .muted
+            configuration.pointOfInterestFilter = .excludingAll
+            mapView.preferredConfiguration = configuration
+        } else {
+            mapView.mapType = .mutedStandard
         }
     }
 
@@ -186,13 +207,29 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         let generation = loadGeneration
         let workouts = workouts
         let samplingRatio = routeSamplingRatio
+        let maximumRoutePointCount = maximumRoutePointCount
+        let cacheKey = Self.cacheKey(
+            for: workouts,
+            samplingRatio: samplingRatio,
+            maximumPointCount: maximumRoutePointCount
+        )
+
+        if let cachedRoutes = Self.routeCache.object(forKey: cacheKey)?.routes {
+            preparedRoutes = cachedRoutes
+            applyFilter(selectedFilter, resetCamera: true)
+            return
+        }
 
         DispatchQueue.global(qos: .userInitiated).async {
             var routes: [HeatmapRoute] = []
             routes.reserveCapacity(workouts.count)
 
             for workout in workouts {
-                let route = Self.makeHeatmapRoute(for: workout, samplingRatio: samplingRatio)
+                let route = Self.makeHeatmapRoute(
+                    for: workout,
+                    samplingRatio: samplingRatio,
+                    maximumPointCount: maximumRoutePointCount
+                )
                 guard let route else {
                     continue
                 }
@@ -205,10 +242,29 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                     return
                 }
 
+                Self.routeCache.setObject(HeatmapRouteCacheBox(routes: routes), forKey: cacheKey)
                 self.preparedRoutes = routes
                 self.applyFilter(self.selectedFilter, resetCamera: true)
             }
         }
+    }
+
+    private static func cacheKey(
+        for workouts: [TrackedWorkout],
+        samplingRatio: Double,
+        maximumPointCount: Int
+    ) -> NSString {
+        var hasher = Hasher()
+        hasher.combine(workouts.count)
+        hasher.combine(samplingRatio)
+        hasher.combine(maximumPointCount)
+
+        for workout in workouts {
+            hasher.combine(workout.id)
+            hasher.combine(workout.coordinates.count)
+        }
+
+        return "\(workouts.count)-\(hasher.finalize())" as NSString
     }
 
     private func fitRoutesIfNeeded() {
@@ -223,13 +279,10 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         selectedFilter = filter
         updateFilterMenu()
 
-        overlayGeneration += 1
-        let generation = overlayGeneration
         visibleRoutes = preparedRoutes.filter { route in
             filter.includes(route.activityType)
         }
-        nextRouteIndex = 0
-        mapView.removeOverlays(mapView.overlays)
+        updateRouteOverlay()
 
         if resetCamera {
             fitMap(to: visibleRoutes, animated: true)
@@ -240,8 +293,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             return
         }
 
-        loadingIndicator.startAnimating()
-        addNextOverlayBatch(generation: generation)
+        loadingIndicator.stopAnimating()
     }
 
     private func fitMap(to routes: [HeatmapRoute], animated: Bool) {
@@ -263,61 +315,60 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         )
     }
 
-    private func addNextOverlayBatch(generation: Int) {
-        guard overlayGeneration == generation else {
+    private func updateRouteOverlay() {
+        if !routeOverlays.isEmpty {
+            mapView.removeOverlays(routeOverlays)
+            routeOverlays.removeAll(keepingCapacity: true)
+        }
+
+        guard !visibleRoutes.isEmpty else {
             return
         }
 
-        guard nextRouteIndex < visibleRoutes.count else {
-            loadingIndicator.stopAnimating()
-            return
-        }
-
-        let batchEndIndex = min(nextRouteIndex + overlayBatchSize, visibleRoutes.count)
-        let overlays = visibleRoutes[nextRouteIndex..<batchEndIndex].map { route in
+        let polylines = visibleRoutes.map { route in
             MKPolyline(coordinates: route.coordinates, count: route.coordinates.count)
         }
-        nextRouteIndex = batchEndIndex
-        mapView.addOverlays(overlays, level: .aboveRoads)
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + overlayBatchDelay) { [weak self] in
-            self?.addNextOverlayBatch(generation: generation)
-        }
+        routeOverlays = polylines
+        mapView.addOverlays(polylines, level: .aboveLabels)
     }
 
     private static func makeHeatmapRoute(
         for workout: TrackedWorkout,
-        samplingRatio: Double
+        samplingRatio: Double,
+        maximumPointCount: Int
     ) -> HeatmapRoute? {
         let sourceCoordinates = workout.coordinates
         guard sourceCoordinates.count > 1 else {
             return nil
         }
 
-        let targetCount = max(Int(Double(sourceCoordinates.count) * samplingRatio), 2)
+        let targetCount = min(
+            max(Int(Double(sourceCoordinates.count) * samplingRatio), 2),
+            maximumPointCount
+        )
         let coordinateIndexes = sampledIndexes(sourceCount: sourceCoordinates.count, targetCount: targetCount)
-        let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sourceCoordinates.map(\.coordinate))
-        var coordinates: [CLLocationCoordinate2D] = []
-        coordinates.reserveCapacity(coordinateIndexes.count)
+        let sampledCoordinates = coordinateIndexes.map { sourceCoordinates[$0].coordinate }
+        let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sampledCoordinates)
+        var mapPoints: [MKMapPoint] = []
+        mapPoints.reserveCapacity(displayCoordinates.count)
         var boundingMapRect = MKMapRect.null
 
-        for index in coordinateIndexes {
-            let coordinate = displayCoordinates[index]
+        for coordinate in displayCoordinates {
             guard CLLocationCoordinate2DIsValid(coordinate) else {
                 continue
             }
 
-            coordinates.append(coordinate)
             let point = MKMapPoint(coordinate)
+            mapPoints.append(point)
             boundingMapRect = boundingMapRect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
         }
 
-        guard coordinates.count > 1, !boundingMapRect.isNull else {
+        guard mapPoints.count > 1, !boundingMapRect.isNull else {
             return nil
         }
 
         return HeatmapRoute(
-            coordinates: coordinates,
+            coordinates: displayCoordinates,
             boundingMapRect: boundingMapRect,
             activityType: workout.activityType
         )
@@ -333,58 +384,4 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             min(Int(round(Double(index) * step)), sourceCount - 1)
         }
     }
-}
-
-extension WorkoutRouteHeatmapViewController: MKMapViewDelegate {
-    func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-        guard let polyline = overlay as? MKPolyline else {
-            return MKOverlayRenderer(overlay: overlay)
-        }
-
-        let renderer = MKPolylineRenderer(polyline: polyline)
-        renderer.strokeColor = UIColor.black.withAlphaComponent(0.18)
-        renderer.lineWidth = 3
-        renderer.lineJoin = .round
-        renderer.lineCap = .round
-        return renderer
-    }
-}
-
-private enum HeatmapFilter: CaseIterable {
-    case walking
-    case cycling
-    case running
-    case all
-
-    var title: String {
-        switch self {
-        case .walking:
-            return "行走/徒步"
-        case .cycling:
-            return "骑行"
-        case .running:
-            return "跑步"
-        case .all:
-            return "全部"
-        }
-    }
-
-    func includes(_ activityType: HKWorkoutActivityType) -> Bool {
-        switch self {
-        case .walking:
-            return activityType == .walking || activityType == .hiking
-        case .cycling:
-            return activityType == .cycling
-        case .running:
-            return activityType == .running
-        case .all:
-            return true
-        }
-    }
-}
-
-private struct HeatmapRoute {
-    let coordinates: [CLLocationCoordinate2D]
-    let boundingMapRect: MKMapRect
-    let activityType: HKWorkoutActivityType
 }

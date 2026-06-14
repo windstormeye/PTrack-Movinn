@@ -13,7 +13,7 @@ class ViewController: UIViewController {
     private let cacheStore = WorkoutCacheStore()
     private let cacheSaveQueue = DispatchQueue(label: "studio.pj.PTrack.cache-save", qos: .utility)
     private let routeSourcePrewarmQueue = DispatchQueue(label: "studio.pj.PTrack.route-source-prewarm", qos: .utility)
-    private var workouts: [TrackedWorkout] = []
+    var workouts: [TrackedWorkout] = []
     private var knownWorkoutIDs = Set<String>()
     private var pendingWorkouts: [TrackedWorkout] = []
     private var pendingFlushWorkItem: DispatchWorkItem?
@@ -27,7 +27,7 @@ class ViewController: UIViewController {
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let heatmapButton = UIButton(type: .system)
-    private var columnCount: CGFloat = 3
+    var columnCount: CGFloat = 3
     private var pinchStartColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
     private let lineSpacing: CGFloat = 2
@@ -295,7 +295,7 @@ class ViewController: UIViewController {
     }
 
     @discardableResult
-    private func flushPendingWorkouts(force: Bool = false) -> Bool {
+    func flushPendingWorkouts(force: Bool = false) -> Bool {
         pendingFlushWorkItem?.cancel()
         pendingFlushWorkItem = nil
 
@@ -540,54 +540,5 @@ class ViewController: UIViewController {
             x: min(max(offset.x, minimumX), maximumX),
             y: min(max(offset.y, minimumY), maximumY)
         )
-    }
-}
-
-extension ViewController: UICollectionViewDataSource {
-    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        workouts.count
-    }
-
-    func collectionView(
-        _ collectionView: UICollectionView,
-        cellForItemAt indexPath: IndexPath
-    ) -> UICollectionViewCell {
-        let cell = collectionView.dequeueReusableCell(
-            withReuseIdentifier: WorkoutRouteCell.reuseIdentifier,
-            for: indexPath
-        )
-
-        if let cell = cell as? WorkoutRouteCell {
-            cell.configure(with: workouts[indexPath.item], columnCount: columnCount, showsMap: false)
-        }
-
-        return cell
-    }
-}
-
-extension ViewController: UICollectionViewDataSourcePrefetching {
-    func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
-        // Home cells render route-only thumbnails as vector layers, so there is nothing to prefetch.
-    }
-}
-
-extension ViewController: UICollectionViewDelegate {
-    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        guard indexPath.item < workouts.count else {
-            return
-        }
-
-        let detailViewController = WorkoutRouteDetailViewController(workout: workouts[indexPath.item])
-        navigationController?.pushViewController(detailViewController, animated: true)
-    }
-
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate {
-            flushPendingWorkouts()
-        }
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        flushPendingWorkouts()
     }
 }

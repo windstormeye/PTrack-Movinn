@@ -196,13 +196,3 @@ final class WorkoutRoutePathView: UIView {
         }
     }
 }
-
-private final class RouteSource {
-    let points: [MKMapPoint]
-    let boundingRect: MKMapRect
-
-    init(points: [MKMapPoint], boundingRect: MKMapRect) {
-        self.points = points
-        self.boundingRect = boundingRect
-    }
-}

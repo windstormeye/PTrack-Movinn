@@ -10,10 +10,6 @@ import HealthKit
 import MapKit
 import Photos
 
-enum RouteMediaStoreError: Error {
-    case authorizationDenied
-}
-
 final class RouteMediaStore {
     private static let resultCache: NSCache<NSString, RouteMediaResultBox> = {
         let cache = NSCache<NSString, RouteMediaResultBox>()
@@ -244,13 +240,5 @@ final class RouteMediaStore {
         let dx = point.x - projectedX
         let dy = point.y - projectedY
         return dx * dx + dy * dy
-    }
-}
-
-private final class RouteMediaResultBox {
-    let items: [RouteMediaItem]
-
-    init(items: [RouteMediaItem]) {
-        self.items = items
     }
 }
