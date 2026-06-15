@@ -14,19 +14,136 @@ final class HealthWorkoutStore {
 
     var progressHandler: ((String) -> Void)?
 
+    private static var readTypes: Set<HKObjectType> {
+        var types: Set<HKObjectType> = [
+            HKObjectType.workoutType(),
+            HKSeriesType.workoutRoute()
+        ]
+
+        for spec in quantityMetricSpecs {
+            if let quantityType = spec.quantityType {
+                types.insert(quantityType)
+            }
+        }
+
+        return types
+    }
+
+    private static let quantityMetricSpecs: [HealthQuantityMetricSpec] = [
+        HealthQuantityMetricSpec(
+            identifier: .activeEnergyBurned,
+            unit: .kilocalorie(),
+            unitLabel: "kcal",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .basalEnergyBurned,
+            unit: .kilocalorie(),
+            unitLabel: "kcal",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .heartRate,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            unitLabel: "count/min",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .distanceWalkingRunning,
+            unit: .meter(),
+            unitLabel: "m",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .distanceCycling,
+            unit: .meter(),
+            unitLabel: "m",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .stepCount,
+            unit: .count(),
+            unitLabel: "count",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .flightsClimbed,
+            unit: .count(),
+            unitLabel: "count",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .appleExerciseTime,
+            unit: .minute(),
+            unitLabel: "min",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .appleMoveTime,
+            unit: .minute(),
+            unitLabel: "min",
+            options: .cumulativeSum
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .runningSpeed,
+            unit: .meter().unitDivided(by: .second()),
+            unitLabel: "m/s",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .runningPower,
+            unit: .watt(),
+            unitLabel: "W",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .runningStrideLength,
+            unit: .meter(),
+            unitLabel: "m",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .runningVerticalOscillation,
+            unit: .meter(),
+            unitLabel: "m",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .runningGroundContactTime,
+            unit: .second(),
+            unitLabel: "s",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .cyclingSpeed,
+            unit: .meter().unitDivided(by: .second()),
+            unitLabel: "m/s",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .cyclingPower,
+            unit: .watt(),
+            unitLabel: "W",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        ),
+        HealthQuantityMetricSpec(
+            identifier: .cyclingCadence,
+            unit: HKUnit.count().unitDivided(by: .minute()),
+            unitLabel: "count/min",
+            options: [.discreteAverage, .discreteMin, .discreteMax]
+        )
+    ]
+
     func requestAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
         guard HKHealthStore.isHealthDataAvailable() else {
             completion(.failure(HealthWorkoutStoreError.healthDataUnavailable))
             return
         }
 
-        let readTypes: Set<HKObjectType> = [
-            HKObjectType.workoutType(),
-            HKSeriesType.workoutRoute()
-        ]
+        let readTypes = Self.readTypes
 
         print("PTrack HealthKit: requesting authorization on main thread: \(Thread.isMainThread), read type count: \(readTypes.count)")
-        progressHandler?("正在请求 Apple 健康体能训练和路线读取权限...")
+        progressHandler?("正在请求 Apple 健康体能训练、路线和运动指标读取权限...")
         healthStore.requestAuthorization(toShare: nil, read: readTypes) { success, error in
             print("PTrack HealthKit: authorization request completed, success: \(success), error: \(String(describing: error))")
             if let error {
@@ -115,16 +232,30 @@ final class HealthWorkoutStore {
             let workout = workouts[index]
             progressHandler?("正在读取 \(index + 1)/\(workouts.count)，已找到 \(trackedWorkoutCount) 条轨迹")
 
-            loadLocations(for: workout) { result in
+            loadRouteDetails(for: workout) { result in
                 switch result {
-                case .success(let locations):
+                case .success(let routeDetails):
                     print(
-                        "PTrack HealthKit: \(workout.workoutActivityType.rawValue) \(workout.startDate) route locations: \(locations.count)"
+                        "PTrack HealthKit: \(workout.workoutActivityType.rawValue) \(workout.startDate) route locations: \(routeDetails.locations.count)"
                     )
-                    if locations.count > 1 {
-                        trackedWorkoutCount += 1
-                        onTrackedWorkout(TrackedWorkout(workout: workout, locations: locations))
+
+                    guard routeDetails.locations.count > 1 else {
+                        loadNextWorkout(at: index + 1)
+                        return
                     }
+
+                    self.progressHandler?("正在读取 \(workout.startDate) 的运动指标...")
+                    self.loadQuantityMetrics(for: workout) { quantityMetrics in
+                        trackedWorkoutCount += 1
+                        onTrackedWorkout(TrackedWorkout(
+                            workout: workout,
+                            locations: routeDetails.locations,
+                            routeSegments: routeDetails.segments,
+                            quantityMetrics: quantityMetrics
+                        ))
+                        loadNextWorkout(at: index + 1)
+                    }
+                    return
                 case .failure(let error):
                     print(
                         "PTrack HealthKit: route load failed for \(workout.workoutActivityType.rawValue) \(workout.startDate): \(error)"
@@ -141,9 +272,9 @@ final class HealthWorkoutStore {
         loadNextWorkout(at: 0)
     }
 
-    private func loadLocations(
+    private func loadRouteDetails(
         for workout: HKWorkout,
-        completion: @escaping (Result<[CLLocation], Error>) -> Void
+        completion: @escaping (Result<LoadedWorkoutRouteDetails, Error>) -> Void
     ) {
         let routeType = HKSeriesType.workoutRoute()
         let predicate = HKQuery.predicateForObjects(from: workout)
@@ -163,24 +294,25 @@ final class HealthWorkoutStore {
             let routes = (samples as? [HKWorkoutRoute]) ?? []
             print("PTrack HealthKit: \(workout.workoutActivityType.rawValue) \(workout.startDate) routes: \(routes.count)")
             self.progressHandler?("正在读取 \(workout.startDate) 的 \(routes.count) 段轨迹...")
-            self.collectLocations(from: routes, completion: completion)
+            self.collectRouteDetails(from: routes, completion: completion)
         }
 
         healthStore.execute(query)
     }
 
-    private func collectLocations(
+    private func collectRouteDetails(
         from routes: [HKWorkoutRoute],
-        completion: @escaping (Result<[CLLocation], Error>) -> Void
+        completion: @escaping (Result<LoadedWorkoutRouteDetails, Error>) -> Void
     ) {
         guard !routes.isEmpty else {
-            completion(.success([]))
+            completion(.success(LoadedWorkoutRouteDetails(locations: [], segments: [])))
             return
         }
 
         let group = DispatchGroup()
         let lock = NSLock()
         var allLocations: [CLLocation] = []
+        var segments: [TrackedWorkoutRouteSegment] = []
         var firstError: Error?
 
         for route in routes {
@@ -194,6 +326,10 @@ final class HealthWorkoutStore {
                     isFinished = true
                     lock.lock()
                     allLocations.append(contentsOf: routeLocations)
+                    segments.append(TrackedWorkoutRouteSegment(
+                        route: route,
+                        locationCount: routeLocations.count
+                    ))
                     lock.unlock()
                     group.leave()
                 }
@@ -225,8 +361,107 @@ final class HealthWorkoutStore {
             if let firstError, allLocations.isEmpty {
                 completion(.failure(firstError))
             } else {
-                completion(.success(allLocations.sorted { $0.timestamp < $1.timestamp }))
+                completion(.success(LoadedWorkoutRouteDetails(
+                    locations: allLocations.sorted { $0.timestamp < $1.timestamp },
+                    segments: segments.sorted { $0.startDate < $1.startDate }
+                )))
             }
         }
+    }
+
+    private func loadQuantityMetrics(
+        for workout: HKWorkout,
+        completion: @escaping ([TrackedWorkoutQuantityMetric]) -> Void
+    ) {
+        let metricsToLoad = Self.quantityMetricSpecs.compactMap { spec -> (HealthQuantityMetricSpec, HKQuantityType)? in
+            guard let quantityType = spec.quantityType else {
+                return nil
+            }
+            return (spec, quantityType)
+        }
+
+        guard !metricsToLoad.isEmpty else {
+            completion([])
+            return
+        }
+
+        let predicate = HKQuery.predicateForObjects(from: workout)
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var metrics: [TrackedWorkoutQuantityMetric] = []
+
+        for (spec, quantityType) in metricsToLoad {
+            if let workoutStatistics = workout.statistics(for: quantityType) {
+                let metric = Self.quantityMetric(from: workoutStatistics, spec: spec)
+                if metric.hasValues {
+                    metrics.append(metric)
+                    continue
+                }
+            }
+
+            group.enter()
+            let query = HKStatisticsQuery(
+                quantityType: quantityType,
+                quantitySamplePredicate: predicate,
+                options: spec.options
+            ) { _, statistics, error in
+                defer { group.leave() }
+
+                if let error {
+                    print("PTrack HealthKit: metric query failed for \(spec.identifier.rawValue): \(error)")
+                    return
+                }
+
+                guard let statistics else {
+                    return
+                }
+
+                let metric = Self.quantityMetric(from: statistics, spec: spec)
+
+                guard metric.hasValues else {
+                    return
+                }
+
+                lock.lock()
+                metrics.append(metric)
+                lock.unlock()
+            }
+
+            healthStore.execute(query)
+        }
+
+        group.notify(queue: .global(qos: .userInitiated)) {
+            completion(metrics.sorted { $0.identifier < $1.identifier })
+        }
+    }
+
+    nonisolated private static func quantityMetric(
+        from statistics: HKStatistics,
+        spec: HealthQuantityMetricSpec
+    ) -> TrackedWorkoutQuantityMetric {
+        TrackedWorkoutQuantityMetric(
+            identifier: spec.identifier.rawValue,
+            unit: spec.unitLabel,
+            sum: statistics.sumQuantity()?.doubleValue(for: spec.unit),
+            average: statistics.averageQuantity()?.doubleValue(for: spec.unit),
+            minimum: statistics.minimumQuantity()?.doubleValue(for: spec.unit),
+            maximum: statistics.maximumQuantity()?.doubleValue(for: spec.unit)
+        )
+    }
+}
+
+private struct LoadedWorkoutRouteDetails {
+    let locations: [CLLocation]
+    let segments: [TrackedWorkoutRouteSegment]
+}
+
+private struct HealthQuantityMetricSpec {
+    let identifier: HKQuantityTypeIdentifier
+    let unit: HKUnit
+    let unitLabel: String
+    let options: HKStatisticsOptions
+
+    var quantityType: HKQuantityType? {
+        HKObjectType.quantityType(forIdentifier: identifier)
     }
 }

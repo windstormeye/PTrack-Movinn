@@ -12,15 +12,27 @@ struct RouteCoordinate: Codable {
     let latitude: Double
     let longitude: Double
     let timestamp: Date
+    let horizontalAccuracyMeters: Double?
     let altitudeMeters: Double?
     let verticalAccuracyMeters: Double?
+    let speedMetersPerSecond: Double?
+    let speedAccuracyMetersPerSecond: Double?
+    let courseDegrees: Double?
+    let courseAccuracyDegrees: Double?
+    let floorLevel: Int?
 
     nonisolated init(location: CLLocation) {
         latitude = location.coordinate.latitude
         longitude = location.coordinate.longitude
         timestamp = location.timestamp
+        horizontalAccuracyMeters = location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil
         altitudeMeters = location.verticalAccuracy >= 0 ? location.altitude : nil
         verticalAccuracyMeters = location.verticalAccuracy >= 0 ? location.verticalAccuracy : nil
+        speedMetersPerSecond = location.speed >= 0 ? location.speed : nil
+        speedAccuracyMetersPerSecond = location.speedAccuracy >= 0 ? location.speedAccuracy : nil
+        courseDegrees = location.course >= 0 ? location.course : nil
+        courseAccuracyDegrees = location.courseAccuracy >= 0 ? location.courseAccuracy : nil
+        floorLevel = location.floor?.level
     }
 
     var coordinate: CLLocationCoordinate2D {

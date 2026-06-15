@@ -253,15 +253,22 @@ class ViewController: UIViewController {
     }
 
     private func loadIncrementalHealthWorkouts() {
-        let newestCachedDate = workouts.map(\.startDate).max()
         let cachedIDs = knownWorkoutIDs
+        let staleWorkouts = workouts.filter(\.needsHealthDataRefresh)
+        let staleWorkoutIDs = Set(staleWorkouts.map(\.id))
+        let queryStartDate = staleWorkouts.map(\.startDate).min() ?? workouts.map(\.startDate).max()
+        let excludedIDs = cachedIDs.subtracting(staleWorkoutIDs)
+
+        if !staleWorkouts.isEmpty {
+            print("PTrack HealthKit: refreshing \(staleWorkouts.count) cached workouts for expanded health data")
+        }
 
         store.loadTrackedWorkouts(
-            after: newestCachedDate,
-            excludingIDs: cachedIDs,
+            after: queryStartDate,
+            excludingIDs: excludedIDs,
             onTrackedWorkout: { [weak self] trackedWorkout in
                 Task { @MainActor in
-                    self?.appendTrackedWorkout(trackedWorkout)
+                    self?.upsertTrackedWorkout(trackedWorkout)
                 }
             },
             completion: { [weak self] loadResult in
@@ -270,6 +277,20 @@ class ViewController: UIViewController {
                 }
             }
         )
+    }
+
+    private func upsertTrackedWorkout(_ workout: TrackedWorkout) {
+        if let existingIndex = workouts.firstIndex(where: { $0.id == workout.id }) {
+            workouts[existingIndex] = workout
+            knownWorkoutIDs.insert(workout.id)
+            totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
+            updateTotalDistanceText()
+            prewarmRouteSource(for: workout)
+            scheduleCacheSave()
+            return
+        }
+
+        appendTrackedWorkout(workout)
     }
 
     private func appendTrackedWorkout(_ workout: TrackedWorkout) {
@@ -360,7 +381,7 @@ class ViewController: UIViewController {
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
-            print("PTrack HealthKit: incremental route query completed, new routes: \(count)")
+            print("PTrack HealthKit: route query completed, loaded routes: \(count)")
             newWorkoutBadgeStore.markInitialSyncCompleted()
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")

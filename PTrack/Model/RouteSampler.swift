@@ -8,7 +8,7 @@
 import Foundation
 
 enum RouteSampler {
-    static func downsample(_ coordinates: [RouteCoordinate], limit: Int) -> [RouteCoordinate] {
+    nonisolated static func downsample(_ coordinates: [RouteCoordinate], limit: Int) -> [RouteCoordinate] {
         guard coordinates.count > limit, limit > 2 else {
             return coordinates
         }

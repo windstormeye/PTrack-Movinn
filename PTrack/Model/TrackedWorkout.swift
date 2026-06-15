@@ -11,26 +11,64 @@ import HealthKit
 import UIKit
 
 struct TrackedWorkout: Codable {
+    nonisolated static let currentHealthDataVersion = 2
+
     let id: String
+    let healthDataVersion: Int?
     let activityTypeRawValue: UInt
     let startDate: Date
     let endDate: Date?
     let durationSeconds: TimeInterval?
     let distanceMeters: Double
+    let totalEnergyBurnedKilocalories: Double?
+    let sourceRevision: TrackedWorkoutSourceRevision?
+    let device: TrackedWorkoutDevice?
+    let metadata: [String: TrackedMetadataValue]?
+    let workoutEvents: [TrackedWorkoutEvent]?
+    let routeSegments: [TrackedWorkoutRouteSegment]?
+    let routeSummary: TrackedRouteSummary?
+    let quantityMetrics: [TrackedWorkoutQuantityMetric]?
     let coordinates: [RouteCoordinate]
 
-    init(workout: HKWorkout, locations: [CLLocation]) {
+    nonisolated init(
+        workout: HKWorkout,
+        locations: [CLLocation],
+        routeSegments: [TrackedWorkoutRouteSegment] = [],
+        quantityMetrics: [TrackedWorkoutQuantityMetric] = []
+    ) {
         id = workout.uuid.uuidString
+        healthDataVersion = Self.currentHealthDataVersion
         activityTypeRawValue = workout.workoutActivityType.rawValue
         startDate = workout.startDate
         endDate = workout.endDate
         durationSeconds = workout.duration
         distanceMeters = workout.totalDistance?.doubleValue(for: .meter()) ?? 0
-        coordinates = RouteSampler.downsample(locations.map(RouteCoordinate.init), limit: 1_200)
+        totalEnergyBurnedKilocalories = quantityMetrics.first {
+            $0.identifier == HKQuantityTypeIdentifier.activeEnergyBurned.rawValue
+        }?.sum
+        sourceRevision = TrackedWorkoutSourceRevision(sourceRevision: workout.sourceRevision)
+        device = workout.device.map(TrackedWorkoutDevice.init)
+        metadata = TrackedMetadata.values(from: workout.metadata)
+
+        let events = workout.workoutEvents ?? []
+        workoutEvents = events.isEmpty ? nil : events.map(TrackedWorkoutEvent.init)
+        self.routeSegments = routeSegments.isEmpty ? nil : routeSegments
+        self.quantityMetrics = quantityMetrics.isEmpty ? nil : quantityMetrics
+
+        let sampledCoordinates = RouteSampler.downsample(locations.map(RouteCoordinate.init), limit: 1_200)
+        routeSummary = TrackedRouteSummary(
+            locations: locations,
+            sampledCoordinateCount: sampledCoordinates.count
+        )
+        coordinates = sampledCoordinates
     }
 
     var activityType: HKWorkoutActivityType {
         HKWorkoutActivityType(rawValue: activityTypeRawValue) ?? .other
+    }
+
+    var needsHealthDataRefresh: Bool {
+        healthDataVersion != Self.currentHealthDataVersion
     }
 
     var title: String {
@@ -63,6 +101,10 @@ struct TrackedWorkout: Codable {
 
     var routeColor: UIColor {
         .black
+    }
+
+    var activeEnergyBurnedKilocalories: Double? {
+        quantityMetric(for: HKQuantityTypeIdentifier.activeEnergyBurned.rawValue)?.sum ?? totalEnergyBurnedKilocalories
     }
 
     var distanceText: String {
@@ -111,5 +153,9 @@ struct TrackedWorkout: Codable {
 
     var displayCoordinates: [CLLocationCoordinate2D] {
         CoordinateTransformer.displayCoordinates(for: coordinates.map(\.coordinate))
+    }
+
+    private func quantityMetric(for identifier: String) -> TrackedWorkoutQuantityMetric? {
+        quantityMetrics?.first { $0.identifier == identifier }
     }
 }

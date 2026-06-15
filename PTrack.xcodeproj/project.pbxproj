@@ -165,7 +165,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Movinn;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "PTrack 需要读取 Apple 健康中的户外运动和轨迹，用于展示你的运动路线。";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "PTrack 需要读取 Apple 健康中的户外运动、轨迹、能量、心率、速度等数据，用于展示和保存你的运动路线细节。";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PTrack 当前不会写入健康数据；此说明用于完整启用 Apple 健康权限面板。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "访问照片图库获取运动时拍摄的照片和视频";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -206,7 +206,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Movinn;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "PTrack 需要读取 Apple 健康中的户外运动和轨迹，用于展示你的运动路线。";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "PTrack 需要读取 Apple 健康中的户外运动、轨迹、能量、心率、速度等数据，用于展示和保存你的运动路线细节。";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PTrack 当前不会写入健康数据；此说明用于完整启用 Apple 健康权限面板。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "访问照片图库获取运动时拍摄的照片和视频";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
