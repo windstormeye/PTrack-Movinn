@@ -35,6 +35,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let durationLabel = UILabel()
     private let detailStackView = UIStackView()
     private let replayRulerView = WorkoutRouteReplayRulerView()
+    private let calorieRiceView = WorkoutRouteCalorieRiceView()
     private lazy var panelPanGestureRecognizer: UIPanGestureRecognizer = {
         let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePanelPan(_:)))
         recognizer.cancelsTouchesInView = false
@@ -55,7 +56,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
 
     private let minimumPanelHeight: CGFloat = 68
-    private let mediumPanelHeight: CGFloat = 248
+    private let mediumPanelHeight: CGFloat = 200
+    private let calorieRiceViewHeight: CGFloat = 88
+    private let calorieRiceTopSpacing: CGFloat = 12
     private let panelHandleTouchHeight: CGFloat = 32
     private let primaryContentSize: CGFloat = 28
     private let expandedPrimaryContentTop: CGFloat = 33
@@ -63,6 +66,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let navigationBackgroundHeight: CGFloat = 124
     private let mapBottomExtension = AppMapContainerView.defaultBottomLogoAvoidanceOffset
     private let maximumElevationSampleCount = 120
+
+    private var panelCaloriesKilocalories: Double? {
+        guard let calories = workout.activeEnergyBurnedKilocalories, calories > 0 else {
+            return nil
+        }
+
+        return calories
+    }
 
     init(workout: TrackedWorkout) {
         self.workout = workout
@@ -127,7 +138,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private func makeMoreMenu() -> UIMenu {
         let openStartAction = UIAction(
             title: "去起点",
-            image: UIImage(systemName: "location.fill")
+            image: UIImage(systemName: "location")
         ) { [weak self] _ in
             self?.openStartInMaps()
         }
@@ -318,6 +329,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func configurePanelView() {
+        let caloriesKilocalories = panelCaloriesKilocalories
+
         panelShadowView.backgroundColor = .clear
         panelShadowView.layer.cornerRadius = 32
         panelShadowView.layer.cornerCurve = .continuous
@@ -372,13 +385,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
         durationLabel.numberOfLines = 1
 
         detailStackView.axis = .vertical
-        detailStackView.spacing = 0
+        detailStackView.spacing = caloriesKilocalories == nil ? 0 : calorieRiceTopSpacing
         detailStackView.alpha = 0
 
         replayRulerView.configure(totalDistanceText: replayTotalDistanceText(totalMeters: workout.distanceMeters))
         replayRulerView.addTarget(self, action: #selector(handleReplayProgressChanged(_:)), for: .valueChanged)
 
         detailStackView.addArrangedSubview(replayRulerView)
+        if let caloriesKilocalories {
+            calorieRiceView.configure(caloriesKilocalories: caloriesKilocalories)
+            detailStackView.addArrangedSubview(calorieRiceView)
+        }
 
         view.addSubview(panelShadowView)
         view.addSubview(panelView)
@@ -439,6 +456,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         replayRulerView.snp.makeConstraints { make in
             make.height.equalTo(98)
+        }
+
+        if caloriesKilocalories != nil {
+            calorieRiceView.snp.makeConstraints { make in
+                make.height.equalTo(calorieRiceViewHeight)
+            }
         }
 
         updatePrimaryContentScale(for: panelHeight(for: .minimum))
@@ -535,7 +558,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
         case .minimum:
             return minimumPanelHeight
         case .medium:
-            return mediumPanelHeight
+            var height = mediumPanelHeight
+            if panelCaloriesKilocalories != nil {
+                height += calorieRiceTopSpacing + calorieRiceViewHeight
+            }
+            return height
         }
     }
 
