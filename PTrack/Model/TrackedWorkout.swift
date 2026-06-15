@@ -71,7 +71,64 @@ struct TrackedWorkout: Codable {
         healthDataVersion != Self.currentHealthDataVersion
     }
 
+    var stravaActivityID: Int64? {
+        if let value = metadata?["strava.id"]?.stringValue,
+           let activityID = Int64(value) {
+            return activityID
+        }
+
+        let idPrefix = "strava-"
+        if id.hasPrefix(idPrefix),
+           let activityID = Int64(id.dropFirst(idPrefix.count)) {
+            return activityID
+        }
+
+        let bundlePrefix = "com.strava.activity."
+        if let bundleIdentifier = sourceRevision?.bundleIdentifier,
+           bundleIdentifier.hasPrefix(bundlePrefix),
+           let activityID = Int64(bundleIdentifier.dropFirst(bundlePrefix.count)) {
+            return activityID
+        }
+
+        return nil
+    }
+
+    var isStravaSource: Bool {
+        stravaActivityID != nil || sourceRevision?.sourceName == "Strava"
+    }
+
+    var stravaSportType: String? {
+        metadata?["strava.sportType"]?.stringValue
+    }
+
+    var routeDataSourceTitle: String {
+        if isStravaSource {
+            return AppLocalization.text(.strava)
+        }
+
+        return AppLocalization.text(.appleHealth)
+    }
+
     var title: String {
+        switch stravaSportType {
+        case "Run":
+            return AppLocalization.text(.running)
+        case "TrailRun":
+            return AppLocalization.text(.trailRunning)
+        case "Walk":
+            return AppLocalization.text(.walking)
+        case "Hike":
+            return AppLocalization.text(.hiking)
+        case "Swim":
+            return AppLocalization.text(.outdoorSwimming)
+        case "VirtualRide":
+            return AppLocalization.text(.virtualCycling)
+        case "VirtualRun":
+            return AppLocalization.text(.virtualRunning)
+        default:
+            break
+        }
+
         switch activityType {
         case .cycling:
             return AppLocalization.text(.cycling)
@@ -81,6 +138,8 @@ struct TrackedWorkout: Codable {
             return AppLocalization.text(.walking)
         case .running:
             return AppLocalization.text(.running)
+        case .swimming:
+            return AppLocalization.text(.outdoorSwimming)
         default:
             return AppLocalization.text(.outdoorWorkout)
         }
@@ -90,10 +149,26 @@ struct TrackedWorkout: Codable {
         switch activityType {
         case .cycling:
             return "figure.outdoor.cycle"
+        case .handCycling:
+            return "figure.hand.cycling"
         case .hiking, .walking:
             return "figure.walk"
         case .running:
             return "figure.run"
+        case .swimming:
+            return "figure.open.water.swim"
+        case .paddleSports:
+            return "figure.paddleboarding"
+        case .rowing:
+            return "figure.rower"
+        case .sailing:
+            return "sailboat"
+        case .surfingSports:
+            return "figure.surfing"
+        case .snowSports:
+            return "snowflake"
+        case .skatingSports:
+            return "figure.skating"
         default:
             return "figure.walk"
         }

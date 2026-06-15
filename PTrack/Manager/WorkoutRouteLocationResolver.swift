@@ -61,7 +61,7 @@ final class WorkoutRouteLocationResolver {
     private var pendingCompletions: [String: [(WorkoutRouteResolvedLocation?) -> Void]] = [:]
     private var activeRequests: [String: MKReverseGeocodingRequest] = [:]
 
-    private static let currentCacheVersion = 2
+    private static let currentCacheVersion = 3
     private let cacheKeyPrefix = "workoutRouteLocation."
     private let cachedCoordinateToleranceMeters: CLLocationDistance = 100
 
@@ -184,11 +184,13 @@ final class WorkoutRouteLocationResolver {
     ) -> WorkoutRouteResolvedLocation? {
         let addressRepresentations = mapItem.addressRepresentations
         let administrativeArea = administrativeArea(from: addressRepresentations)
+        let countryCode = mapItem.placemark.isoCountryCode
         let fullAddress = addressRepresentations?.fullAddress(includingRegion: true, singleLine: true)
             ?? mapItem.address?.fullAddress
             ?? mapItem.address?.shortAddress
-        let countryName = addressRepresentations?.regionName
-        let locality = addressRepresentations?.cityName
+            ?? mapItem.placemark.title
+        let countryName = addressRepresentations?.regionName ?? mapItem.placemark.country
+        let locality = addressRepresentations?.cityName ?? mapItem.placemark.locality
         let titleComponents = uniqueComponents([
             mapItem.name,
             mapItem.address?.shortAddress,
@@ -204,7 +206,7 @@ final class WorkoutRouteLocationResolver {
 
         return WorkoutRouteResolvedLocation(
             title: title,
-            countryCode: nil,
+            countryCode: countryCode,
             countryName: countryName,
             administrativeArea: administrativeArea,
             subAdministrativeArea: nil,
@@ -251,7 +253,9 @@ final class WorkoutRouteLocationResolver {
 
         for component in components {
             let value = component?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !value.isEmpty, !seen.contains(value) else {
+            guard !value.isEmpty,
+                  !isUnknownLocationValue(value),
+                  !seen.contains(value) else {
                 continue
             }
 
@@ -260,5 +264,26 @@ final class WorkoutRouteLocationResolver {
         }
 
         return result
+    }
+
+    private static func isUnknownLocationValue(_ value: String) -> Bool {
+        let normalizedValue = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let compactValue = normalizedValue
+            .filter { !$0.isWhitespace && !$0.isPunctuation }
+
+        return [
+            "unknown",
+            "unknownlocation",
+            "unknownunknown",
+            "未知",
+            "未知位置",
+            "未知未知",
+            "不明",
+            "不明な位置",
+            "알수없음",
+            "알수없는위치"
+        ].contains(compactValue)
     }
 }

@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import AuthenticationServices
 import SafariServices
 import SnapKit
 
@@ -76,6 +77,8 @@ final class MoreSettingsViewController: UIViewController {
     private let navigationBackgroundHeight: CGFloat = 124
     private let healthWorkoutStore = HealthWorkoutStore()
     private var collectionView: UICollectionView!
+    var existingStravaActivityIDsProvider: () -> Set<Int64> = { [] }
+    var stravaAuthorizationCompletion: (Set<Int64>) -> Void = { _ in }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -250,21 +253,23 @@ final class MoreSettingsViewController: UIViewController {
     }
 
     private func openStravaAuthorization() {
-        let stravaDefine = StravaDefine()
-        var components = URLComponents(string: "https://www.strava.com/oauth/authorize")
-        components?.queryItems = [
-            URLQueryItem(name: "client_id", value: stravaDefine.ClientID),
-            URLQueryItem(name: "redirect_uri", value: "https://pj.studio"),
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "approval_prompt", value: "auto"),
-            URLQueryItem(name: "scope", value: "read,activity:read_all")
-        ]
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
 
-        guard let url = components?.url else {
-            return
+            do {
+                let excludedActivityIDs = existingStravaActivityIDsProvider()
+                _ = try await StravaManager.shared.authorize(presentationContextProvider: self)
+                navigationController?.popToRootViewController(animated: true)
+                stravaAuthorizationCompletion(excludedActivityIDs)
+            } catch {
+                guard (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin else {
+                    return
+                }
+                presentErrorAlert(title: AppLocalization.text(.strava), error: error)
+            }
         }
-
-        presentInternalBrowser(url: url)
     }
 
     private func openDeveloperWebsite() {
@@ -277,14 +282,24 @@ final class MoreSettingsViewController: UIViewController {
 
     private func presentInternalBrowser(url: URL) {
         let safariViewController = SFSafariViewController(url: url)
-        safariViewController.preferredControlTintColor = .label
         present(safariViewController, animated: true)
     }
 
     private func presentErrorAlert(_ error: Error) {
-        let alertController = UIAlertController(
+        presentErrorAlert(
             title: AppLocalization.text(.healthAuthorizationFailed),
-            message: localizedHealthErrorMessage(for: error),
+            message: localizedHealthErrorMessage(for: error)
+        )
+    }
+
+    private func presentErrorAlert(title: String, error: Error) {
+        presentErrorAlert(title: title, message: error.localizedDescription)
+    }
+
+    private func presentErrorAlert(title: String, message: String?) {
+        let alertController = UIAlertController(
+            title: title,
+            message: message,
             preferredStyle: .alert
         )
         alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
@@ -302,6 +317,20 @@ final class MoreSettingsViewController: UIViewController {
         case .authorizationDenied:
             return AppLocalization.text(.healthAuthorizationDenied)
         }
+    }
+}
+
+extension MoreSettingsViewController: ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        if let window = view.window {
+            return window
+        }
+
+        let windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+
+        return ASPresentationAnchor(windowScene: windowScene!)
     }
 }
 

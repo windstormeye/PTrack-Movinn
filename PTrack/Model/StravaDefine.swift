@@ -10,6 +10,11 @@ import Foundation
 struct StravaDefine {
     let ClientID: String = "258270"
     let ClientSecret: String = "baae1044ab75cb0922f55d88b6bb1299c9701071"
-    let AccessToken: String = "3da53b4096fdad717c88606d311fde3438d831d4"
-    let RefreshToken: String = "3aa4d0409518a875eec4adde2f6ad9b71a58b36b"
+    let AuthorizationCallbackDomain: String = "pj.studio"
+    let RedirectURI: String = "ptrack://pj.studio/strava/oauth"
+    let CallbackScheme: String = "ptrack"
+    let AuthorizationScope: String = "read,activity:read_all"
+    let AuthorizationURL: String = "https://www.strava.com/oauth/mobile/authorize"
+    let TokenURL: String = "https://www.strava.com/oauth/token"
+    let APIBaseURL: String = "https://www.strava.com/api/v3"
 }

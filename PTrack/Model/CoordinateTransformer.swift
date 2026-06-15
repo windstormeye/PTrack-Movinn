@@ -9,12 +9,65 @@ import CoreLocation
 import Foundation
 
 enum CoordinateTransformer {
-    static let version = 2
+    static let version = 3
 
     private static let pi = Double.pi
     private static let axis = 6378245.0
     private static let offset = 0.00669342162296594323
     private static let maximumRouteDecisionSampleCount = 180
+    private static let mainlandChinaBoundary: [CLLocationCoordinate2D] = [
+        CLLocationCoordinate2D(latitude: 39.5, longitude: 73.5),
+        CLLocationCoordinate2D(latitude: 35.5, longitude: 75.0),
+        CLLocationCoordinate2D(latitude: 32.0, longitude: 78.0),
+        CLLocationCoordinate2D(latitude: 29.0, longitude: 78.5),
+        CLLocationCoordinate2D(latitude: 27.2, longitude: 81.0),
+        CLLocationCoordinate2D(latitude: 27.8, longitude: 88.0),
+        CLLocationCoordinate2D(latitude: 27.6, longitude: 91.0),
+        CLLocationCoordinate2D(latitude: 28.0, longitude: 94.0),
+        CLLocationCoordinate2D(latitude: 23.8, longitude: 97.5),
+        CLLocationCoordinate2D(latitude: 21.0, longitude: 98.7),
+        CLLocationCoordinate2D(latitude: 21.0, longitude: 101.2),
+        CLLocationCoordinate2D(latitude: 22.4, longitude: 102.3),
+        CLLocationCoordinate2D(latitude: 22.7, longitude: 104.5),
+        CLLocationCoordinate2D(latitude: 21.8, longitude: 106.7),
+        CLLocationCoordinate2D(latitude: 21.5, longitude: 108.0),
+        CLLocationCoordinate2D(latitude: 21.4, longitude: 109.6),
+        CLLocationCoordinate2D(latitude: 21.5, longitude: 111.0),
+        CLLocationCoordinate2D(latitude: 21.8, longitude: 112.8),
+        CLLocationCoordinate2D(latitude: 22.2, longitude: 114.3),
+        CLLocationCoordinate2D(latitude: 23.0, longitude: 116.5),
+        CLLocationCoordinate2D(latitude: 24.0, longitude: 118.0),
+        CLLocationCoordinate2D(latitude: 25.5, longitude: 119.8),
+        CLLocationCoordinate2D(latitude: 27.5, longitude: 120.5),
+        CLLocationCoordinate2D(latitude: 30.8, longitude: 121.8),
+        CLLocationCoordinate2D(latitude: 32.8, longitude: 121.0),
+        CLLocationCoordinate2D(latitude: 39.0, longitude: 122.0),
+        CLLocationCoordinate2D(latitude: 40.0, longitude: 124.0),
+        CLLocationCoordinate2D(latitude: 39.8, longitude: 124.6),
+        CLLocationCoordinate2D(latitude: 40.6, longitude: 125.0),
+        CLLocationCoordinate2D(latitude: 42.0, longitude: 126.7),
+        CLLocationCoordinate2D(latitude: 42.5, longitude: 129.5),
+        CLLocationCoordinate2D(latitude: 44.0, longitude: 130.8),
+        CLLocationCoordinate2D(latitude: 48.0, longitude: 133.0),
+        CLLocationCoordinate2D(latitude: 48.4, longitude: 135.1),
+        CLLocationCoordinate2D(latitude: 49.5, longitude: 134.7),
+        CLLocationCoordinate2D(latitude: 49.6, longitude: 127.5),
+        CLLocationCoordinate2D(latitude: 53.5, longitude: 124.0),
+        CLLocationCoordinate2D(latitude: 53.3, longitude: 120.0),
+        CLLocationCoordinate2D(latitude: 49.5, longitude: 117.0),
+        CLLocationCoordinate2D(latitude: 49.2, longitude: 111.0),
+        CLLocationCoordinate2D(latitude: 50.5, longitude: 106.0),
+        CLLocationCoordinate2D(latitude: 49.0, longitude: 97.0),
+        CLLocationCoordinate2D(latitude: 46.5, longitude: 91.0),
+        CLLocationCoordinate2D(latitude: 49.0, longitude: 86.0),
+        CLLocationCoordinate2D(latitude: 45.0, longitude: 80.0)
+    ]
+    private static let hainanBoundary: [CLLocationCoordinate2D] = [
+        CLLocationCoordinate2D(latitude: 18.0, longitude: 108.3),
+        CLLocationCoordinate2D(latitude: 18.0, longitude: 111.2),
+        CLLocationCoordinate2D(latitude: 20.3, longitude: 111.2),
+        CLLocationCoordinate2D(latitude: 20.3, longitude: 108.3)
+    ]
 
     static func displayCoordinate(for coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
         displayCoordinate(for: coordinate, routeNeedsTransform: false)
@@ -47,7 +100,7 @@ enum CoordinateTransformer {
         }
 
         if routeNeedsTransform {
-            return !isClearlyHongKongOrMacau(coordinate)
+            return isLikelyMainlandChina(coordinate)
         }
 
         return isLikelyMainlandChina(coordinate)
@@ -84,6 +137,7 @@ enum CoordinateTransformer {
         isInChinaTransformBounds(coordinate)
             && !isInTaiwan(coordinate)
             && !isClearlyHongKongOrMacau(coordinate)
+            && isInMainlandChinaLandApproximation(coordinate)
     }
 
     private static func isInChinaTransformBounds(_ coordinate: CLLocationCoordinate2D) -> Bool {
@@ -148,6 +202,45 @@ enum CoordinateTransformer {
         }
 
         return 22.53
+    }
+
+    private static func isInMainlandChinaLandApproximation(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        isCoordinate(coordinate, inside: mainlandChinaBoundary) || isCoordinate(coordinate, inside: hainanBoundary)
+    }
+
+    private static func isCoordinate(
+        _ coordinate: CLLocationCoordinate2D,
+        inside polygon: [CLLocationCoordinate2D]
+    ) -> Bool {
+        guard polygon.count >= 3 else {
+            return false
+        }
+
+        var isInside = false
+        var previousIndex = polygon.count - 1
+        let longitude = coordinate.longitude
+        let latitude = coordinate.latitude
+
+        for currentIndex in polygon.indices {
+            let current = polygon[currentIndex]
+            let previous = polygon[previousIndex]
+            let latitudeIntersects = (current.latitude > latitude) != (previous.latitude > latitude)
+
+            if latitudeIntersects {
+                let longitudeAtLatitude = (previous.longitude - current.longitude)
+                    * (latitude - current.latitude)
+                    / (previous.latitude - current.latitude)
+                    + current.longitude
+
+                if longitude < longitudeAtLatitude {
+                    isInside.toggle()
+                }
+            }
+
+            previousIndex = currentIndex
+        }
+
+        return isInside
     }
 
     private static func wgs84ToGCJ02(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {

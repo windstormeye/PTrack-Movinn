@@ -32,6 +32,7 @@ enum AppTextKey: String {
     case appLanguage
     case appleHealth
     case appDefault
+    case activitySummaryPrefix
     case cancel
     case cycling
     case dark
@@ -49,6 +50,7 @@ enum AppTextKey: String {
     case ok
     case openStart
     case other
+    case outdoorSwimming
     case outdoorWorkout
     case queryingLocation
     case routeHeatmap
@@ -57,12 +59,17 @@ enum AppTextKey: String {
     case standard
     case sportType
     case strava
+    case stravaReauthorizationRequired
     case systemMapsNotFound
+    case totalActivityCountFormat
     case totalDistanceFormat
+    case trailRunning
     case uiSettings
     case unknownDistance
     case unknownDuration
     case unknownLocation
+    case virtualCycling
+    case virtualRunning
     case walking
     case walkingHiking
     case workoutStart
@@ -122,6 +129,7 @@ enum AppLocalization {
             .appLanguage: "App 语言",
             .appleHealth: "苹果健康",
             .appDefault: "默认",
+            .activitySummaryPrefix: "运动",
             .cancel: "取消",
             .cycling: "骑行",
             .dark: "暗色",
@@ -139,6 +147,7 @@ enum AppLocalization {
             .ok: "好",
             .openStart: "去起点",
             .other: "其他",
+            .outdoorSwimming: "户外游泳",
             .outdoorWorkout: "户外运动",
             .queryingLocation: "位置查询中",
             .routeHeatmap: "轨迹热图",
@@ -147,12 +156,17 @@ enum AppLocalization {
             .standard: "标准",
             .sportType: "运动类型",
             .strava: "Strava",
+            .stravaReauthorizationRequired: "Strava 授权已失效，请进入“更多”页面点击 Strava 重新登录。",
             .systemMapsNotFound: "未找到系统地图",
-            .totalDistanceFormat: "总距离：%dKM",
+            .totalActivityCountFormat: "%d 次",
+            .totalDistanceFormat: "%dkm",
+            .trailRunning: "越野跑",
             .uiSettings: "UI 设置",
             .unknownDistance: "未知距离",
             .unknownDuration: "未知时长",
             .unknownLocation: "未知位置",
+            .virtualCycling: "虚拟骑行",
+            .virtualRunning: "虚拟跑步",
             .walking: "行走",
             .walkingHiking: "行走/徒步",
             .workoutStart: "运动起点",
@@ -166,6 +180,7 @@ enum AppLocalization {
             .appLanguage: "アプリの言語",
             .appleHealth: "Appleヘルスケア",
             .appDefault: "デフォルト",
+            .activitySummaryPrefix: "運動",
             .cancel: "キャンセル",
             .cycling: "サイクリング",
             .dark: "ダーク",
@@ -183,6 +198,7 @@ enum AppLocalization {
             .ok: "OK",
             .openStart: "スタートへ",
             .other: "その他",
+            .outdoorSwimming: "屋外スイミング",
             .outdoorWorkout: "屋外ワークアウト",
             .queryingLocation: "位置を検索中",
             .routeHeatmap: "軌跡ヒートマップ",
@@ -191,12 +207,17 @@ enum AppLocalization {
             .standard: "標準",
             .sportType: "ワークアウト種別",
             .strava: "Strava",
+            .stravaReauthorizationRequired: "Strava の認証が無効になりました。「その他」画面で Strava をタップして再ログインしてください。",
             .systemMapsNotFound: "システムマップが見つかりません",
-            .totalDistanceFormat: "合計距離：%d km",
+            .totalActivityCountFormat: "%d回",
+            .totalDistanceFormat: "%dkm",
+            .trailRunning: "トレイルランニング",
             .uiSettings: "UI設定",
             .unknownDistance: "不明な距離",
             .unknownDuration: "不明な時間",
             .unknownLocation: "不明な位置",
+            .virtualCycling: "バーチャルサイクリング",
+            .virtualRunning: "バーチャルランニング",
             .walking: "ウォーキング",
             .walkingHiking: "ウォーキング/ハイキング",
             .workoutStart: "ワークアウト開始地点",
@@ -210,6 +231,7 @@ enum AppLocalization {
             .appLanguage: "앱 언어",
             .appleHealth: "Apple 건강",
             .appDefault: "기본",
+            .activitySummaryPrefix: "운동",
             .cancel: "취소",
             .cycling: "사이클링",
             .dark: "어두운",
@@ -227,6 +249,7 @@ enum AppLocalization {
             .ok: "확인",
             .openStart: "시작점으로",
             .other: "기타",
+            .outdoorSwimming: "야외 수영",
             .outdoorWorkout: "야외 운동",
             .queryingLocation: "위치 조회 중",
             .routeHeatmap: "경로 히트맵",
@@ -235,12 +258,17 @@ enum AppLocalization {
             .standard: "표준",
             .sportType: "운동 유형",
             .strava: "Strava",
+            .stravaReauthorizationRequired: "Strava 인증이 만료되었습니다. 더보기 화면에서 Strava를 눌러 다시 로그인하세요.",
             .systemMapsNotFound: "시스템 지도를 찾을 수 없음",
-            .totalDistanceFormat: "총 거리: %d km",
+            .totalActivityCountFormat: "%d회",
+            .totalDistanceFormat: "%dkm",
+            .trailRunning: "트레일 러닝",
             .uiSettings: "UI 설정",
             .unknownDistance: "알 수 없는 거리",
             .unknownDuration: "알 수 없는 시간",
             .unknownLocation: "알 수 없는 위치",
+            .virtualCycling: "가상 사이클링",
+            .virtualRunning: "가상 달리기",
             .walking: "걷기",
             .walkingHiking: "걷기/하이킹",
             .workoutStart: "운동 시작점",
@@ -254,6 +282,7 @@ enum AppLocalization {
             .appLanguage: "App Language",
             .appleHealth: "Apple Health",
             .appDefault: "Default",
+            .activitySummaryPrefix: "Activity",
             .cancel: "Cancel",
             .cycling: "Cycling",
             .dark: "Dark",
@@ -271,6 +300,7 @@ enum AppLocalization {
             .ok: "OK",
             .openStart: "Go to Start",
             .other: "Other",
+            .outdoorSwimming: "Outdoor Swimming",
             .outdoorWorkout: "Outdoor Workout",
             .queryingLocation: "Locating",
             .routeHeatmap: "Route Heatmap",
@@ -279,12 +309,17 @@ enum AppLocalization {
             .standard: "Standard",
             .sportType: "Sport Type",
             .strava: "Strava",
+            .stravaReauthorizationRequired: "Strava authorization has expired. Open More and tap Strava to sign in again.",
             .systemMapsNotFound: "System Maps not found",
-            .totalDistanceFormat: "Total: %d km",
+            .totalActivityCountFormat: "%d times",
+            .totalDistanceFormat: "%dkm",
+            .trailRunning: "Trail Running",
             .uiSettings: "UI Settings",
             .unknownDistance: "Unknown Distance",
             .unknownDuration: "Unknown Duration",
             .unknownLocation: "Unknown Location",
+            .virtualCycling: "Virtual Cycling",
+            .virtualRunning: "Virtual Running",
             .walking: "Walking",
             .walkingHiking: "Walking/Hiking",
             .workoutStart: "Workout Start",

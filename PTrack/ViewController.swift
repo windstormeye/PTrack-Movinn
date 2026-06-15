@@ -6,12 +6,14 @@
 //
 
 import SnapKit
+import HealthKit
 import UIKit
 
 class ViewController: UIViewController {
     private let store = HealthWorkoutStore()
     private let cacheStore = WorkoutCacheStore()
     let newWorkoutBadgeStore = NewWorkoutBadgeStore()
+    private let cacheLoadQueue = DispatchQueue(label: "studio.pj.PTrack.cache-load", qos: .userInitiated)
     private let cacheSaveQueue = DispatchQueue(label: "studio.pj.PTrack.cache-save", qos: .utility)
     private let routeSourcePrewarmQueue = DispatchQueue(label: "studio.pj.PTrack.route-source-prewarm", qos: .utility)
     var workouts: [TrackedWorkout] = []
@@ -19,7 +21,16 @@ class ViewController: UIViewController {
     private var pendingWorkouts: [TrackedWorkout] = []
     private var pendingFlushWorkItem: DispatchWorkItem?
     private var pendingCacheSaveWorkItem: DispatchWorkItem?
+    private var dirtyCacheWorkoutIDs = Set<String>()
+    private var deletedCacheWorkoutIDs = Set<String>()
+    private var isCacheSaveInProgress = false
+    private var needsCacheSaveAfterCurrentSave = false
     private var totalDistanceMeters: Double = 0
+    private var activeLoadingOperationCount = 0
+    private var isCacheLoadInProgress = false
+    private var isHealthSyncInProgress = false
+    private var isStravaSyncInProgress = false
+    private var isPullRefreshArmedInCurrentDrag = false
     private var collectionView: UICollectionView!
     private let gridLayout = WorkoutGridLayout()
     private let headerView = UIView()
@@ -41,6 +52,8 @@ class ViewController: UIViewController {
     private let pendingWorkoutFlushDelay: TimeInterval = 0.35
     private let activeScrollFlushDelay: TimeInterval = 0.45
     private let cacheSaveDebounceDelay: TimeInterval = 1.0
+    private let stravaIncrementalLookback: TimeInterval = 7 * 24 * 60 * 60
+    private let pullRefreshTriggerDistance: CGFloat = 86
     private var columnSnapDisplayLink: CADisplayLink?
     private var columnSnapStartTime: CFTimeInterval = 0
     private var columnSnapStartCount: CGFloat = 3
@@ -62,11 +75,11 @@ class ViewController: UIViewController {
         configureHeaderView()
         configureLoadingIndicator()
         registerLanguageObserver()
+        registerStravaImportObserver()
         store.progressHandler = { message in
             print("PTrack HealthKit: \(message)")
         }
-        loadCachedWorkouts()
-        loadHealthWorkouts()
+        loadCachedWorkoutsThenSynchronize()
     }
 
     override func viewDidLayoutSubviews() {
@@ -218,6 +231,18 @@ class ViewController: UIViewController {
         loadingIndicator.hidesWhenStopped = true
     }
 
+    private func beginLoadingOperation() {
+        activeLoadingOperationCount += 1
+        loadingIndicator.startAnimating()
+    }
+
+    private func endLoadingOperation() {
+        activeLoadingOperationCount = max(activeLoadingOperationCount - 1, 0)
+        if activeLoadingOperationCount == 0 {
+            loadingIndicator.stopAnimating()
+        }
+    }
+
     private func updateFullScreenInsets(force: Bool = false) {
         guard let collectionView else {
             return
@@ -242,9 +267,48 @@ class ViewController: UIViewController {
         }
     }
 
+    func synchronizeDataSourcesForAppOpen() {
+        loadHealthWorkouts()
+        loadAuthorizedStravaWorkouts()
+    }
+
+    func updatePullRefreshTracking(for scrollView: UIScrollView) {
+        guard scrollView.isDragging,
+              !isDataSourceSyncInProgress else {
+            isPullRefreshArmedInCurrentDrag = false
+            return
+        }
+
+        let pullDistance = max(-(scrollView.contentOffset.y + scrollView.contentInset.top), 0)
+        isPullRefreshArmedInCurrentDrag = pullDistance >= pullRefreshTriggerDistance
+    }
+
+    func performPullRefreshIfNeeded() {
+        guard isPullRefreshArmedInCurrentDrag,
+              !isDataSourceSyncInProgress else {
+            isPullRefreshArmedInCurrentDrag = false
+            return
+        }
+
+        isPullRefreshArmedInCurrentDrag = false
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        synchronizeDataSourcesForAppOpen()
+    }
+
+    func finishPullRefreshTracking() {
+        isPullRefreshArmedInCurrentDrag = false
+    }
+
+    private var isDataSourceSyncInProgress: Bool {
+        isCacheLoadInProgress || isHealthSyncInProgress || isStravaSyncInProgress
+    }
+
     private func updateTotalDistanceText() {
         let totalKilometers = totalDistanceMeters / 1000
-        totalDistanceLabel.text = AppLocalization.format(.totalDistanceFormat, Int(totalKilometers.rounded()))
+        let prefixText = AppLocalization.text(.activitySummaryPrefix)
+        let distanceText = AppLocalization.format(.totalDistanceFormat, Int(totalKilometers.rounded()))
+        let activityCountText = AppLocalization.format(.totalActivityCountFormat, workouts.count)
+        totalDistanceLabel.text = "\(prefixText) \(distanceText)/\(activityCountText)"
     }
 
     private func registerLanguageObserver() {
@@ -262,16 +326,67 @@ class ViewController: UIViewController {
         collectionView.reloadData()
     }
 
-    private func loadCachedWorkouts() {
-        workouts = cacheStore.load()
+    private func registerStravaImportObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleStravaTrackedWorkoutsDidImport(_:)),
+            name: StravaManager.trackedWorkoutsDidImportNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleStravaTrackedWorkoutsDidImport(_ notification: Notification) {
+        guard let importedWorkouts = notification.object as? [TrackedWorkout],
+              !importedWorkouts.isEmpty else {
+            return
+        }
+
+        for workout in importedWorkouts {
+            upsertTrackedWorkout(workout)
+        }
+        flushPendingWorkouts(force: true)
+        scheduleCacheSave(delay: 0)
+    }
+
+    private func loadCachedWorkoutsThenSynchronize() {
+        isCacheLoadInProgress = true
+        beginLoadingOperation()
+        cacheLoadQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let cachedWorkouts = self.cacheStore.load()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                self.applyCachedWorkouts(cachedWorkouts)
+                self.isCacheLoadInProgress = false
+                self.endLoadingOperation()
+                self.synchronizeDataSourcesForAppOpen()
+            }
+        }
+    }
+
+    private func applyCachedWorkouts(_ cachedWorkouts: [TrackedWorkout]) {
+        workouts = cachedWorkouts
+        removeCachedAppleHealthWorkoutsConflictingWithStrava()
         knownWorkoutIDs = Set(workouts.map(\.id))
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
         updateTotalDistanceText()
         collectionView.reloadData()
+        prewarmInitialRouteSources()
     }
 
     private func loadHealthWorkouts() {
-        loadingIndicator.startAnimating()
+        guard !isHealthSyncInProgress else {
+            return
+        }
+
+        isHealthSyncInProgress = true
+        beginLoadingOperation()
         store.requestAuthorization { [weak self] authorizationResult in
             guard let self else { return }
             switch authorizationResult {
@@ -282,10 +397,114 @@ class ViewController: UIViewController {
             case .failure(let error):
                 print("PTrack HealthKit: authorization failed: \(error)")
                 Task { @MainActor in
-                    self.loadingIndicator.stopAnimating()
+                    self.isHealthSyncInProgress = false
+                    self.endLoadingOperation()
                 }
             }
         }
+    }
+
+    private func loadAuthorizedStravaWorkouts() {
+        guard StravaManager.shared.hasStoredAuthorization else {
+            print("PTrack Strava: skipped import, no stored authorization")
+            return
+        }
+
+        let latestStartDate = latestStravaStartDateForIncrementalSync()
+        print(
+            "PTrack Strava: authorized import requested, latest incremental start: \(Self.debugDateString(latestStartDate)), cached Strava activities: \(workouts.compactMap(\.stravaActivityID).count)"
+        )
+        loadStravaWorkouts(
+            excludingStravaActivityIDs: Set(workouts.compactMap(\.stravaActivityID)),
+            after: latestStartDate,
+            presentsErrors: false
+        )
+    }
+
+    private func loadStravaWorkouts(
+        excludingStravaActivityIDs: Set<Int64>,
+        after startDate: Date? = nil,
+        presentsErrors: Bool
+    ) {
+        guard !isStravaSyncInProgress else {
+            return
+        }
+
+        isStravaSyncInProgress = true
+        beginLoadingOperation()
+        print(
+            "PTrack Strava: starting import, after: \(Self.debugDateString(startDate)), excluding cached activities: \(excludingStravaActivityIDs.count)"
+        )
+
+        Task { [weak self] in
+            do {
+                let importedWorkouts = try await StravaManager.shared.loadTrackedWorkouts(
+                    after: startDate,
+                    excludingStravaActivityIDs: excludingStravaActivityIDs,
+                    onTrackedWorkout: { [weak self] workout in
+                        await MainActor.run {
+                            guard let self else {
+                                return
+                            }
+
+                            self.upsertTrackedWorkout(workout)
+                            if self.flushPendingWorkouts() {
+                                print("PTrack Strava: streamed workout to home list: \(workout.id)")
+                            }
+                        }
+                    }
+                )
+
+                guard let self else {
+                    return
+                }
+
+                let didFlushPendingWorkouts = self.flushPendingWorkouts(force: true)
+                if !importedWorkouts.isEmpty {
+                    self.scheduleCacheSave(delay: 0)
+                    print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
+                }
+
+                print(
+                    "PTrack Strava: import completed, loaded routes: \(importedWorkouts.count), flushed: \(didFlushPendingWorkouts)"
+                )
+                self.isStravaSyncInProgress = false
+                self.endLoadingOperation()
+            } catch {
+                guard let self else {
+                    return
+                }
+
+                print("PTrack Strava: import failed: \(error)")
+                self.isStravaSyncInProgress = false
+                self.endLoadingOperation()
+                if StravaManager.requiresReauthorization(error) {
+                    self.presentSimpleAlert(
+                        title: AppLocalization.text(.strava),
+                        message: AppLocalization.text(.stravaReauthorizationRequired)
+                    )
+                } else if presentsErrors {
+                    self.presentSimpleAlert(title: AppLocalization.text(.strava), message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func latestStravaStartDateForIncrementalSync() -> Date? {
+        let latestStartDate = workouts
+            .filter { $0.stravaActivityID != nil }
+            .map(\.startDate)
+            .max()
+
+        return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
+    }
+
+    private static func debugDateString(_ date: Date?) -> String {
+        guard let date else {
+            return "nil"
+        }
+
+        return ISO8601DateFormatter().string(from: date)
     }
 
     private func loadIncrementalHealthWorkouts() {
@@ -316,17 +535,119 @@ class ViewController: UIViewController {
     }
 
     private func upsertTrackedWorkout(_ workout: TrackedWorkout) {
+        if shouldSkipForStravaPrecedence(workout) {
+            return
+        }
+
+        removeAppleHealthConflictsIfNeeded(for: workout)
+
         if let existingIndex = workouts.firstIndex(where: { $0.id == workout.id }) {
             workouts[existingIndex] = workout
             knownWorkoutIDs.insert(workout.id)
             totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
             updateTotalDistanceText()
             prewarmRouteSource(for: workout)
+            markCacheDirty(workout.id)
             scheduleCacheSave()
             return
         }
 
         appendTrackedWorkout(workout)
+    }
+
+    private func shouldSkipForStravaPrecedence(_ workout: TrackedWorkout) -> Bool {
+        guard !workout.isStravaSource,
+              let stravaWorkout = firstStravaConflict(for: workout) else {
+            return false
+        }
+
+        print(
+            "PTrack Sync: skipped Apple Health workout \(workout.id) because Strava workout \(stravaWorkout.id) has precedence"
+        )
+        return true
+    }
+
+    private func firstStravaConflict(for workout: TrackedWorkout) -> TrackedWorkout? {
+        (workouts + pendingWorkouts).first { candidate in
+            candidate.isStravaSource && candidate.isSamePhysicalWorkout(as: workout)
+        }
+    }
+
+    private func removeAppleHealthConflictsIfNeeded(for workout: TrackedWorkout) {
+        guard workout.isStravaSource else {
+            return
+        }
+
+        var removedWorkouts: [TrackedWorkout] = []
+        workouts.removeAll { candidate in
+            guard !candidate.isStravaSource,
+                  candidate.isSamePhysicalWorkout(as: workout) else {
+                return false
+            }
+
+            removedWorkouts.append(candidate)
+            return true
+        }
+
+        pendingWorkouts.removeAll { candidate in
+            guard !candidate.isStravaSource,
+                  candidate.isSamePhysicalWorkout(as: workout) else {
+                return false
+            }
+
+            removedWorkouts.append(candidate)
+            return true
+        }
+
+        guard !removedWorkouts.isEmpty else {
+            return
+        }
+
+        for removedWorkout in removedWorkouts {
+            knownWorkoutIDs.remove(removedWorkout.id)
+            newWorkoutBadgeStore.markSeen(removedWorkout)
+            markCacheDeleted(removedWorkout.id)
+        }
+
+        totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
+        updateTotalDistanceText()
+        UIView.performWithoutAnimation {
+            collectionView.reloadData()
+        }
+        scheduleCacheSave(delay: 0)
+
+        print(
+            "PTrack Sync: removed \(removedWorkouts.count) Apple Health duplicate(s) because Strava workout \(workout.id) has precedence"
+        )
+    }
+
+    private func removeCachedAppleHealthWorkoutsConflictingWithStrava() {
+        let stravaWorkouts = workouts.filter(\.isStravaSource)
+        guard !stravaWorkouts.isEmpty else {
+            return
+        }
+
+        var removedCount = 0
+        workouts.removeAll { workout in
+            guard !workout.isStravaSource else {
+                return false
+            }
+
+            let hasStravaConflict = stravaWorkouts.contains { $0.isSamePhysicalWorkout(as: workout) }
+            if hasStravaConflict {
+                removedCount += 1
+                newWorkoutBadgeStore.markSeen(workout)
+                markCacheDeleted(workout.id)
+            }
+            return hasStravaConflict
+        }
+
+        guard removedCount > 0 else {
+            return
+        }
+
+        print("PTrack Sync: removed \(removedCount) cached Apple Health duplicate(s) because Strava has precedence")
+        scheduleCacheSave(delay: 0)
     }
 
     private func appendTrackedWorkout(_ workout: TrackedWorkout) {
@@ -337,6 +658,7 @@ class ViewController: UIViewController {
         pendingWorkouts.append(workout)
         newWorkoutBadgeStore.markIfNeeded(workout)
         prewarmRouteSource(for: workout)
+        markCacheDirty(workout.id)
         schedulePendingWorkoutFlush()
     }
 
@@ -392,18 +714,95 @@ class ViewController: UIViewController {
             || columnSnapDisplayLink != nil
     }
 
+    private func markCacheDirty(_ workoutID: String) {
+        guard !workoutID.isEmpty else {
+            return
+        }
+
+        dirtyCacheWorkoutIDs.insert(workoutID)
+        deletedCacheWorkoutIDs.remove(workoutID)
+    }
+
+    private func markCacheDeleted(_ workoutID: String) {
+        guard !workoutID.isEmpty else {
+            return
+        }
+
+        dirtyCacheWorkoutIDs.remove(workoutID)
+        deletedCacheWorkoutIDs.insert(workoutID)
+    }
+
     private func scheduleCacheSave(delay: TimeInterval? = nil) {
         pendingCacheSaveWorkItem?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            let cachedWorkouts = self.workouts
-            self.cacheSaveQueue.async { [cacheStore = self.cacheStore] in
-                cacheStore.save(cachedWorkouts)
-            }
+            self?.performCacheSave()
         }
         pendingCacheSaveWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + (delay ?? cacheSaveDebounceDelay), execute: workItem)
+    }
+
+    private func performCacheSave() {
+        if isCacheSaveInProgress {
+            needsCacheSaveAfterCurrentSave = true
+            return
+        }
+
+        let dirtyWorkoutIDs = dirtyCacheWorkoutIDs
+        let deletedWorkoutIDs = deletedCacheWorkoutIDs
+        guard !dirtyWorkoutIDs.isEmpty || !deletedWorkoutIDs.isEmpty else {
+            return
+        }
+
+        dirtyCacheWorkoutIDs.subtract(dirtyWorkoutIDs)
+        deletedCacheWorkoutIDs.subtract(deletedWorkoutIDs)
+        isCacheSaveInProgress = true
+
+        let cachedWorkouts = workouts
+        cacheSaveQueue.async { [cacheStore = self.cacheStore] in
+            let didSave = cacheStore.saveIncremental(
+                cachedWorkouts,
+                dirtyWorkoutIDs: dirtyWorkoutIDs,
+                deletedWorkoutIDs: deletedWorkoutIDs
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                self.isCacheSaveInProgress = false
+                if !didSave {
+                    self.restoreUncommittedCacheChanges(
+                        dirtyWorkoutIDs: dirtyWorkoutIDs,
+                        deletedWorkoutIDs: deletedWorkoutIDs
+                    )
+                }
+
+                let shouldScheduleNextSave = self.needsCacheSaveAfterCurrentSave
+                    || !self.dirtyCacheWorkoutIDs.isEmpty
+                    || !self.deletedCacheWorkoutIDs.isEmpty
+                self.needsCacheSaveAfterCurrentSave = false
+
+                if shouldScheduleNextSave {
+                    self.scheduleCacheSave(delay: 0)
+                }
+            }
+        }
+    }
+
+    private func restoreUncommittedCacheChanges(
+        dirtyWorkoutIDs: Set<String>,
+        deletedWorkoutIDs: Set<String>
+    ) {
+        for workoutID in dirtyWorkoutIDs where !deletedCacheWorkoutIDs.contains(workoutID) {
+            dirtyCacheWorkoutIDs.insert(workoutID)
+        }
+
+        for workoutID in deletedWorkoutIDs {
+            dirtyCacheWorkoutIDs.remove(workoutID)
+            deletedCacheWorkoutIDs.insert(workoutID)
+        }
     }
 
     private func prewarmRouteSource(for workout: TrackedWorkout) {
@@ -412,8 +811,23 @@ class ViewController: UIViewController {
         }
     }
 
+    private func prewarmInitialRouteSources() {
+        let initialPrewarmCount = min(workouts.count, 72)
+        guard initialPrewarmCount > 0 else {
+            return
+        }
+
+        let initialWorkouts = Array(workouts.prefix(initialPrewarmCount))
+        routeSourcePrewarmQueue.async {
+            for workout in initialWorkouts {
+                WorkoutRoutePathView.prewarmSource(for: workout)
+            }
+        }
+    }
+
     private func handleLoadResult(_ result: Result<Int, Error>) {
-        loadingIndicator.stopAnimating()
+        isHealthSyncInProgress = false
+        endLoadingOperation()
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
@@ -435,7 +849,22 @@ class ViewController: UIViewController {
 
     private func showMoreSettings() {
         let moreSettingsViewController = MoreSettingsViewController()
+        moreSettingsViewController.existingStravaActivityIDsProvider = { [weak self] in
+            Set(self?.workouts.compactMap(\.stravaActivityID) ?? [])
+        }
+        moreSettingsViewController.stravaAuthorizationCompletion = { [weak self] excludedActivityIDs in
+            self?.loadStravaWorkouts(
+                excludingStravaActivityIDs: excludedActivityIDs,
+                presentsErrors: true
+            )
+        }
         navigationController?.pushViewController(moreSettingsViewController, animated: true)
+    }
+
+    private func presentSimpleAlert(title: String, message: String?) {
+        let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
+        present(alertController, animated: true)
     }
 
     @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
@@ -607,5 +1036,43 @@ class ViewController: UIViewController {
             x: min(max(offset.x, minimumX), maximumX),
             y: min(max(offset.y, minimumY), maximumY)
         )
+    }
+}
+
+private extension TrackedWorkout {
+    func isSamePhysicalWorkout(as other: TrackedWorkout) -> Bool {
+        guard isStravaSource != other.isStravaSource,
+              activityType.isCompatibleForSourceConflict(with: other.activityType) else {
+            return false
+        }
+
+        let startDateDifference = abs(startDate.timeIntervalSince(other.startDate))
+        guard startDateDifference <= 5 * 60 else {
+            return false
+        }
+
+        let hasComparableDistance = distanceMeters > 0 && other.distanceMeters > 0
+        if hasComparableDistance {
+            let distanceDifference = abs(distanceMeters - other.distanceMeters)
+            let maximumDistance = max(distanceMeters, other.distanceMeters)
+            return distanceDifference <= max(300, maximumDistance * 0.08)
+        }
+
+        guard let durationSeconds,
+              let otherDurationSeconds = other.durationSeconds,
+              durationSeconds > 0,
+              otherDurationSeconds > 0 else {
+            return true
+        }
+
+        let durationDifference = abs(durationSeconds - otherDurationSeconds)
+        let maximumDuration = max(durationSeconds, otherDurationSeconds)
+        return durationDifference <= max(5 * 60, maximumDuration * 0.15)
+    }
+}
+
+private extension HKWorkoutActivityType {
+    func isCompatibleForSourceConflict(with other: HKWorkoutActivityType) -> Bool {
+        self == other
     }
 }

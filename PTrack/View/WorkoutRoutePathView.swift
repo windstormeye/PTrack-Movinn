@@ -18,12 +18,21 @@ final class WorkoutRoutePathView: UIView {
 
     private let paddingRatio: Double = 0.18
     private let lineWidth: CGFloat = 2.8
-    private static let maximumThumbnailPointCount = 320
+    private static let maximumThumbnailPointCount = 180
     private static let sourceCache: NSCache<NSString, RouteSource> = {
         let cache = NSCache<NSString, RouteSource>()
-        cache.countLimit = 1_200
+        cache.countLimit = 4_000
         return cache
     }()
+    private static let sourceBuildQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "studio.pj.PTrack.route-source-build"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 2
+        return queue
+    }()
+    private static let sourceBuildLock = NSLock()
+    private static var pendingSourceBuilds: [String: PendingSourceBuild] = [:]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -44,8 +53,23 @@ final class WorkoutRoutePathView: UIView {
     func configure(with workout: TrackedWorkout) {
         if routeID != workout.id {
             routeID = workout.id
-            routeSource = Self.source(for: workout)
             renderedSize = .zero
+
+            if let cachedSource = Self.cachedSource(for: workout) {
+                routeSource = cachedSource
+            } else {
+                routeSource = nil
+                clearPath()
+                Self.loadSource(for: workout, priority: .veryHigh) { [weak self] source in
+                    guard let self, self.routeID == workout.id else {
+                        return
+                    }
+
+                    self.routeSource = source
+                    self.renderedSize = .zero
+                    self.updatePathIfNeeded()
+                }
+            }
         }
 
         strokeColor = workout.routeColor
@@ -54,7 +78,23 @@ final class WorkoutRoutePathView: UIView {
     }
 
     static func prewarmSource(for workout: TrackedWorkout) {
-        _ = source(for: workout)
+        loadSource(for: workout, priority: .low, completion: nil)
+    }
+
+    static func cancelPrewarmSource(for workout: TrackedWorkout) {
+        let key = sourceCacheKey(for: workout)
+        sourceBuildLock.lock()
+        defer {
+            sourceBuildLock.unlock()
+        }
+
+        guard let pendingBuild = pendingSourceBuilds[key],
+              pendingBuild.completions.isEmpty else {
+            return
+        }
+
+        pendingBuild.operation.cancel()
+        pendingSourceBuilds[key] = nil
     }
 
     private func configureLayer() {
@@ -72,6 +112,13 @@ final class WorkoutRoutePathView: UIView {
         updateLayerScaleIfNeeded()
 
         layer.addSublayer(shapeLayer)
+    }
+
+    private func clearPath() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shapeLayer.path = nil
+        CATransaction.commit()
     }
 
     private func updateLayerScaleIfNeeded() {
@@ -93,10 +140,7 @@ final class WorkoutRoutePathView: UIView {
         renderedSize = bounds.size
 
         guard let routeSource, routeSource.points.count > 1, bounds.width > 1, bounds.height > 1 else {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            shapeLayer.path = nil
-            CATransaction.commit()
+            clearPath()
             return
         }
 
@@ -163,8 +207,95 @@ final class WorkoutRoutePathView: UIView {
         return CGPoint(x: x, y: y)
     }
 
-    private static func source(for workout: TrackedWorkout) -> RouteSource {
-        let cacheKey = NSString(string: "\(workout.id)-gcj\(CoordinateTransformer.version)")
+    private static func loadSource(
+        for workout: TrackedWorkout,
+        priority: Operation.QueuePriority,
+        completion: ((RouteSource) -> Void)?
+    ) {
+        let key = sourceCacheKey(for: workout)
+        if let cachedSource = sourceCache.object(forKey: key as NSString) {
+            if let completion {
+                DispatchQueue.main.async {
+                    completion(cachedSource)
+                }
+            }
+            return
+        }
+
+        sourceBuildLock.lock()
+        if var pendingBuild = pendingSourceBuilds[key] {
+            if let completion {
+                pendingBuild.completions.append(completion)
+            }
+            if priority.rawValue > pendingBuild.operation.queuePriority.rawValue {
+                pendingBuild.operation.queuePriority = priority
+            }
+            pendingSourceBuilds[key] = pendingBuild
+            sourceBuildLock.unlock()
+            return
+        }
+
+        let operation = BlockOperation()
+        operation.queuePriority = priority
+        pendingSourceBuilds[key] = PendingSourceBuild(
+            operation: operation,
+            completions: completion.map { [$0] } ?? []
+        )
+        sourceBuildLock.unlock()
+
+        operation.addExecutionBlock { [weak operation] in
+            guard let operation else {
+                return
+            }
+
+            guard !operation.isCancelled else {
+                removePendingSourceBuild(for: key, operation: operation)
+                return
+            }
+
+            let source = makeSource(for: workout)
+
+            guard !operation.isCancelled else {
+                removePendingSourceBuild(for: key, operation: operation)
+                return
+            }
+
+            sourceCache.setObject(source, forKey: key as NSString)
+
+            sourceBuildLock.lock()
+            let completions = pendingSourceBuilds.removeValue(forKey: key)?.completions ?? []
+            sourceBuildLock.unlock()
+
+            guard !completions.isEmpty else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                completions.forEach { $0(source) }
+            }
+        }
+
+        sourceBuildQueue.addOperation(operation)
+    }
+
+    private static func cachedSource(for workout: TrackedWorkout) -> RouteSource? {
+        sourceCache.object(forKey: sourceCacheKey(for: workout) as NSString)
+    }
+
+    private static func sourceCacheKey(for workout: TrackedWorkout) -> String {
+        "\(workout.id)-gcj\(CoordinateTransformer.version)-p\(maximumThumbnailPointCount)"
+    }
+
+    private static func removePendingSourceBuild(for key: String, operation: Operation) {
+        sourceBuildLock.lock()
+        if pendingSourceBuilds[key]?.operation === operation {
+            pendingSourceBuilds[key] = nil
+        }
+        sourceBuildLock.unlock()
+    }
+
+    private static func makeSource(for workout: TrackedWorkout) -> RouteSource {
+        let cacheKey = sourceCacheKey(for: workout) as NSString
         if let cachedSource = sourceCache.object(forKey: cacheKey) {
             return cachedSource
         }
@@ -195,4 +326,9 @@ final class WorkoutRoutePathView: UIView {
             coordinates[Int(round(Double(index) * step))]
         }
     }
+}
+
+private struct PendingSourceBuild {
+    let operation: Operation
+    var completions: [(RouteSource) -> Void]
 }

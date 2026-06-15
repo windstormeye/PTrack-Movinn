@@ -69,29 +69,27 @@ final class WorkoutGridLayout: UICollectionViewLayout {
     }
 
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
-        guard let collectionView, !cachedAttributes.isEmpty else {
+        guard !cachedAttributes.isEmpty else {
             return []
         }
 
-        let clampedColumns = min(max(columns, 2), 6)
-        let lowerColumns = max(Int(floor(clampedColumns)), 2)
-        let upperColumns = min(max(Int(ceil(clampedColumns)), lowerColumns), 6)
-        let lowerMetrics = metrics(for: lowerColumns, collectionWidth: collectionView.bounds.width)
-        let upperMetrics = metrics(for: upperColumns, collectionWidth: collectionView.bounds.width)
-        let verticalAllowance = max(lowerMetrics.itemSize.height, upperMetrics.itemSize.height) + lineSpacing * 2
-        let lookupRect = rect.insetBy(dx: 0, dy: -verticalAllowance)
+        let lookupRect = rect.insetBy(dx: 0, dy: -minimumItemHeight)
+        var visibleAttributes: [UICollectionViewLayoutAttributes] = []
+        var index = firstAttributeIndex(withMaxYAtLeast: lookupRect.minY)
 
-        var visibleIndexes = IndexSet()
-        appendVisibleIndexes(metrics: lowerMetrics, in: lookupRect, to: &visibleIndexes)
-        if upperColumns != lowerColumns {
-            appendVisibleIndexes(metrics: upperMetrics, in: lookupRect, to: &visibleIndexes)
-        }
-
-        return visibleIndexes.compactMap { index in
-            guard index < cachedAttributes.count else { return nil }
+        while index < cachedAttributes.count {
             let attributes = cachedAttributes[index]
-            return attributes.frame.intersects(lookupRect) ? attributes : nil
+            guard attributes.frame.minY <= lookupRect.maxY else {
+                break
+            }
+
+            if attributes.frame.intersects(lookupRect) {
+                visibleAttributes.append(attributes)
+            }
+            index += 1
         }
+
+        return visibleAttributes
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
@@ -140,29 +138,19 @@ final class WorkoutGridLayout: UICollectionViewLayout {
         return clamped * clamped * (3 - 2 * clamped)
     }
 
-    private func appendVisibleIndexes(
-        metrics: Metrics,
-        in rect: CGRect,
-        to visibleIndexes: inout IndexSet
-    ) {
-        guard metrics.columns > 0, !cachedAttributes.isEmpty else {
-            return
+    private func firstAttributeIndex(withMaxYAtLeast minY: CGFloat) -> Int {
+        var lowerBound = 0
+        var upperBound = cachedAttributes.count
+
+        while lowerBound < upperBound {
+            let middleIndex = (lowerBound + upperBound) / 2
+            if cachedAttributes[middleIndex].frame.maxY < minY {
+                lowerBound = middleIndex + 1
+            } else {
+                upperBound = middleIndex
+            }
         }
 
-        let rowHeight = metrics.itemSize.height + lineSpacing
-        guard rowHeight > 0 else {
-            return
-        }
-
-        let firstRow = max(Int(floor((rect.minY - sectionInset.top - metrics.itemSize.height) / rowHeight)), 0)
-        let lastRow = max(Int(ceil((rect.maxY - sectionInset.top) / rowHeight)), firstRow)
-        let startIndex = min(firstRow * metrics.columns, cachedAttributes.count)
-        let endIndex = min((lastRow + 1) * metrics.columns, cachedAttributes.count)
-
-        guard startIndex < endIndex else {
-            return
-        }
-
-        visibleIndexes.insert(integersIn: startIndex..<endIndex)
+        return lowerBound
     }
 }

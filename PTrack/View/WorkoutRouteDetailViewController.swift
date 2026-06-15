@@ -29,7 +29,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let handleView = UIView()
     private let iconView = UIImageView()
     private let navigationTitleLabel = UILabel()
+    private let titleStackView = UIStackView()
     private let titleLabel = UILabel()
+    private let dataSourceLabel = UILabel()
     private let metricsStackView = UIStackView()
     private let distanceLabel = UILabel()
     private let durationLabel = UILabel()
@@ -152,6 +154,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         titleLabel.text = workout.title
+        dataSourceLabel.text = workout.routeDataSourceTitle
         distanceLabel.text = panelDistanceText()
         durationLabel.text = workout.durationText
         let measuredDistance = replayDistances.last ?? workout.distanceMeters
@@ -399,6 +402,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
         titleLabel.text = workout.title
         titleLabel.font = .preferredFont(forTextStyle: .headline)
         titleLabel.textColor = UIColor.black.withAlphaComponent(0.92)
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+
+        dataSourceLabel.text = workout.routeDataSourceTitle
+        dataSourceLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        dataSourceLabel.textColor = UIColor.secondaryLabel
+        dataSourceLabel.numberOfLines = 1
+        dataSourceLabel.lineBreakMode = .byTruncatingTail
+
+        titleStackView.axis = .vertical
+        titleStackView.alignment = .leading
+        titleStackView.spacing = 1
 
         let distanceFont = UIFont.preferredFont(forTextStyle: .headline)
         let durationFont = UIFont.systemFont(
@@ -444,9 +459,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
         panelView.contentView.addSubview(handleTouchView)
         handleTouchView.addSubview(handleView)
         panelView.contentView.addSubview(iconView)
-        panelView.contentView.addSubview(titleLabel)
+        panelView.contentView.addSubview(titleStackView)
         panelView.contentView.addSubview(metricsStackView)
         panelView.contentView.addSubview(detailStackView)
+        titleStackView.addArrangedSubview(titleLabel)
+        titleStackView.addArrangedSubview(dataSourceLabel)
         metricsStackView.addArrangedSubview(distanceLabel)
         metricsStackView.addArrangedSubview(durationLabel)
 
@@ -480,7 +497,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             make.size.equalTo(primaryContentSize)
         }
 
-        titleLabel.snp.makeConstraints { make in
+        titleStackView.snp.makeConstraints { make in
             make.leading.equalTo(iconView.snp.trailing).offset(10)
             make.centerY.equalTo(iconView)
             make.trailing.lessThanOrEqualTo(metricsStackView.snp.leading).offset(-12)
@@ -631,7 +648,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         let transform = CGAffineTransform(scaleX: scale, y: scale)
 
         iconView.transform = transform
-        titleLabel.transform = transform
+        titleStackView.transform = transform
         metricsStackView.transform = transform
     }
 
