@@ -11,6 +11,11 @@ import SnapKit
 import UIKit
 
 final class WorkoutRouteDetailViewController: UIViewController {
+    private enum PanelDetent: CaseIterable {
+        case minimum
+        case medium
+    }
+
     let workout: TrackedWorkout
     private let mediaStore = RouteMediaStore()
     private let mapContainerView = AppMapContainerView()
@@ -19,7 +24,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let panelShadowView = UIView()
-    private let panelView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterialLight))
+    private let panelView = UIVisualEffectView(effect: WorkoutRouteDetailViewController.makePanelGlassEffect())
     private let handleTouchView = UIView()
     private let handleView = UIView()
     private let iconView = UIImageView()
@@ -30,8 +35,15 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let durationLabel = UILabel()
     private let detailStackView = UIStackView()
     private let replayRulerView = WorkoutRouteReplayRulerView()
+    private lazy var panelPanGestureRecognizer: UIPanGestureRecognizer = {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePanelPan(_:)))
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = self
+        return recognizer
+    }()
     private var panelHeightConstraint: Constraint?
-    private var isPanelExpanded = false
+    private var primaryContentTopConstraint: Constraint?
+    private var selectedPanelDetent: PanelDetent = .minimum
     private var hasFittedRoute = false
     private var panStartHeight: CGFloat = 0
     var routeMediaItems: [RouteMediaItem] = []
@@ -42,8 +54,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var routePolyline: MKPolyline?
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
 
-    private let collapsedPanelHeight: CGFloat = 82
-    private let expandedPanelHeight: CGFloat = 214
+    private let minimumPanelHeight: CGFloat = 68
+    private let mediumPanelHeight: CGFloat = 248
+    private let panelHandleTouchHeight: CGFloat = 32
+    private let primaryContentSize: CGFloat = 28
+    private let expandedPrimaryContentTop: CGFloat = 33
+    private let minimumPrimaryContentScale: CGFloat = 0.88
     private let navigationBackgroundHeight: CGFloat = 124
     private let mapBottomExtension = AppMapContainerView.defaultBottomLogoAvoidanceOffset
     private let maximumElevationSampleCount = 120
@@ -55,6 +71,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    private static func makePanelGlassEffect() -> UIVisualEffect {
+        let effect = UIGlassEffect(style: .regular)
+        effect.isInteractive = true
+        effect.tintColor = UIColor.white.withAlphaComponent(0.16)
+        return effect
     }
 
     override func viewDidLoad() {
@@ -296,19 +319,23 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func configurePanelView() {
         panelShadowView.backgroundColor = .clear
-        panelShadowView.layer.cornerRadius = 18
+        panelShadowView.layer.cornerRadius = 32
+        panelShadowView.layer.cornerCurve = .continuous
         panelShadowView.layer.shadowColor = UIColor.black.cgColor
-        panelShadowView.layer.shadowOpacity = 0.16
-        panelShadowView.layer.shadowRadius = 20
-        panelShadowView.layer.shadowOffset = CGSize(width: 0, height: 10)
+        panelShadowView.layer.shadowOpacity = 0.18
+        panelShadowView.layer.shadowRadius = 28
+        panelShadowView.layer.shadowOffset = CGSize(width: 0, height: 12)
 
-        panelView.layer.cornerRadius = 18
+        panelView.layer.cornerRadius = 32
+        panelView.layer.cornerCurve = .continuous
         panelView.layer.masksToBounds = true
-        panelView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.74)
+        panelView.layer.borderColor = UIColor.white.withAlphaComponent(0.46).cgColor
+        panelView.layer.borderWidth = 0.8
+        panelView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        panelView.contentView.addGestureRecognizer(panelPanGestureRecognizer)
 
         handleView.backgroundColor = UIColor.black.withAlphaComponent(0.24)
         handleView.layer.cornerRadius = 2
-        handleTouchView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handlePanelPan(_:))))
 
         iconView.image = UIImage(systemName: workout.symbolName)
         iconView.tintColor = UIColor.black.withAlphaComponent(0.9)
@@ -328,7 +355,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         metricsStackView.alignment = .trailing
         metricsStackView.spacing = 2
 
-        distanceLabel.text = workout.distanceText
+        distanceLabel.text = panelDistanceText()
         distanceLabel.font = distanceFont
         distanceLabel.textColor = UIColor.black.withAlphaComponent(0.92)
         distanceLabel.textAlignment = .right
@@ -365,9 +392,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
         metricsStackView.addArrangedSubview(durationLabel)
 
         panelView.snp.makeConstraints { make in
-            make.leading.trailing.equalToSuperview().inset(14)
-            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(12)
-            panelHeightConstraint = make.height.equalTo(collapsedPanelHeight).constraint
+            make.leading.trailing.equalToSuperview().inset(10)
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(10)
+            panelHeightConstraint = make.height.equalTo(panelHeight(for: .minimum)).constraint
         }
 
         panelShadowView.snp.makeConstraints { make in
@@ -376,7 +403,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         handleTouchView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
-            make.height.equalTo(32)
+            make.height.equalTo(panelHandleTouchHeight)
         }
 
         handleView.snp.makeConstraints { make in
@@ -388,8 +415,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         iconView.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(18)
-            make.top.equalTo(handleTouchView.snp.bottom).offset(1)
-            make.size.equalTo(28)
+            primaryContentTopConstraint = make.top.equalTo(handleTouchView.snp.bottom)
+                .offset(primaryContentTopOffset(for: panelHeight(for: .minimum)))
+                .constraint
+            make.size.equalTo(primaryContentSize)
         }
 
         titleLabel.snp.makeConstraints { make in
@@ -411,12 +440,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
         replayRulerView.snp.makeConstraints { make in
             make.height.equalTo(98)
         }
+
+        updatePrimaryContentScale(for: panelHeight(for: .minimum))
     }
 
     private func updatePanelShadowPath() {
         panelShadowView.layer.shadowPath = UIBezierPath(
             roundedRect: panelShadowView.bounds,
-            cornerRadius: 18
+            cornerRadius: 32
         ).cgPath
     }
 
@@ -449,7 +480,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             edgePadding: UIEdgeInsets(
                 top: 96,
                 left: 32,
-                bottom: expandedPanelHeight + 28 + mapBottomExtension,
+                bottom: panelHeight(for: .medium) + 28 + mapBottomExtension,
                 right: 32
             ),
             animated: false
@@ -478,47 +509,96 @@ final class WorkoutRouteDetailViewController: UIViewController {
     @objc private func handlePanelPan(_ recognizer: UIPanGestureRecognizer) {
         switch recognizer.state {
         case .began:
-            panStartHeight = isPanelExpanded ? expandedPanelHeight : collapsedPanelHeight
+            panStartHeight = panelCurrentHeight()
         case .changed:
             let translationY = recognizer.translation(in: view).y
-            let proposedHeight = min(max(panStartHeight - translationY, collapsedPanelHeight), expandedPanelHeight)
+            let proposedHeight = min(
+                max(panStartHeight - translationY, panelHeight(for: .minimum)),
+                panelHeight(for: .medium)
+            )
             updatePanel(height: proposedHeight, animated: false)
         case .ended, .cancelled, .failed:
             let velocityY = recognizer.velocity(in: view).y
             let currentHeight = panelCurrentHeight()
-            let shouldExpand: Bool
-
-            if abs(velocityY) > 220 {
-                shouldExpand = velocityY < 0
-            } else {
-                shouldExpand = currentHeight > (collapsedPanelHeight + expandedPanelHeight) / 2
-            }
-
-            setPanelExpanded(shouldExpand, animated: true)
+            setPanelDetent(targetPanelDetent(for: currentHeight, velocityY: velocityY), animated: true)
         default:
             break
         }
     }
 
     private func panelCurrentHeight() -> CGFloat {
-        panelView.bounds.height > 0 ? panelView.bounds.height : (isPanelExpanded ? expandedPanelHeight : collapsedPanelHeight)
+        panelView.bounds.height > 0 ? panelView.bounds.height : panelHeight(for: selectedPanelDetent)
     }
 
-    private func setPanelExpanded(_ expanded: Bool, animated: Bool) {
-        isPanelExpanded = expanded
-        if !expanded {
+    private func panelHeight(for detent: PanelDetent) -> CGFloat {
+        switch detent {
+        case .minimum:
+            return minimumPanelHeight
+        case .medium:
+            return mediumPanelHeight
+        }
+    }
+
+    private func panelDetailProgress(for height: CGFloat) -> CGFloat {
+        let minimumHeight = panelHeight(for: .minimum)
+        let mediumHeight = panelHeight(for: .medium)
+        guard mediumHeight > minimumHeight else {
+            return 1
+        }
+
+        return (height - minimumHeight) / (mediumHeight - minimumHeight)
+    }
+
+    private func primaryContentTopOffset(for height: CGFloat) -> CGFloat {
+        let minimumPrimaryContentTop = (minimumPanelHeight - primaryContentSize) / 2
+        let progress = min(max(panelDetailProgress(for: height), 0), 1)
+        let top = minimumPrimaryContentTop + (expandedPrimaryContentTop - minimumPrimaryContentTop) * progress
+        return top - panelHandleTouchHeight
+    }
+
+    private func updatePrimaryContentScale(for height: CGFloat) {
+        let progress = min(max(panelDetailProgress(for: height), 0), 1)
+        let scale = minimumPrimaryContentScale + (1 - minimumPrimaryContentScale) * progress
+        let transform = CGAffineTransform(scaleX: scale, y: scale)
+
+        iconView.transform = transform
+        titleLabel.transform = transform
+        metricsStackView.transform = transform
+    }
+
+    private func targetPanelDetent(for height: CGFloat, velocityY: CGFloat) -> PanelDetent {
+        let minimumHeight = panelHeight(for: .minimum)
+        let mediumHeight = panelHeight(for: .medium)
+
+        if velocityY < -220 {
+            return .medium
+        }
+
+        if velocityY > 220 {
+            return .minimum
+        }
+
+        let midpoint = (minimumHeight + mediumHeight) / 2
+        return height >= midpoint ? .medium : .minimum
+    }
+
+    private func setPanelDetent(_ detent: PanelDetent, animated: Bool) {
+        selectedPanelDetent = detent
+        if detent == .minimum {
             removeReplayAnnotation()
             replayRulerView.setProgress(0)
         }
-        updatePanel(height: expanded ? expandedPanelHeight : collapsedPanelHeight, animated: animated)
+        updatePanel(height: panelHeight(for: detent), animated: animated)
     }
 
     private func updatePanel(height: CGFloat, animated: Bool) {
-        let progress = (height - collapsedPanelHeight) / (expandedPanelHeight - collapsedPanelHeight)
+        let progress = panelDetailProgress(for: height)
         panelHeightConstraint?.update(offset: height)
+        primaryContentTopConstraint?.update(offset: primaryContentTopOffset(for: height))
 
         let changes = {
             self.detailStackView.alpha = min(max(progress, 0), 1)
+            self.updatePrimaryContentScale(for: height)
             self.view.layoutIfNeeded()
         }
 
@@ -527,7 +607,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return
         }
 
-        UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseInOut]) {
+        UIView.animate(
+            withDuration: 0.36,
+            delay: 0,
+            usingSpringWithDamping: 0.86,
+            initialSpringVelocity: 0.7,
+            options: [.allowUserInteraction, .beginFromCurrentState]
+        ) {
             changes()
         }
     }
@@ -741,6 +827,16 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return String(format: "%.2fkm", kilometers)
     }
 
+    private func panelDistanceText() -> String {
+        if workout.distanceMeters >= 1000 {
+            return String(format: "%.2f 公里", workout.distanceMeters / 1000)
+        } else if workout.distanceMeters > 0 {
+            return String(format: "%.0f 米", workout.distanceMeters)
+        } else {
+            return "未知距离"
+        }
+    }
+
     private func replayStatusText(
         distanceMeters: CLLocationDistance,
         altitudeMeters: Double?
@@ -754,5 +850,16 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         let altitudeText = altitudeMeters.map { "\(Int(round($0))) m" } ?? "-- m"
         return "\(distanceText) · \(altitudeText)"
+    }
+}
+
+extension WorkoutRouteDetailViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === panelPanGestureRecognizer else {
+            return true
+        }
+
+        let rulerLocation = touch.location(in: replayRulerView)
+        return !replayRulerView.bounds.contains(rulerLocation)
     }
 }
