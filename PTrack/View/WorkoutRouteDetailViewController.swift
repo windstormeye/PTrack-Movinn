@@ -36,6 +36,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayAltitudes: [Double?] = []
     private var replayAnnotation: RouteReplayAnnotation?
     private var routePolyline: MKPolyline?
+    private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
 
     private let collapsedPanelHeight: CGFloat = 82
     private let expandedPanelHeight: CGFloat = 214
@@ -84,7 +85,41 @@ final class WorkoutRouteDetailViewController: UIViewController {
         title = nil
         navigationItem.titleView = makeNavigationTitleView()
         navigationItem.largeTitleDisplayMode = .never
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
         edgesForExtendedLayout = [.top, .bottom]
+    }
+
+    private func makeMoreBarButtonItem() -> UIBarButtonItem {
+        UIBarButtonItem(
+            image: UIImage(systemName: "ellipsis.circle"),
+            menu: makeMoreMenu()
+        )
+    }
+
+    private func makeMoreMenu() -> UIMenu {
+        let openStartAction = UIAction(
+            title: "去起点",
+            image: UIImage(systemName: "location.fill")
+        ) { [weak self] _ in
+            self?.openStartInMaps()
+        }
+
+        let mapStyleActions = AppMapDisplayStyle.menuCases.map { style in
+            UIAction(
+                title: style.title,
+                state: style == selectedMapStyle ? .on : .off
+            ) { [weak self] _ in
+                self?.applyMapStyle(style)
+            }
+        }
+
+        return UIMenu(
+            title: "",
+            children: [
+                openStartAction,
+                UIMenu(title: "地图样式", image: UIImage(systemName: "map"), children: mapStyleActions)
+            ]
+        )
     }
 
     private func makeNavigationTitleView() -> UIView {
@@ -187,7 +222,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func configureMapView() {
         mapView.delegate = self
-        AppMapStyle.apply(to: mapView)
+        AppMapStyle.apply(selectedMapStyle, to: mapView)
         mapView.showsCompass = false
         mapView.showsScale = true
 
@@ -198,7 +233,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
             make.bottom.equalToSuperview().offset(mapBottomExtension)
         }
 
-        mapView.addOverlay(mapToneOverlay, level: .aboveRoads)
+        AppMapStyle.setToneOverlay(
+            mapToneOverlay,
+            visible: selectedMapStyle == .appDefault,
+            on: mapView
+        )
     }
 
     private func configureNavigationBackgroundView() {
@@ -224,6 +263,47 @@ final class WorkoutRouteDetailViewController: UIViewController {
         navigationBackgroundMask.frame = navigationBackgroundView.bounds
         navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
         navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
+    }
+
+    private func applyMapStyle(_ style: AppMapDisplayStyle) {
+        guard style != selectedMapStyle else {
+            return
+        }
+
+        selectedMapStyle = style
+        AppMapDisplayStyleStore.shared.setRouteDetailStyle(style)
+        AppMapStyle.apply(style, to: mapView)
+        AppMapStyle.setToneOverlay(mapToneOverlay, visible: style == .appDefault, on: mapView)
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
+    }
+
+    private func openStartInMaps() {
+        guard let startCoordinate = workout.displayCoordinates.first ?? workout.coordinates.first?.coordinate else {
+            showAlert(title: "未找到起点")
+            return
+        }
+
+        let placemark = MKPlacemark(coordinate: startCoordinate)
+        let mapItem = MKMapItem(placemark: placemark)
+        mapItem.name = "运动起点"
+
+        let launchOptions: [String: Any] = [
+            MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: startCoordinate),
+            MKLaunchOptionsMapSpanKey: NSValue(
+                mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            )
+        ]
+
+        guard mapItem.openInMaps(launchOptions: launchOptions) else {
+            showAlert(title: "未找到系统地图")
+            return
+        }
+    }
+
+    private func showAlert(title: String) {
+        let alertController = UIAlertController(title: title, message: nil, preferredStyle: .alert)
+        alertController.addAction(UIAlertAction(title: "好", style: .default))
+        present(alertController, animated: true)
     }
 
     private func configurePanelView() {

@@ -24,13 +24,13 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
-    private let filterButton = UIButton(type: .system)
 
     private var preparedRoutes: [HeatmapRoute] = []
     private var visibleRoutes: [HeatmapRoute] = []
     private var loadGeneration = 0
     private var hasFittedRoutes = false
     private var selectedFilter: HeatmapFilter = .all
+    private var selectedMapStyle = AppMapDisplayStyleStore.shared.heatmapStyle()
     var routesOverlayRenderer: HeatmapRoutesOverlayRenderer?
     private var renderedRoutesByID: [String: HeatmapRenderedRoute] = [:]
     private var overlayUpdateWorkItem: DispatchWorkItem?
@@ -58,7 +58,6 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         configureNavigationItem()
         configureMapView()
         configureNavigationBackgroundView()
-        configureFilterButton()
         configureLoadingIndicator()
         prepareHeatmapRoutes()
     }
@@ -83,7 +82,17 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private func configureNavigationItem() {
         title = "路线热图"
         navigationItem.largeTitleDisplayMode = .never
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
         edgesForExtendedLayout = [.top, .bottom]
+    }
+
+    private func makeMoreBarButtonItem() -> UIBarButtonItem {
+        let barButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "ellipsis"),
+            menu: makeMoreMenu()
+        )
+        barButtonItem.accessibilityLabel = "路线热图选项"
+        return barButtonItem
     }
 
     private func configureNavigationBar() {
@@ -128,7 +137,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private func configureMapView() {
         mapView.delegate = self
-        AppMapStyle.apply(to: mapView)
+        AppMapStyle.apply(selectedMapStyle, to: mapView)
         mapView.showsCompass = false
         mapView.showsScale = true
         mapView.isPitchEnabled = false
@@ -140,7 +149,11 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             make.edges.equalToSuperview()
         }
 
-        mapView.addOverlay(mapToneOverlay, level: .aboveRoads)
+        AppMapStyle.setToneOverlay(
+            mapToneOverlay,
+            visible: selectedMapStyle == .appDefault,
+            on: mapView
+        )
         mapView.addOverlay(routesOverlay, level: .aboveLabels)
     }
 
@@ -155,36 +168,8 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
     }
 
-    private func configureFilterButton() {
-        var configuration = UIButton.Configuration.filled()
-        configuration.image = UIImage(
-            systemName: "line.3.horizontal",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
-        )
-        configuration.baseForegroundColor = .label
-        configuration.baseBackgroundColor = .systemBackground.withAlphaComponent(0.82)
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-        configuration.cornerStyle = .capsule
-
-        filterButton.configuration = configuration
-        filterButton.showsMenuAsPrimaryAction = true
-        filterButton.layer.shadowColor = UIColor.black.cgColor
-        filterButton.layer.shadowOpacity = 0.14
-        filterButton.layer.shadowRadius = 10
-        filterButton.layer.shadowOffset = CGSize(width: 0, height: 3)
-        updateFilterMenu()
-
-        view.addSubview(filterButton)
-
-        filterButton.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(18)
-            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(18)
-            make.size.equalTo(48)
-        }
-    }
-
-    private func updateFilterMenu() {
-        let actions = HeatmapFilter.allCases.map { filter in
+    private func makeMoreMenu() -> UIMenu {
+        let filterActions = HeatmapFilter.allCases.map { filter in
             UIAction(
                 title: filter.title,
                 state: filter == selectedFilter ? .on : .off
@@ -193,8 +178,22 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             }
         }
 
-        filterButton.menu = UIMenu(title: "", options: .displayInline, children: actions)
-        filterButton.accessibilityLabel = "切换热图类型"
+        let mapStyleActions = AppMapDisplayStyle.menuCases.map { style in
+            UIAction(
+                title: style.title,
+                state: style == selectedMapStyle ? .on : .off
+            ) { [weak self] _ in
+                self?.applyMapStyle(style)
+            }
+        }
+
+        return UIMenu(
+            title: "",
+            children: [
+                UIMenu(title: "运动类型", image: UIImage(systemName: "figure.walk"), children: filterActions),
+                UIMenu(title: "地图样式", image: UIImage(systemName: "map"), children: mapStyleActions)
+            ]
+        )
     }
 
     private func prepareHeatmapRoutes() {
@@ -272,7 +271,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private func applyFilter(_ filter: HeatmapFilter, resetCamera: Bool) {
         selectedFilter = filter
-        updateFilterMenu()
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
 
         visibleRoutes = preparedRoutes.filter { route in
             filter.includes(route.activityType)
@@ -288,6 +287,18 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
 
         loadingIndicator.stopAnimating()
+    }
+
+    private func applyMapStyle(_ style: AppMapDisplayStyle) {
+        guard style != selectedMapStyle else {
+            return
+        }
+
+        selectedMapStyle = style
+        AppMapDisplayStyleStore.shared.setHeatmapStyle(style)
+        AppMapStyle.apply(style, to: mapView)
+        AppMapStyle.setToneOverlay(mapToneOverlay, visible: style == .appDefault, on: mapView)
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
     }
 
     private func fitMap(to routes: [HeatmapRoute], animated: Bool) {

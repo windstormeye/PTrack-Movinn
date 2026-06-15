@@ -9,18 +9,41 @@ import MapKit
 import UIKit
 
 enum AppMapStyle {
-    static func apply(to mapView: MKMapView) {
-        mapView.overrideUserInterfaceStyle = .light
-        mapView.pointOfInterestFilter = .excludingAll
+    static func apply(_ style: AppMapDisplayStyle = .appDefault, to mapView: MKMapView) {
         mapView.backgroundColor = .systemBackground
 
         if #available(iOS 16.0, *) {
-            let configuration = MKStandardMapConfiguration(elevationStyle: .flat)
-            configuration.emphasisStyle = .muted
-            configuration.pointOfInterestFilter = .excludingAll
-            mapView.preferredConfiguration = configuration
+            mapView.preferredConfiguration = configuration(for: style)
         } else {
-            mapView.mapType = .mutedStandard
+            mapView.mapType = mapType(for: style)
+        }
+
+        switch style {
+        case .appDefault, .standard, .satellite:
+            mapView.overrideUserInterfaceStyle = .light
+        case .dark:
+            mapView.overrideUserInterfaceStyle = .dark
+        }
+
+        switch style {
+        case .appDefault:
+            mapView.pointOfInterestFilter = .excludingAll
+        case .standard, .satellite, .dark:
+            mapView.pointOfInterestFilter = .includingAll
+        }
+    }
+
+    static func setToneOverlay(
+        _ overlay: AppMapToneTileOverlay,
+        visible: Bool,
+        on mapView: MKMapView
+    ) {
+        let isVisible = mapView.overlays.contains { $0 === overlay }
+
+        if visible, !isVisible {
+            mapView.addOverlay(overlay, level: .aboveRoads)
+        } else if !visible, isVisible {
+            mapView.removeOverlay(overlay)
         }
     }
 
@@ -34,5 +57,40 @@ enum AppMapStyle {
         }
 
         return MKTileOverlayRenderer(tileOverlay: tileOverlay)
+    }
+
+    @available(iOS 16.0, *)
+    private static func configuration(for style: AppMapDisplayStyle) -> MKMapConfiguration {
+        switch style {
+        case .appDefault:
+            let configuration = MKStandardMapConfiguration(elevationStyle: .flat)
+            configuration.emphasisStyle = .muted
+            configuration.pointOfInterestFilter = .excludingAll
+            return configuration
+        case .standard:
+            let configuration = MKStandardMapConfiguration(elevationStyle: .flat)
+            configuration.emphasisStyle = .default
+            configuration.pointOfInterestFilter = .includingAll
+            return configuration
+        case .satellite:
+            let configuration = MKImageryMapConfiguration(elevationStyle: .flat)
+            return configuration
+        case .dark:
+            let configuration = MKStandardMapConfiguration(elevationStyle: .flat)
+            configuration.emphasisStyle = .default
+            configuration.pointOfInterestFilter = .includingAll
+            return configuration
+        }
+    }
+
+    private static func mapType(for style: AppMapDisplayStyle) -> MKMapType {
+        switch style {
+        case .appDefault:
+            return .mutedStandard
+        case .standard, .dark:
+            return .standard
+        case .satellite:
+            return .satellite
+        }
     }
 }
