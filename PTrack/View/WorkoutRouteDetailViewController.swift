@@ -54,6 +54,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayAnnotation: RouteReplayAnnotation?
     private var routePolyline: MKPolyline?
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
+    private var resolvedNavigationTitle: String?
 
     private let minimumPanelHeight: CGFloat = 68
     private let mediumPanelHeight: CGFloat = 200
@@ -95,12 +96,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
         super.viewDidLoad()
 
         configureNavigationItem()
+        registerLanguageObserver()
         configureMapView()
         configureNavigationBackgroundView()
         configurePanelView()
         drawRoute()
         loadRouteLocationTitle()
         loadRouteMedia()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
@@ -128,16 +134,48 @@ final class WorkoutRouteDetailViewController: UIViewController {
         edgesForExtendedLayout = [.top, .bottom]
     }
 
+    private func registerLanguageObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLanguageDidChange),
+            name: AppLanguageStore.languageDidChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleLanguageDidChange() {
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
+        if let resolvedNavigationTitle {
+            updateNavigationLocationTitle(resolvedNavigationTitle)
+        } else {
+            updateNavigationLocationTitle(AppLocalization.text(.queryingLocation))
+        }
+
+        titleLabel.text = workout.title
+        distanceLabel.text = panelDistanceText()
+        durationLabel.text = workout.durationText
+        let measuredDistance = replayDistances.last ?? workout.distanceMeters
+        let totalDistance = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
+        replayRulerView.configure(
+            totalDistanceText: replayTotalDistanceText(totalMeters: totalDistance),
+            elevationSamples: elevationSamples()
+        )
+
+        if let caloriesKilocalories = panelCaloriesKilocalories {
+            calorieRiceView.configure(caloriesKilocalories: caloriesKilocalories)
+        }
+    }
+
     private func makeMoreBarButtonItem() -> UIBarButtonItem {
         UIBarButtonItem(
-            image: UIImage(systemName: "ellipsis.circle"),
+            image: UIImage(systemName: "ellipsis"),
             menu: makeMoreMenu()
         )
     }
 
     private func makeMoreMenu() -> UIMenu {
         let openStartAction = UIAction(
-            title: "去起点",
+            title: AppLocalization.text(.openStart),
             image: UIImage(systemName: "location")
         ) { [weak self] _ in
             self?.openStartInMaps()
@@ -156,13 +194,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
             title: "",
             children: [
                 openStartAction,
-                UIMenu(title: "地图样式", image: UIImage(systemName: "map"), children: mapStyleActions)
+                UIMenu(title: AppLocalization.text(.mapStyle), image: UIImage(systemName: "map"), children: mapStyleActions)
             ]
         )
     }
 
     private func makeNavigationTitleView() -> UIView {
-        navigationTitleLabel.attributedText = navigationTitleText("位置查询中")
+        navigationTitleLabel.attributedText = navigationTitleText(AppLocalization.text(.queryingLocation))
         navigationTitleLabel.textAlignment = .center
         navigationTitleLabel.lineBreakMode = .byTruncatingTail
         navigationTitleLabel.adjustsFontSizeToFitWidth = true
@@ -186,7 +224,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private func loadRouteLocationTitle() {
         let resolver = WorkoutRouteLocationResolver.shared
         if let cachedLocation = resolver.cachedResolvedLocation(for: workout) {
-            updateNavigationLocationTitle(navigationDisplayTitle(for: cachedLocation))
+            let title = navigationDisplayTitle(for: cachedLocation)
+            resolvedNavigationTitle = title
+            updateNavigationLocationTitle(title)
             return
         }
 
@@ -195,7 +235,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 return
             }
 
-            updateNavigationLocationTitle(location.map(navigationDisplayTitle(for:)) ?? "未知位置")
+            let title = location.map(navigationDisplayTitle(for:)) ?? AppLocalization.text(.unknownLocation)
+            resolvedNavigationTitle = title
+            updateNavigationLocationTitle(title)
         }
     }
 
@@ -301,13 +343,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func openStartInMaps() {
         guard let startCoordinate = workout.displayCoordinates.first ?? workout.coordinates.first?.coordinate else {
-            showAlert(title: "未找到起点")
+            showAlert(title: AppLocalization.text(.startNotFound))
             return
         }
 
         let startLocation = CLLocation(latitude: startCoordinate.latitude, longitude: startCoordinate.longitude)
         let mapItem = MKMapItem(location: startLocation, address: nil)
-        mapItem.name = "运动起点"
+        mapItem.name = AppLocalization.text(.workoutStart)
 
         let launchOptions: [String: Any] = [
             MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: startCoordinate),
@@ -317,14 +359,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
         ]
 
         guard mapItem.openInMaps(launchOptions: launchOptions) else {
-            showAlert(title: "未找到系统地图")
+            showAlert(title: AppLocalization.text(.systemMapsNotFound))
             return
         }
     }
 
     private func showAlert(title: String) {
         let alertController = UIAlertController(title: title, message: nil, preferredStyle: .alert)
-        alertController.addAction(UIAlertAction(title: "好", style: .default))
+        alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
         present(alertController, animated: true)
     }
 
@@ -856,11 +898,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func panelDistanceText() -> String {
         if workout.distanceMeters >= 1000 {
-            return String(format: "%.2f 公里", workout.distanceMeters / 1000)
+            return String(format: "%.2f km", workout.distanceMeters / 1000)
         } else if workout.distanceMeters > 0 {
-            return String(format: "%.0f 米", workout.distanceMeters)
+            return AppLocalization.format(.distanceMetersFormat, workout.distanceMeters)
         } else {
-            return "未知距离"
+            return AppLocalization.text(.unknownDistance)
         }
     }
 

@@ -58,7 +58,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
     }
 
     func configure(caloriesKilocalories: Double) {
-        titleLabel.text = "消耗 \(Int(round(caloriesKilocalories))) 大卡"
+        titleLabel.text = AppLocalization.format(.burnedCaloriesFormat, caloriesKilocalories)
         calibratedViewerOffset = nil
         rebuildRiceLabels(count: riceBowlCount(for: caloriesKilocalories))
     }

@@ -143,7 +143,7 @@ final class HealthWorkoutStore {
         let readTypes = Self.readTypes
 
         print("PTrack HealthKit: requesting authorization on main thread: \(Thread.isMainThread), read type count: \(readTypes.count)")
-        progressHandler?("正在请求 Apple 健康体能训练、路线和运动指标读取权限...")
+        progressHandler?(AppLocalization.text(.healthAuthorizationProgress))
         healthStore.requestAuthorization(toShare: nil, read: readTypes) { success, error in
             print("PTrack HealthKit: authorization request completed, success: \(success), error: \(String(describing: error))")
             if let error {

@@ -71,6 +71,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
         currentWorkout = workout
         currentShowsMap = showsMap
         updateBackgroundVisibility(showsMap: showsMap)
+        newBadgeLabel.text = AppLocalization.text(.newActivity)
         setShowsNewBadge(showsNewBadge)
 
         guard showsMap else {
@@ -135,7 +136,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
 
         newBadgeLabel.translatesAutoresizingMaskIntoConstraints = true
         newBadgeLabel.isHidden = true
-        newBadgeLabel.text = "新活动！"
+        newBadgeLabel.text = AppLocalization.text(.newActivity)
         newBadgeLabel.textColor = UIColor.black.withAlphaComponent(0.86)
         newBadgeLabel.font = .systemFont(ofSize: 8, weight: .bold)
         newBadgeLabel.backgroundColor = AppColors.movinnGreen

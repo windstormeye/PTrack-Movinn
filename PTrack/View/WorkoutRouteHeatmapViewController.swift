@@ -57,10 +57,15 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         configureNavigationItem()
+        registerLanguageObserver()
         configureMapView()
         configureNavigationBackgroundView()
         configureLoadingIndicator()
         prepareHeatmapRoutes()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -81,10 +86,24 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }
 
     private func configureNavigationItem() {
-        title = "路线热图"
+        title = AppLocalization.text(.routeHeatmap)
         navigationItem.largeTitleDisplayMode = .never
         navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
         edgesForExtendedLayout = [.top, .bottom]
+    }
+
+    private func registerLanguageObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLanguageDidChange),
+            name: AppLanguageStore.languageDidChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleLanguageDidChange() {
+        title = AppLocalization.text(.routeHeatmap)
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
     }
 
     private func makeMoreBarButtonItem() -> UIBarButtonItem {
@@ -92,7 +111,6 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             image: UIImage(systemName: "ellipsis"),
             menu: makeMoreMenu()
         )
-        barButtonItem.accessibilityLabel = "路线热图选项"
         return barButtonItem
     }
 
@@ -191,8 +209,8 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         return UIMenu(
             title: "",
             children: [
-                UIMenu(title: "运动类型", image: UIImage(systemName: "figure.walk"), children: filterActions),
-                UIMenu(title: "地图样式", image: UIImage(systemName: "map"), children: mapStyleActions)
+                UIMenu(title: AppLocalization.text(.sportType), image: UIImage(systemName: "figure.walk"), children: filterActions),
+                UIMenu(title: AppLocalization.text(.mapStyle), image: UIImage(systemName: "map"), children: mapStyleActions)
             ]
         )
     }

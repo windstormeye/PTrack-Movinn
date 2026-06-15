@@ -19,13 +19,13 @@ enum AppMapDisplayStyle: String, CaseIterable {
     var title: String {
         switch self {
         case .appDefault:
-            return "默认"
+            return AppLocalization.text(.appDefault)
         case .standard:
-            return "标准"
+            return AppLocalization.text(.standard)
         case .satellite:
-            return "卫星"
+            return AppLocalization.text(.satellite)
         case .dark:
-            return "暗色"
+            return AppLocalization.text(.dark)
         }
     }
 }

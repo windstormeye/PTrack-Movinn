@@ -14,9 +14,9 @@ enum HealthWorkoutStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .healthDataUnavailable:
-            return "当前设备不支持健康数据。"
+            return AppLocalization.text(.healthDataUnavailable)
         case .authorizationDenied:
-            return "未获得健康数据读取权限。"
+            return AppLocalization.text(.healthAuthorizationDenied)
         }
     }
 }

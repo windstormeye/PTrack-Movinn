@@ -74,15 +74,15 @@ struct TrackedWorkout: Codable {
     var title: String {
         switch activityType {
         case .cycling:
-            return "骑行"
+            return AppLocalization.text(.cycling)
         case .hiking:
-            return "徒步"
+            return AppLocalization.text(.hiking)
         case .walking:
-            return "行走"
+            return AppLocalization.text(.walking)
         case .running:
-            return "跑步"
+            return AppLocalization.text(.running)
         default:
-            return "户外运动"
+            return AppLocalization.text(.outdoorWorkout)
         }
     }
 
@@ -111,9 +111,9 @@ struct TrackedWorkout: Codable {
         if distanceMeters >= 1000 {
             return String(format: "%.2f km", distanceMeters / 1000)
         } else if distanceMeters > 0 {
-            return String(format: "%.0f m", distanceMeters)
+            return AppLocalization.format(.distanceMetersFormat, distanceMeters)
         } else {
-            return "未知距离"
+            return AppLocalization.text(.unknownDistance)
         }
     }
 
@@ -138,7 +138,7 @@ struct TrackedWorkout: Codable {
 
     var durationText: String {
         guard let durationSeconds, durationSeconds > 0 else {
-            return "未知时长"
+            return AppLocalization.text(.unknownDuration)
         }
 
         let totalMinutes = Int(durationSeconds / 60)
@@ -146,9 +146,9 @@ struct TrackedWorkout: Codable {
         let minutes = totalMinutes % 60
 
         if hours > 0 {
-            return "\(hours)小时\(minutes)分钟"
+            return AppLocalization.format(.durationHoursMinutesFormat, hours, minutes)
         }
-        return "\(max(minutes, 1))分钟"
+        return AppLocalization.format(.durationMinutesFormat, max(minutes, 1))
     }
 
     var displayCoordinates: [CLLocationCoordinate2D] {

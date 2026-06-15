@@ -16,13 +16,13 @@ enum HeatmapFilter: CaseIterable {
     var title: String {
         switch self {
         case .walking:
-            return "行走/徒步"
+            return AppLocalization.text(.walkingHiking)
         case .cycling:
-            return "骑行"
+            return AppLocalization.text(.cycling)
         case .running:
-            return "跑步"
+            return AppLocalization.text(.running)
         case .all:
-            return "全部"
+            return AppLocalization.text(.all)
         }
     }
 

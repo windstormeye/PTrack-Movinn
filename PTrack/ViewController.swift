@@ -27,7 +27,7 @@ class ViewController: UIViewController {
     private let titleAccentLabel = UILabel()
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
-    private let heatmapButton = UIButton(type: .system)
+    private let moreButton = UIButton(type: .system)
     var columnCount: CGFloat = 3
     private var pinchStartColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
@@ -52,6 +52,7 @@ class ViewController: UIViewController {
         columnSnapDisplayLink?.invalidate()
         pendingFlushWorkItem?.cancel()
         pendingCacheSaveWorkItem?.cancel()
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidLoad() {
@@ -60,6 +61,7 @@ class ViewController: UIViewController {
         configureCollectionView()
         configureHeaderView()
         configureLoadingIndicator()
+        registerLanguageObserver()
         store.progressHandler = { message in
             print("PTrack HealthKit: \(message)")
         }
@@ -142,20 +144,21 @@ class ViewController: UIViewController {
 
         var buttonConfiguration = UIButton.Configuration.plain()
         buttonConfiguration.image = UIImage(
-            systemName: "map",
+            systemName: "ellipsis",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
         )
         buttonConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
-        heatmapButton.configuration = buttonConfiguration
-        heatmapButton.tintColor = .label
-        heatmapButton.addTarget(self, action: #selector(showHeatmap), for: .touchUpInside)
+        moreButton.configuration = buttonConfiguration
+        moreButton.tintColor = .label
+        moreButton.menu = makeHeaderMoreMenu()
+        moreButton.showsMenuAsPrimaryAction = true
 
         view.addSubview(headerView)
         headerView.addSubview(titleLabel)
         headerView.addSubview(titleAccentLabel)
         headerView.addSubview(totalDistanceLabel)
         headerView.addSubview(loadingIndicator)
-        headerView.addSubview(heatmapButton)
+        headerView.addSubview(moreButton)
 
         headerView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
@@ -181,16 +184,34 @@ class ViewController: UIViewController {
         loadingIndicator.snp.makeConstraints { make in
             make.leading.equalTo(totalDistanceLabel.snp.trailing).offset(8)
             make.centerY.equalTo(totalDistanceLabel)
-            make.trailing.lessThanOrEqualTo(heatmapButton.snp.leading).offset(-10)
+            make.trailing.lessThanOrEqualTo(moreButton.snp.leading).offset(-10)
         }
 
-        heatmapButton.snp.makeConstraints { make in
+        moreButton.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(16)
             make.centerY.equalTo(titleLabel)
             make.size.equalTo(36)
         }
 
         updateTotalDistanceText()
+    }
+
+    private func makeHeaderMoreMenu() -> UIMenu {
+        let heatmapAction = UIAction(
+            title: AppLocalization.text(.routeHeatmap),
+            image: UIImage(systemName: "map")
+        ) { [weak self] _ in
+            self?.showHeatmap()
+        }
+
+        let moreAction = UIAction(
+            title: AppLocalization.text(.more),
+            image: UIImage(systemName: "ellipsis")
+        ) { [weak self] _ in
+            self?.showMoreSettings()
+        }
+
+        return UIMenu(children: [heatmapAction, moreAction])
     }
 
     private func configureLoadingIndicator() {
@@ -223,7 +244,22 @@ class ViewController: UIViewController {
 
     private func updateTotalDistanceText() {
         let totalKilometers = totalDistanceMeters / 1000
-        totalDistanceLabel.text = "总距离：\(Int(totalKilometers.rounded()))KM"
+        totalDistanceLabel.text = AppLocalization.format(.totalDistanceFormat, Int(totalKilometers.rounded()))
+    }
+
+    private func registerLanguageObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLanguageDidChange),
+            name: AppLanguageStore.languageDidChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleLanguageDidChange() {
+        updateTotalDistanceText()
+        moreButton.menu = makeHeaderMoreMenu()
+        collectionView.reloadData()
     }
 
     private func loadCachedWorkouts() {
@@ -391,10 +427,15 @@ class ViewController: UIViewController {
         }
     }
 
-    @objc private func showHeatmap() {
+    private func showHeatmap() {
         flushPendingWorkouts(force: true)
         let heatmapViewController = WorkoutRouteHeatmapViewController(workouts: workouts)
         navigationController?.pushViewController(heatmapViewController, animated: true)
+    }
+
+    private func showMoreSettings() {
+        let moreSettingsViewController = MoreSettingsViewController()
+        navigationController?.pushViewController(moreSettingsViewController, animated: true)
     }
 
     @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
