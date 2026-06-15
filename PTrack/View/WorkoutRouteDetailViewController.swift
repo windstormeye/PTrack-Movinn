@@ -13,7 +13,8 @@ import UIKit
 final class WorkoutRouteDetailViewController: UIViewController {
     let workout: TrackedWorkout
     private let mediaStore = RouteMediaStore()
-    private let mapView = MKMapView()
+    private let mapContainerView = AppMapContainerView()
+    private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
@@ -22,8 +23,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let handleTouchView = UIView()
     private let handleView = UIView()
     private let iconView = UIImageView()
+    private let navigationTitleLabel = UILabel()
     private let titleLabel = UILabel()
+    private let metricsStackView = UIStackView()
     private let distanceLabel = UILabel()
+    private let durationLabel = UILabel()
     private let detailStackView = UIStackView()
     private let replayRulerView = WorkoutRouteReplayRulerView()
     private var panelHeightConstraint: Constraint?
@@ -41,7 +45,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let collapsedPanelHeight: CGFloat = 82
     private let expandedPanelHeight: CGFloat = 214
     private let navigationBackgroundHeight: CGFloat = 124
-    private let mapBottomExtension: CGFloat = 72
+    private let mapBottomExtension = AppMapContainerView.defaultBottomLogoAvoidanceOffset
     private let maximumElevationSampleCount = 120
 
     init(workout: TrackedWorkout) {
@@ -61,6 +65,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         configureNavigationBackgroundView()
         configurePanelView()
         drawRoute()
+        loadRouteLocationTitle()
         loadRouteMedia()
     }
 
@@ -123,86 +128,70 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func makeNavigationTitleView() -> UIView {
-        let label = UILabel()
-        label.attributedText = navigationTitleText()
-        label.textAlignment = .center
-        label.lineBreakMode = .byTruncatingTail
-        label.adjustsFontSizeToFitWidth = true
-        label.minimumScaleFactor = 0.82
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        label.sizeToFit()
-        return label
+        navigationTitleLabel.attributedText = navigationTitleText("位置查询中")
+        navigationTitleLabel.textAlignment = .center
+        navigationTitleLabel.lineBreakMode = .byTruncatingTail
+        navigationTitleLabel.adjustsFontSizeToFitWidth = true
+        navigationTitleLabel.minimumScaleFactor = 0.82
+        navigationTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        navigationTitleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        navigationTitleLabel.sizeToFit()
+        return navigationTitleLabel
     }
 
-    private func navigationTitleText() -> NSAttributedString {
-        let dateText = navigationDateText(for: workout.startDate)
-        let durationText = navigationDurationText()
-        let titleText = "\(dateText) ・ \(durationText)"
-        let attributedText = NSMutableAttributedString(
+    private func navigationTitleText(_ titleText: String) -> NSAttributedString {
+        NSAttributedString(
             string: titleText,
             attributes: [
                 .font: UIFont.systemFont(ofSize: 15, weight: .semibold),
                 .foregroundColor: UIColor.label
             ]
         )
-
-        if let durationRange = titleText.range(of: "・ \(durationText)") {
-            attributedText.addAttributes(
-                [
-                    .font: UIFont.systemFont(ofSize: 15, weight: .medium),
-                    .foregroundColor: UIColor.secondaryLabel
-                ],
-                range: NSRange(durationRange, in: titleText)
-            )
-        }
-
-        return attributedText
     }
 
-    private func navigationDateText(for date: Date) -> String {
-        let calendar = Calendar.current
-        let startOfToday = calendar.startOfDay(for: Date())
-        let startOfDate = calendar.startOfDay(for: date)
+    private func loadRouteLocationTitle() {
+        let resolver = WorkoutRouteLocationResolver.shared
+        if let cachedLocation = resolver.cachedResolvedLocation(for: workout) {
+            updateNavigationLocationTitle(navigationDisplayTitle(for: cachedLocation))
+            return
+        }
 
-        if let dayDifference = calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day {
-            switch dayDifference {
-            case 0:
-                return "今天"
-            case 1:
-                return "昨天"
-            case 2:
-                return "前天"
-            default:
-                break
+        resolver.resolveLocation(for: workout) { [weak self] location in
+            guard let self else {
+                return
             }
-        }
 
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        let currentYear = calendar.component(.year, from: Date())
-        let year = components.year ?? currentYear
-        let month = components.month ?? 1
-        let day = components.day ?? 1
-
-        if year == currentYear {
-            return "\(month) 月 \(day) 日"
+            updateNavigationLocationTitle(location.map(navigationDisplayTitle(for:)) ?? "未知位置")
         }
-        return "\(year) 年 \(month) 月 \(day) 日"
     }
 
-    private func navigationDurationText() -> String {
-        guard let durationSeconds = workout.durationSeconds, durationSeconds > 0 else {
-            return "未知时长"
+    private func updateNavigationLocationTitle(_ title: String) {
+        navigationTitleLabel.attributedText = navigationTitleText(title)
+        navigationTitleLabel.sizeToFit()
+    }
+
+    private func navigationDisplayTitle(for location: WorkoutRouteResolvedLocation) -> String {
+        let cityName = (location.locality ?? location.subAdministrativeArea ?? location.administrativeArea)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let placeName = location.title.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let cityName, !cityName.isEmpty else {
+            return placeName
         }
 
-        let totalMinutes = max(Int(durationSeconds / 60), 1)
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-
-        if hours > 0 {
-            return minutes > 0 ? "\(hours) 小时 \(minutes) 分" : "\(hours) 小时"
+        let placeNameWithoutCity: String
+        if placeName.hasPrefix(cityName) {
+            placeNameWithoutCity = String(placeName.dropFirst(cityName.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            placeNameWithoutCity = placeName
         }
-        return "\(totalMinutes) 分"
+
+        guard !placeNameWithoutCity.isEmpty else {
+            return cityName
+        }
+
+        return "\(cityName) \(placeNameWithoutCity)"
     }
 
     private func configureDefaultNavigationBar() {
@@ -226,11 +215,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         mapView.showsCompass = false
         mapView.showsScale = true
 
-        view.addSubview(mapView)
+        view.addSubview(mapContainerView)
 
-        mapView.snp.makeConstraints { make in
-            make.top.leading.trailing.equalToSuperview()
-            make.bottom.equalToSuperview().offset(mapBottomExtension)
+        mapContainerView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
         }
 
         AppMapStyle.setToneOverlay(
@@ -283,8 +271,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return
         }
 
-        let placemark = MKPlacemark(coordinate: startCoordinate)
-        let mapItem = MKMapItem(placemark: placemark)
+        let startLocation = CLLocation(latitude: startCoordinate.latitude, longitude: startCoordinate.longitude)
+        let mapItem = MKMapItem(location: startLocation, address: nil)
         mapItem.name = "运动起点"
 
         let launchOptions: [String: Any] = [
@@ -330,12 +318,31 @@ final class WorkoutRouteDetailViewController: UIViewController {
         titleLabel.font = .preferredFont(forTextStyle: .headline)
         titleLabel.textColor = UIColor.black.withAlphaComponent(0.92)
 
+        let distanceFont = UIFont.preferredFont(forTextStyle: .headline)
+        let durationFont = UIFont.systemFont(
+            ofSize: max(distanceFont.pointSize - 3, 11),
+            weight: .semibold
+        )
+
+        metricsStackView.axis = .vertical
+        metricsStackView.alignment = .trailing
+        metricsStackView.spacing = 2
+
         distanceLabel.text = workout.distanceText
-        distanceLabel.font = .preferredFont(forTextStyle: .headline)
+        distanceLabel.font = distanceFont
         distanceLabel.textColor = UIColor.black.withAlphaComponent(0.92)
         distanceLabel.textAlignment = .right
         distanceLabel.adjustsFontSizeToFitWidth = true
         distanceLabel.minimumScaleFactor = 0.78
+        distanceLabel.numberOfLines = 1
+
+        durationLabel.text = workout.durationText
+        durationLabel.font = durationFont
+        durationLabel.textColor = UIColor.secondaryLabel
+        durationLabel.textAlignment = .right
+        durationLabel.adjustsFontSizeToFitWidth = true
+        durationLabel.minimumScaleFactor = 0.78
+        durationLabel.numberOfLines = 1
 
         detailStackView.axis = .vertical
         detailStackView.spacing = 0
@@ -352,8 +359,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         handleTouchView.addSubview(handleView)
         panelView.contentView.addSubview(iconView)
         panelView.contentView.addSubview(titleLabel)
-        panelView.contentView.addSubview(distanceLabel)
+        panelView.contentView.addSubview(metricsStackView)
         panelView.contentView.addSubview(detailStackView)
+        metricsStackView.addArrangedSubview(distanceLabel)
+        metricsStackView.addArrangedSubview(durationLabel)
 
         panelView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview().inset(14)
@@ -379,20 +388,19 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         iconView.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(18)
-            make.top.equalTo(handleTouchView.snp.bottom).offset(7)
+            make.top.equalTo(handleTouchView.snp.bottom).offset(1)
             make.size.equalTo(28)
         }
 
         titleLabel.snp.makeConstraints { make in
             make.leading.equalTo(iconView.snp.trailing).offset(10)
             make.centerY.equalTo(iconView)
-            make.trailing.lessThanOrEqualTo(distanceLabel.snp.leading).offset(-12)
+            make.trailing.lessThanOrEqualTo(metricsStackView.snp.leading).offset(-12)
         }
 
-        distanceLabel.snp.makeConstraints { make in
+        metricsStackView.snp.makeConstraints { make in
             make.trailing.equalToSuperview().inset(18)
             make.centerY.equalTo(iconView)
-            make.width.greaterThanOrEqualTo(88)
         }
 
         detailStackView.snp.makeConstraints { make in

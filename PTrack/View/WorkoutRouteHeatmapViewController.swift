@@ -18,7 +18,8 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }()
 
     private let workouts: [TrackedWorkout]
-    private let mapView = MKMapView()
+    private let mapContainerView = AppMapContainerView()
+    private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let routesOverlay = HeatmapRoutesOverlay()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
@@ -143,9 +144,9 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         mapView.isPitchEnabled = false
         mapView.isRotateEnabled = false
 
-        view.addSubview(mapView)
+        view.addSubview(mapContainerView)
 
-        mapView.snp.makeConstraints { make in
+        mapContainerView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
 

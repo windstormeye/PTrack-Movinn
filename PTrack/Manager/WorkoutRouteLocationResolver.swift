@@ -1,0 +1,264 @@
+//
+//  WorkoutRouteLocationResolver.swift
+//  PTrack
+//
+//  Created by Codex on 2026/6/15.
+//
+
+import MapKit
+
+@MainActor
+final class WorkoutRouteLocationResolver {
+    static let shared = WorkoutRouteLocationResolver()
+
+    private struct CachedLocation: Codable {
+        let cacheVersion: Int?
+        let title: String
+        let countryCode: String?
+        let countryName: String?
+        let administrativeArea: String?
+        let subAdministrativeArea: String?
+        let locality: String?
+        let subLocality: String?
+        let fullAddress: String?
+        let latitude: Double
+        let longitude: Double
+        let updatedAt: Date
+
+        init(location: WorkoutRouteResolvedLocation) {
+            cacheVersion = WorkoutRouteLocationResolver.currentCacheVersion
+            title = location.title
+            countryCode = location.countryCode
+            countryName = location.countryName
+            administrativeArea = location.administrativeArea
+            subAdministrativeArea = location.subAdministrativeArea
+            locality = location.locality
+            subLocality = location.subLocality
+            fullAddress = location.fullAddress
+            latitude = location.latitude
+            longitude = location.longitude
+            updatedAt = location.updatedAt
+        }
+
+        var resolvedLocation: WorkoutRouteResolvedLocation {
+            WorkoutRouteResolvedLocation(
+                title: title,
+                countryCode: countryCode,
+                countryName: countryName,
+                administrativeArea: administrativeArea,
+                subAdministrativeArea: subAdministrativeArea,
+                locality: locality,
+                subLocality: subLocality,
+                fullAddress: fullAddress,
+                latitude: latitude,
+                longitude: longitude,
+                updatedAt: updatedAt
+            )
+        }
+    }
+
+    private let userDefaults: UserDefaults
+    private var pendingCompletions: [String: [(WorkoutRouteResolvedLocation?) -> Void]] = [:]
+    private var activeRequests: [String: MKReverseGeocodingRequest] = [:]
+
+    private static let currentCacheVersion = 2
+    private let cacheKeyPrefix = "workoutRouteLocation."
+    private let cachedCoordinateToleranceMeters: CLLocationDistance = 100
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+    }
+
+    func cachedLocationTitle(for workout: TrackedWorkout) -> String? {
+        cachedResolvedLocation(for: workout)?.title
+    }
+
+    func cachedResolvedLocation(for workout: TrackedWorkout) -> WorkoutRouteResolvedLocation? {
+        guard let coordinate = startCoordinate(for: workout),
+              let cachedLocation = cachedLocation(for: workout.id),
+              cachedLocation.cacheVersion == Self.currentCacheVersion,
+              isCachedLocation(cachedLocation, validFor: coordinate) else {
+            return nil
+        }
+
+        return cachedLocation.resolvedLocation
+    }
+
+    func resolveLocationTitle(for workout: TrackedWorkout, completion: @escaping (String?) -> Void) {
+        resolveLocation(for: workout) { location in
+            completion(location?.title)
+        }
+    }
+
+    func resolveLocation(
+        for workout: TrackedWorkout,
+        completion: @escaping (WorkoutRouteResolvedLocation?) -> Void
+    ) {
+        if let cachedLocation = cachedResolvedLocation(for: workout) {
+            completion(cachedLocation)
+            return
+        }
+
+        guard let coordinate = startCoordinate(for: workout) else {
+            completion(nil)
+            return
+        }
+
+        if pendingCompletions[workout.id] != nil {
+            pendingCompletions[workout.id]?.append(completion)
+            return
+        }
+
+        pendingCompletions[workout.id] = [completion]
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        guard let request = MKReverseGeocodingRequest(location: location) else {
+            completePendingRequests(for: workout.id, location: nil)
+            return
+        }
+
+        activeRequests[workout.id] = request
+        request.getMapItems { [weak self] mapItems, _ in
+            guard let self else {
+                return
+            }
+
+            let location = mapItems?.compactMap {
+                Self.resolvedLocation(from: $0, coordinate: coordinate)
+            }.first
+
+            if let location {
+                self.cache(CachedLocation(location: location), for: workout.id)
+            }
+
+            self.completePendingRequests(for: workout.id, location: location)
+        }
+    }
+
+    private func startCoordinate(for workout: TrackedWorkout) -> CLLocationCoordinate2D? {
+        workout.coordinates.first?.coordinate
+    }
+
+    private func cachedLocation(for workoutID: String) -> CachedLocation? {
+        guard let data = userDefaults.data(forKey: cacheKey(for: workoutID)) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(CachedLocation.self, from: data)
+    }
+
+    private func cache(_ location: CachedLocation, for workoutID: String) {
+        guard let data = try? JSONEncoder().encode(location) else {
+            return
+        }
+
+        userDefaults.set(data, forKey: cacheKey(for: workoutID))
+    }
+
+    private func cacheKey(for workoutID: String) -> String {
+        "\(cacheKeyPrefix)\(workoutID)"
+    }
+
+    private func completePendingRequests(for workoutID: String, location: WorkoutRouteResolvedLocation?) {
+        activeRequests[workoutID] = nil
+        let completions = pendingCompletions.removeValue(forKey: workoutID) ?? []
+        completions.forEach { $0(location) }
+    }
+
+    private func isCachedLocation(_ cachedLocation: CachedLocation, validFor coordinate: CLLocationCoordinate2D) -> Bool {
+        let sourceLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let cachedCoordinate = CLLocationCoordinate2D(
+            latitude: cachedLocation.latitude,
+            longitude: cachedLocation.longitude
+        )
+        let storedLocation = CLLocation(
+            latitude: cachedCoordinate.latitude,
+            longitude: cachedCoordinate.longitude
+        )
+
+        return sourceLocation.distance(from: storedLocation) <= cachedCoordinateToleranceMeters
+    }
+
+    private static func resolvedLocation(
+        from mapItem: MKMapItem,
+        coordinate: CLLocationCoordinate2D
+    ) -> WorkoutRouteResolvedLocation? {
+        let addressRepresentations = mapItem.addressRepresentations
+        let administrativeArea = administrativeArea(from: addressRepresentations)
+        let fullAddress = addressRepresentations?.fullAddress(includingRegion: true, singleLine: true)
+            ?? mapItem.address?.fullAddress
+            ?? mapItem.address?.shortAddress
+        let countryName = addressRepresentations?.regionName
+        let locality = addressRepresentations?.cityName
+        let titleComponents = uniqueComponents([
+            mapItem.name,
+            mapItem.address?.shortAddress,
+            locality,
+            administrativeArea,
+            countryName,
+            fullAddress
+        ])
+
+        guard let title = titleComponents.first else {
+            return nil
+        }
+
+        return WorkoutRouteResolvedLocation(
+            title: title,
+            countryCode: nil,
+            countryName: countryName,
+            administrativeArea: administrativeArea,
+            subAdministrativeArea: nil,
+            locality: locality,
+            subLocality: nil,
+            fullAddress: fullAddress,
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            updatedAt: Date()
+        )
+    }
+
+    private static func administrativeArea(from addressRepresentations: MKAddressRepresentations?) -> String? {
+        guard let addressRepresentations,
+              let cityName = addressRepresentations.cityName else {
+            return nil
+        }
+
+        let countryName = addressRepresentations.regionName
+        let contextCandidates = [
+            addressRepresentations.cityWithContext(.full),
+            addressRepresentations.cityWithContext
+        ]
+
+        for candidate in contextCandidates {
+            let parts = candidate?
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? []
+            let area = parts.first {
+                !$0.isEmpty && $0 != cityName && $0 != countryName
+            }
+
+            if let area {
+                return area
+            }
+        }
+
+        return nil
+    }
+
+    private static func uniqueComponents(_ components: [String?]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+
+        for component in components {
+            let value = component?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !value.isEmpty, !seen.contains(value) else {
+                continue
+            }
+
+            seen.insert(value)
+            result.append(value)
+        }
+
+        return result
+    }
+}
