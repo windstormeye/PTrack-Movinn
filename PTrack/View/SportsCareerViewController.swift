@@ -13,9 +13,9 @@ import UIKit
 final class SportsCareerViewController: UIViewController {
     private enum Section: Int, CaseIterable {
         case summary
-        case annual
-        case monthly
         case weekly
+        case monthly
+        case annual
         case overview
 
         var titleKey: AppTextKey {
@@ -108,7 +108,7 @@ final class SportsCareerViewController: UIViewController {
         view.backgroundColor = .systemBackground
 
         let layout = UICollectionViewFlowLayout()
-        layout.minimumLineSpacing = 10
+        layout.minimumLineSpacing = 6
         layout.minimumInteritemSpacing = 10
         layout.sectionHeadersPinToVisibleBounds = false
 
@@ -223,7 +223,7 @@ final class SportsCareerViewController: UIViewController {
         case .monthly:
             return 292
         case .weekly:
-            return 218
+            return 244
         case .overview:
             return 238 + sportGridHeight(width: width)
         }
@@ -387,7 +387,11 @@ extension SportsCareerViewController: UICollectionViewDelegateFlowLayout {
         }
 
         if section == .summary {
-            return UIEdgeInsets(top: 0, left: 16, bottom: 6, right: 16)
+            return UIEdgeInsets(top: 0, left: 16, bottom: 26, right: 16)
+        }
+
+        if section == .annual || section == .monthly || section == .weekly {
+            return UIEdgeInsets(top: 18, left: 16, bottom: 38, right: 16)
         }
 
         return UIEdgeInsets(top: 18, left: 16, bottom: 18, right: 16)
@@ -403,7 +407,7 @@ extension SportsCareerViewController: UICollectionViewDelegateFlowLayout {
             return .zero
         }
 
-        return CGSize(width: collectionView.bounds.width, height: 30)
+        return CGSize(width: collectionView.bounds.width, height: 26)
     }
 }
 
@@ -422,6 +426,8 @@ private struct SportsCareerStatistics {
         let weeklyDurationSeconds: [TimeInterval]
         let weeklyDistanceMeters: [Double]
         let visibleWeekCount: Int
+        let totalDistanceMeters: Double
+        let totalDurationSeconds: TimeInterval
     }
 
     struct MonthActivityDay {
@@ -432,10 +438,12 @@ private struct SportsCareerStatistics {
     }
 
     struct WeeklyDistanceRow: Identifiable {
-        let id = UUID()
+        var id: Int { index }
+        let index: Int
         let date: Date
         let title: String
         let distanceMeters: Double
+        let durationSeconds: TimeInterval
 
         var distanceKilometers: Double {
             distanceMeters / 1_000
@@ -543,7 +551,9 @@ private struct SportsCareerStatistics {
                 year: year,
                 weeklyDurationSeconds: durationValues,
                 weeklyDistanceMeters: distanceValues,
-                visibleWeekCount: visibleWeekCount
+                visibleWeekCount: visibleWeekCount,
+                totalDistanceMeters: distanceValues.reduce(0, +),
+                totalDurationSeconds: durationValues.reduce(0, +)
             )
         }
     }
@@ -596,33 +606,21 @@ private struct SportsCareerStatistics {
                 return nil
             }
 
-            let distance = workouts.reduce(0) { partialResult, workout in
-                guard calendar.isDate(workout.startDate, inSameDayAs: date) else {
-                    return partialResult
-                }
-
-                return partialResult + workout.distanceMeters
+            let dayWorkouts = workouts.filter { workout in
+                calendar.isDate(workout.startDate, inSameDayAs: date)
             }
 
             return WeeklyDistanceRow(
+                index: dayOffset,
                 date: date,
                 title: formatter.string(from: date),
-                distanceMeters: distance
+                distanceMeters: dayWorkouts.reduce(0) { $0 + $1.distanceMeters },
+                durationSeconds: dayWorkouts.reduce(0) { $0 + ($1.durationSeconds ?? 0) }
             )
         }
     }
 
     private static func makeSportDistributionSlices(from rows: [SportRow]) -> [SportDistributionSlice] {
-        let colors: [Color] = [
-            Color(uiColor: AppColors.movinnGreen),
-            .black,
-            .orange,
-            .blue,
-            .purple,
-            .pink,
-            .teal,
-            .gray
-        ]
         let positiveRows = rows.filter { $0.distanceMeters > 0 }
         let sourceRows = positiveRows.isEmpty ? rows.filter { $0.count > 0 } : positiveRows
 
@@ -630,9 +628,23 @@ private struct SportsCareerStatistics {
             SportDistributionSlice(
                 title: row.title,
                 value: positiveRows.isEmpty ? Double(row.count) : row.distanceMeters,
-                color: colors[index % colors.count]
+                color: Self.sportDistributionColor(at: index)
             )
         }
+    }
+
+    private static func sportDistributionColor(at index: Int) -> Color {
+        let colors: [UIColor] = [
+            AppColors.movinnGreen,
+            UIColor(red: 42 / 255, green: 157 / 255, blue: 143 / 255, alpha: 1),
+            UIColor(red: 69 / 255, green: 123 / 255, blue: 157 / 255, alpha: 1),
+            UIColor(red: 233 / 255, green: 196 / 255, blue: 106 / 255, alpha: 1),
+            UIColor(red: 231 / 255, green: 111 / 255, blue: 81 / 255, alpha: 1),
+            UIColor(red: 128 / 255, green: 106 / 255, blue: 187 / 255, alpha: 1),
+            UIColor(red: 244 / 255, green: 162 / 255, blue: 97 / 255, alpha: 1),
+            UIColor(red: 38 / 255, green: 70 / 255, blue: 83 / 255, alpha: 1)
+        ]
+        return Color(uiColor: colors[index % colors.count])
     }
 }
 
@@ -645,19 +657,16 @@ private func careerSummaryDurationText(_ value: Double) -> String {
 }
 
 private func careerDurationText(_ value: Double) -> String {
-    let totalMinutes = max(Int(value / 60), 0)
-    let hours = totalMinutes / 60
-    let minutes = totalMinutes % 60
-    if hours > 0 {
-        return AppLocalization.format(.durationHoursMinutesFormat, hours, minutes)
-    }
-
-    return AppLocalization.format(.durationMinutesFormat, minutes)
+    AppLocalization.format(.durationHoursFormat, max(Int(value / 3_600), 0))
 }
 
-private func careerDistanceText(_ value: Double) -> String {
-    if value >= 1000 {
-        return String(format: "%.1f km", value / 1000)
+private func careerTotalKilometerText(_ value: Double) -> String {
+    String(format: "%.1f km", max(value, 0) / 1_000)
+}
+
+private func careerOverviewDistanceText(_ value: Double) -> String {
+    if value >= 1_000 {
+        return "\(Int((value / 1_000).rounded())) km"
     }
 
     if value > 0 {
@@ -667,20 +676,20 @@ private func careerDistanceText(_ value: Double) -> String {
     return AppLocalization.text(.unknownDistance)
 }
 
-private func careerDistanceAttributedText(_ value: Double) -> NSAttributedString {
+private func careerOverviewDistanceAttributedText(_ value: Double) -> NSAttributedString {
     careerEmphasizedNumberText(
-        careerDistanceText(value),
-        numberFont: .systemFont(ofSize: 22, weight: .bold),
-        unitFont: .systemFont(ofSize: 13, weight: .bold),
-        color: AppColors.movinnGreen
+        careerOverviewDistanceText(value),
+        numberFont: .systemFont(ofSize: 16, weight: .bold),
+        unitFont: .systemFont(ofSize: 11, weight: .semibold),
+        color: .black
     )
 }
 
-private func careerDurationAttributedText(_ value: Double) -> NSAttributedString {
+private func careerOverviewDurationAttributedText(_ value: Double) -> NSAttributedString {
     careerEmphasizedNumberText(
         careerDurationText(value),
-        numberFont: .systemFont(ofSize: 18, weight: .bold),
-        unitFont: .systemFont(ofSize: 12, weight: .semibold),
+        numberFont: .systemFont(ofSize: 15, weight: .bold),
+        unitFont: .systemFont(ofSize: 11, weight: .semibold),
         color: .black
     )
 }
@@ -976,7 +985,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
     private var series: [SportsCareerStatistics.AnnualDurationSeries] = []
     private var selection: CurveSelection?
     private let selectionFeedbackGenerator = UISelectionFeedbackGenerator()
-    private let yearLabelWidth: CGFloat = 48
+    private let yearLabelWidth: CGFloat = 74
     private weak var disabledInteractivePopGestureRecognizer: UIGestureRecognizer?
     private var disabledInteractivePopGestureWasEnabled: Bool?
     private var hasConfiguredInteractivePopGestureFailureRequirement = false
@@ -1024,30 +1033,42 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
             .font: UIFont.systemFont(ofSize: 12, weight: .bold),
             .foregroundColor: UIColor.black
         ]
+        let yearMetricParagraphStyle = NSMutableParagraphStyle()
+        yearMetricParagraphStyle.lineSpacing = 1
+        let yearMetricAttributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 9, weight: .semibold),
+            .foregroundColor: UIColor.black.withAlphaComponent(0.38),
+            .paragraphStyle: yearMetricParagraphStyle
+        ]
 
         for (seriesIndex, item) in series.enumerated() {
             let rowMinY = layout.chartRect.minY + CGFloat(seriesIndex) * layout.rowHeight
             let baselineY = rowMinY + layout.rowHeight * 0.78
             let amplitude = layout.rowHeight * 0.66
             let values = Array(item.weeklyDistanceMeters.prefix(item.visibleWeekCount))
-            let xDenominator = CGFloat(max(item.weeklyDurationSeconds.count - 1, 1))
+            let xDenominator = CGFloat(max(item.weeklyDistanceMeters.count - 1, 1))
 
             let yearText = "\(item.year)" as NSString
             let yearSize = yearText.size(withAttributes: yearAttributes)
             yearText.draw(
                 at: CGPoint(
                     x: rect.minX,
-                    y: baselineY - yearSize.height / 2
+                    y: rowMinY + 8
                 ),
                 withAttributes: yearAttributes
             )
-
-            let baselinePath = UIBezierPath()
-            baselinePath.move(to: CGPoint(x: layout.chartRect.minX, y: baselineY))
-            baselinePath.addLine(to: CGPoint(x: layout.chartRect.maxX, y: baselineY))
-            UIColor.black.withAlphaComponent(0.08).setStroke()
-            baselinePath.lineWidth = 1
-            baselinePath.stroke()
+            let metricText = "\(careerSummaryDistanceText(item.totalDistanceMeters))\n\(careerSummaryDurationText(item.totalDurationSeconds))" as NSString
+            metricText.draw(
+                with: CGRect(
+                    x: rect.minX,
+                    y: rowMinY + yearSize.height + 10,
+                    width: yearLabelWidth - 6,
+                    height: 34
+                ),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: yearMetricAttributes,
+                context: nil
+            )
 
             guard values.count > 1 else {
                 continue
@@ -1187,7 +1208,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
         let seriesIndex = min(max(rawSeriesIndex, 0), series.count - 1)
         let item = series[seriesIndex]
         let maxWeekIndex = max(item.visibleWeekCount - 1, 0)
-        let denominator = CGFloat(max(item.weeklyDurationSeconds.count - 1, 1))
+        let denominator = CGFloat(max(item.weeklyDistanceMeters.count - 1, 1))
         let weekOffset = ((point.x - layout.chartRect.minX) / layout.chartRect.width) * denominator
         let weekIndex = min(max(Int(weekOffset.rounded()), 0), maxWeekIndex)
 
@@ -1199,7 +1220,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
         item: SportsCareerStatistics.AnnualDurationSeries,
         layout: CurveLayout
     ) -> CGFloat {
-        let denominator = CGFloat(max(item.weeklyDurationSeconds.count - 1, 1))
+        let denominator = CGFloat(max(item.weeklyDistanceMeters.count - 1, 1))
         return layout.chartRect.minX + CGFloat(weekIndex) / denominator * layout.chartRect.width
     }
 
@@ -1414,8 +1435,10 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
     private func makeMonthPageView(for monthDate: Date) -> UIView {
         let pageView = UIView()
         let monthLabel = UILabel()
+        let summaryLabel = UILabel()
         let weekdayStackView = makeWeekdayStackView()
         let gridStackView = makeDayGridStackView(for: monthDate)
+        let metrics = monthMetrics(for: monthDate)
 
         monthLabel.text = monthTitle(for: monthDate)
         monthLabel.textColor = .black
@@ -1423,15 +1446,30 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         monthLabel.adjustsFontSizeToFitWidth = true
         monthLabel.minimumScaleFactor = 0.7
 
+        summaryLabel.text = "\(careerTotalKilometerText(metrics.distanceMeters))\n\(careerDurationText(metrics.durationSeconds))"
+        summaryLabel.textColor = .black
+        summaryLabel.font = .systemFont(ofSize: 10, weight: .semibold)
+        summaryLabel.numberOfLines = 2
+        summaryLabel.textAlignment = .right
+        summaryLabel.adjustsFontSizeToFitWidth = true
+        summaryLabel.minimumScaleFactor = 0.72
+
         pageView.addSubview(monthLabel)
+        pageView.addSubview(summaryLabel)
         pageView.addSubview(weekdayStackView)
         pageView.addSubview(gridStackView)
 
         monthLabel.snp.makeConstraints { make in
             make.top.equalToSuperview().offset(14)
             make.leading.equalToSuperview().offset(16)
-            make.trailing.equalToSuperview().inset(16)
+            make.trailing.lessThanOrEqualTo(summaryLabel.snp.leading).offset(-10)
             make.height.equalTo(24)
+        }
+
+        summaryLabel.snp.makeConstraints { make in
+            make.centerY.equalTo(monthLabel)
+            make.trailing.equalToSuperview().inset(16)
+            make.width.equalTo(116)
         }
 
         weekdayStackView.snp.makeConstraints { make in
@@ -1447,6 +1485,24 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         }
 
         return pageView
+    }
+
+    private func monthMetrics(for monthDate: Date) -> (distanceMeters: Double, durationSeconds: TimeInterval) {
+        let monthStartDate = Self.startOfMonth(for: monthDate, calendar: calendar)
+        guard let nextMonthDate = calendar.date(byAdding: .month, value: 1, to: monthStartDate) else {
+            return (0, 0)
+        }
+
+        let workouts = activityWorkoutsByDateKey.values
+            .flatMap { $0 }
+            .filter { workout in
+                workout.startDate >= monthStartDate && workout.startDate < nextMonthDate
+            }
+
+        return (
+            workouts.reduce(0) { $0 + $1.distanceMeters },
+            workouts.reduce(0) { $0 + ($1.durationSeconds ?? 0) }
+        )
     }
 
     private func makeWeekdayStackView() -> UIStackView {
@@ -1765,7 +1821,7 @@ private final class CareerCalendarDayView: UIView {
         iconStackView.isHidden = !hasWorkout
 
         if isToday {
-            dayLabel.textColor = AppColors.movinnGreen
+            dayLabel.textColor = .black
         } else if !isCurrentMonth {
             dayLabel.textColor = UIColor.black.withAlphaComponent(0.24)
         } else if isPast {
@@ -1774,10 +1830,10 @@ private final class CareerCalendarDayView: UIView {
             dayLabel.textColor = .black
         }
 
-        circleView.layer.borderColor = isToday ? AppColors.movinnGreen.cgColor : UIColor.clear.cgColor
+        circleView.layer.borderColor = isToday ? UIColor.black.cgColor : UIColor.clear.cgColor
         configureIcons(
             symbolNames: symbolNames,
-            tintColor: isToday ? AppColors.movinnGreen : .black
+            tintColor: AppColors.movinnGreen
         )
     }
 
@@ -1947,33 +2003,219 @@ private final class CareerChartHostingView: UIView {
 
 private struct CareerWeeklyDistanceChart: View {
     let rows: [SportsCareerStatistics.WeeklyDistanceRow]
+    @State private var selectedDayIndex: Int?
+
+    private var totalDistanceMeters: Double {
+        rows.reduce(0) { $0 + $1.distanceMeters }
+    }
+
+    private var totalDurationSeconds: TimeInterval {
+        rows.reduce(0) { $0 + $1.durationSeconds }
+    }
 
     var body: some View {
-        Chart(rows) { row in
-            BarMark(
-                x: .value("Day", row.title),
-                y: .value("Distance", row.distanceKilometers)
-            )
-            .foregroundStyle(Color(uiColor: AppColors.movinnGreen))
-            .cornerRadius(4)
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading)
-        }
-        .chartXAxis {
-            AxisMarks(values: rows.map(\.title))
-        }
-        .chartPlotStyle { plotArea in
-            plotArea
-                .background(Color.white.opacity(0.42))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 20) {
+                summaryMetric(
+                    title: AppLocalization.text(.totalWorkoutDistance),
+                    value: careerTotalKilometerText(totalDistanceMeters),
+                    valueColor: .black
+                )
+                summaryMetric(
+                    title: AppLocalization.text(.totalWorkoutTime),
+                    value: careerDurationText(totalDurationSeconds),
+                    valueColor: .black
+                )
+                Spacer(minLength: 0)
+            }
+
+            Chart(rows) { row in
+                BarMark(
+                    x: .value("Day", row.title),
+                    y: .value("Distance", row.distanceKilometers)
+                )
+                .foregroundStyle(
+                    row.index == selectedDayIndex
+                    ? Color(uiColor: AppColors.movinnGreen)
+                    : Color(uiColor: AppColors.movinnGreen).opacity(0.76)
+                )
+                .cornerRadius(4)
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading)
+            }
+            .chartXAxis {
+                AxisMarks(values: rows.map(\.title))
+            }
+            .chartPlotStyle { plotArea in
+                plotArea
+                    .background(Color.white.opacity(0.42))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    ZStack(alignment: .topLeading) {
+                        if let tooltip = selectedTooltip(proxy: proxy, geometry: geometry) {
+                            Text(tooltip.text)
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color.white)
+                                        .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+                                )
+                                .position(x: tooltip.x, y: tooltip.y)
+                        }
+
+                        CareerChartTapOverlay { location in
+                            updateSelection(
+                                at: location,
+                                proxy: proxy,
+                                geometry: geometry
+                            )
+                        }
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
         }
         .padding(16)
+        .onChange(of: selectedDayIndex) { _, newValue in
+            guard newValue != nil else {
+                return
+            }
+
+            UISelectionFeedbackGenerator().selectionChanged()
+        }
+    }
+
+    private func summaryMetric(title: String, value: String, valueColor: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.black)
+            Text(value)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(valueColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+        }
+    }
+
+    private func selectedTooltip(
+        proxy: ChartProxy,
+        geometry: GeometryProxy
+    ) -> (text: String, x: CGFloat, y: CGFloat)? {
+        guard let selectedDayIndex,
+              let row = rows.first(where: { $0.index == selectedDayIndex }),
+              let rowPosition = rows.firstIndex(where: { $0.index == selectedDayIndex }),
+              let plotFrame = proxy.plotFrame else {
+            return nil
+        }
+
+        let plotRect = geometry[plotFrame]
+        let slotWidth = plotRect.width / CGFloat(max(rows.count, 1))
+        let rawX = plotRect.minX + slotWidth * (CGFloat(rowPosition) + 0.5)
+        let x = min(max(rawX, plotRect.minX + 34), plotRect.maxX - 34)
+        let y = max(plotRect.minY + 14, 14)
+
+        return (
+            text: careerTotalKilometerText(row.distanceMeters),
+            x: x,
+            y: y
+        )
+    }
+
+    private func updateSelection(
+        at location: CGPoint,
+        proxy: ChartProxy,
+        geometry: GeometryProxy
+    ) {
+        guard !rows.isEmpty,
+              let plotFrame = proxy.plotFrame else {
+            return
+        }
+
+        let plotRect = geometry[plotFrame]
+        let xPosition = location.x - plotRect.minX
+        guard xPosition >= 0, xPosition <= plotRect.width else {
+            return
+        }
+
+        if let title = proxy.value(atX: xPosition, as: String.self),
+           let row = rows.first(where: { $0.title == title }) {
+            selectedDayIndex = row.index
+            return
+        }
+
+        let fallbackIndex = min(
+            max(Int((xPosition / max(plotRect.width, 1)) * CGFloat(rows.count)), 0),
+            rows.count - 1
+        )
+        selectedDayIndex = rows[fallbackIndex].index
+    }
+}
+
+private struct CareerChartTapOverlay: UIViewRepresentable {
+    let onTap: (CGPoint) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+
+        let tapGestureRecognizer = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTap(_:))
+        )
+        tapGestureRecognizer.cancelsTouchesInView = false
+        tapGestureRecognizer.delegate = context.coordinator
+        view.addGestureRecognizer(tapGestureRecognizer)
+
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onTap = onTap
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onTap: (CGPoint) -> Void
+
+        init(onTap: @escaping (CGPoint) -> Void) {
+            self.onTap = onTap
+        }
+
+        @objc func handleTap(_ gestureRecognizer: UITapGestureRecognizer) {
+            guard gestureRecognizer.state == .ended,
+                  let view = gestureRecognizer.view else {
+                return
+            }
+
+            onTap(gestureRecognizer.location(in: view))
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
     }
 }
 
 private struct CareerSportDistributionChart: View {
     let slices: [SportsCareerStatistics.SportDistributionSlice]
+
+    private var totalValue: Double {
+        slices.reduce(0) { $0 + max($1.value, 0) }
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -1984,6 +2226,21 @@ private struct CareerSportDistributionChart: View {
                     angularInset: 1.6
                 )
                 .foregroundStyle(slice.color)
+                .annotation(position: .overlay) {
+                    if percentage(for: slice) >= 0.05 {
+                        Text(percentageText(for: slice))
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.black)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.82))
+                            )
+                    }
+                }
             }
             .chartLegend(.hidden)
             .frame(width: 150)
@@ -1994,7 +2251,7 @@ private struct CareerSportDistributionChart: View {
                         Circle()
                             .fill(slice.color)
                             .frame(width: 8, height: 8)
-                        Text(slice.title)
+                        Text("\(slice.title) \(percentageText(for: slice))")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.black)
                             .lineLimit(1)
@@ -2007,6 +2264,18 @@ private struct CareerSportDistributionChart: View {
         .padding(16)
         .background(Color(uiColor: UIColor(white: 0.965, alpha: 1)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func percentage(for slice: SportsCareerStatistics.SportDistributionSlice) -> Double {
+        guard totalValue > 0 else {
+            return 0
+        }
+
+        return max(slice.value, 0) / totalValue
+    }
+
+    private func percentageText(for slice: SportsCareerStatistics.SportDistributionSlice) -> String {
+        "\(Int((percentage(for: slice) * 100).rounded()))%"
     }
 }
 
@@ -2171,11 +2440,11 @@ private final class CareerSportTypeCell: UICollectionViewCell {
         titleLabel.text = row.title
         distanceLabel.configure(
             finalValue: row.distanceMeters,
-            attributedFormatter: careerDistanceAttributedText
+            attributedFormatter: careerOverviewDistanceAttributedText
         )
         durationLabel.configure(
             finalValue: row.durationSeconds,
-            attributedFormatter: careerDurationAttributedText
+            attributedFormatter: careerOverviewDurationAttributedText
         )
     }
 
@@ -2198,17 +2467,15 @@ private final class CareerSportTypeCell: UICollectionViewCell {
         titleLabel.adjustsFontSizeToFitWidth = true
         titleLabel.minimumScaleFactor = 0.62
 
-        distanceLabel.textColor = AppColors.movinnGreen
-        distanceLabel.font = .systemFont(ofSize: 22, weight: .bold)
+        distanceLabel.textColor = .black
+        distanceLabel.font = .systemFont(ofSize: 16, weight: .bold)
         distanceLabel.textAlignment = .left
-        distanceLabel.adjustsFontSizeToFitWidth = true
-        distanceLabel.minimumScaleFactor = 0.46
+        distanceLabel.adjustsFontSizeToFitWidth = false
 
         durationLabel.textColor = .black
-        durationLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        durationLabel.font = .systemFont(ofSize: 15, weight: .bold)
         durationLabel.textAlignment = .left
-        durationLabel.adjustsFontSizeToFitWidth = true
-        durationLabel.minimumScaleFactor = 0.46
+        durationLabel.adjustsFontSizeToFitWidth = false
 
         contentView.addSubview(iconView)
         contentView.addSubview(titleLabel)
