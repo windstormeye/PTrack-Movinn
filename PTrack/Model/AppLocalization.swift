@@ -37,6 +37,7 @@ enum AppTextKey: String {
     case cycling
     case dark
     case dataIntegration
+    case dayBeforeYesterday
     case developerWebsite
     case distanceMetersFormat
     case healthAuthorizationDenied
@@ -57,6 +58,12 @@ enum AppTextKey: String {
     case routeHeatmap
     case running
     case satellite
+    case sportsCareerAnnualData
+    case sportsCareerMonthlyData
+    case sportsCareerOverview
+    case sportsCareerSummary
+    case sportsCareerWeeklyData
+    case sportsCareerWeekDistanceFormat
     case sportTypeCountSummary
     case sportTypeTimeSummary
     case sportsCareer
@@ -86,8 +93,8 @@ enum AppTextKey: String {
     case workoutStart
     case startNotFound
     case yesterday
-    case dayBeforeYesterday
     case burnedCaloriesFormat
+    case durationHoursFormat
     case durationHoursMinutesFormat
     case durationMinutesFormat
 }
@@ -147,6 +154,7 @@ enum AppLocalization {
             .cycling: "骑行",
             .dark: "暗色",
             .dataIntegration: "数据接入",
+            .dayBeforeYesterday: "前天",
             .developerWebsite: "开发者网站",
             .distanceMetersFormat: "%.0f 米",
             .healthAuthorizationDenied: "未获得健康数据读取权限。",
@@ -167,6 +175,12 @@ enum AppLocalization {
             .routeHeatmap: "轨迹热图",
             .running: "跑步",
             .satellite: "卫星",
+            .sportsCareerAnnualData: "年度数据",
+            .sportsCareerMonthlyData: "月份数据",
+            .sportsCareerOverview: "运动总览",
+            .sportsCareerSummary: "总览",
+            .sportsCareerWeeklyData: "周数据",
+            .sportsCareerWeekDistanceFormat: "第 %d 周\n%.1f km",
             .sportTypeCountSummary: "不同运动类型的运动次数汇总",
             .sportTypeTimeSummary: "运动时间汇总",
             .sportsCareer: "运动生涯",
@@ -180,9 +194,9 @@ enum AppLocalization {
             .systemMapsNotFound: "未找到系统地图",
             .totalActivityCountFormat: "%d 次",
             .totalDistanceFormat: "%dkm",
-            .totalWorkoutCount: "运动总次数",
-            .totalWorkoutDistance: "运动总距离",
-            .totalWorkoutTime: "运动总时间",
+            .totalWorkoutCount: "总次数",
+            .totalWorkoutDistance: "总里程",
+            .totalWorkoutTime: "总时间",
             .trailRunning: "越野跑",
             .today: "今天",
             .uiSettings: "UI 设置",
@@ -196,8 +210,8 @@ enum AppLocalization {
             .workoutStart: "运动起点",
             .startNotFound: "未找到起点",
             .yesterday: "昨天",
-            .dayBeforeYesterday: "前天",
             .burnedCaloriesFormat: "消耗 %.0f 大卡",
+            .durationHoursFormat: "%d小时",
             .durationHoursMinutesFormat: "%d小时%d分钟",
             .durationMinutesFormat: "%d分钟"
         ],
@@ -211,6 +225,7 @@ enum AppLocalization {
             .cycling: "サイクリング",
             .dark: "ダーク",
             .dataIntegration: "データ連携",
+            .dayBeforeYesterday: "一昨日",
             .developerWebsite: "開発者サイト",
             .distanceMetersFormat: "%.0f m",
             .healthAuthorizationDenied: "ヘルスケアデータの読み取り権限がありません。",
@@ -231,6 +246,12 @@ enum AppLocalization {
             .routeHeatmap: "軌跡ヒートマップ",
             .running: "ランニング",
             .satellite: "衛星",
+            .sportsCareerAnnualData: "年間データ",
+            .sportsCareerMonthlyData: "月間データ",
+            .sportsCareerOverview: "ワークアウト概要",
+            .sportsCareerSummary: "概要",
+            .sportsCareerWeeklyData: "週間データ",
+            .sportsCareerWeekDistanceFormat: "%d週目\n%.1f km",
             .sportTypeCountSummary: "種目別ワークアウト回数",
             .sportTypeTimeSummary: "ワークアウト時間の集計",
             .sportsCareer: "運動履歴",
@@ -260,8 +281,8 @@ enum AppLocalization {
             .workoutStart: "ワークアウト開始地点",
             .startNotFound: "スタート地点が見つかりません",
             .yesterday: "昨日",
-            .dayBeforeYesterday: "一昨日",
             .burnedCaloriesFormat: "%.0f kcal 消費",
+            .durationHoursFormat: "%d時間",
             .durationHoursMinutesFormat: "%d時間%d分",
             .durationMinutesFormat: "%d分"
         ],
@@ -275,6 +296,7 @@ enum AppLocalization {
             .cycling: "사이클링",
             .dark: "어두운",
             .dataIntegration: "데이터 연동",
+            .dayBeforeYesterday: "그저께",
             .developerWebsite: "개발자 웹사이트",
             .distanceMetersFormat: "%.0f m",
             .healthAuthorizationDenied: "건강 데이터 읽기 권한이 없습니다.",
@@ -295,6 +317,12 @@ enum AppLocalization {
             .routeHeatmap: "경로 히트맵",
             .running: "달리기",
             .satellite: "위성",
+            .sportsCareerAnnualData: "연간 데이터",
+            .sportsCareerMonthlyData: "월간 데이터",
+            .sportsCareerOverview: "운동 개요",
+            .sportsCareerSummary: "요약",
+            .sportsCareerWeeklyData: "주간 데이터",
+            .sportsCareerWeekDistanceFormat: "%d주차\n%.1f km",
             .sportTypeCountSummary: "운동 유형별 횟수 요약",
             .sportTypeTimeSummary: "운동 시간 요약",
             .sportsCareer: "운동 경력",
@@ -308,9 +336,9 @@ enum AppLocalization {
             .systemMapsNotFound: "시스템 지도를 찾을 수 없음",
             .totalActivityCountFormat: "%d회",
             .totalDistanceFormat: "%dkm",
-            .totalWorkoutCount: "총 운동 횟수",
-            .totalWorkoutDistance: "총 운동 거리",
-            .totalWorkoutTime: "총 운동 시간",
+            .totalWorkoutCount: "총 횟수",
+            .totalWorkoutDistance: "총 거리",
+            .totalWorkoutTime: "총 시간",
             .trailRunning: "트레일 러닝",
             .today: "오늘",
             .uiSettings: "UI 설정",
@@ -324,8 +352,8 @@ enum AppLocalization {
             .workoutStart: "운동 시작점",
             .startNotFound: "시작점을 찾을 수 없음",
             .yesterday: "어제",
-            .dayBeforeYesterday: "그저께",
             .burnedCaloriesFormat: "%.0f kcal 소비",
+            .durationHoursFormat: "%d시간",
             .durationHoursMinutesFormat: "%d시간 %d분",
             .durationMinutesFormat: "%d분"
         ],
@@ -339,6 +367,7 @@ enum AppLocalization {
             .cycling: "Cycling",
             .dark: "Dark",
             .dataIntegration: "Data Connections",
+            .dayBeforeYesterday: "The Day Before Yesterday",
             .developerWebsite: "Developer Website",
             .distanceMetersFormat: "%.0f m",
             .healthAuthorizationDenied: "Health data read permission has not been granted.",
@@ -359,6 +388,12 @@ enum AppLocalization {
             .routeHeatmap: "Route Heatmap",
             .running: "Running",
             .satellite: "Satellite",
+            .sportsCareerAnnualData: "Annual Data",
+            .sportsCareerMonthlyData: "Monthly Data",
+            .sportsCareerOverview: "Activity Overview",
+            .sportsCareerSummary: "Summary",
+            .sportsCareerWeeklyData: "Weekly Data",
+            .sportsCareerWeekDistanceFormat: "Week %d\n%.1f km",
             .sportTypeCountSummary: "Workout Count by Type",
             .sportTypeTimeSummary: "Workout Time Summary",
             .sportsCareer: "Sports Career",
@@ -372,8 +407,8 @@ enum AppLocalization {
             .systemMapsNotFound: "System Maps not found",
             .totalActivityCountFormat: "%d times",
             .totalDistanceFormat: "%dkm",
-            .totalWorkoutCount: "Total Workouts",
-            .totalWorkoutDistance: "Total Distance",
+            .totalWorkoutCount: "Total Count",
+            .totalWorkoutDistance: "Total Mileage",
             .totalWorkoutTime: "Total Time",
             .trailRunning: "Trail Running",
             .today: "Today",
@@ -388,8 +423,8 @@ enum AppLocalization {
             .workoutStart: "Workout Start",
             .startNotFound: "Start not found",
             .yesterday: "Yesterday",
-            .dayBeforeYesterday: "The Day Before Yesterday",
             .burnedCaloriesFormat: "Burned %.0f kcal",
+            .durationHoursFormat: "%d hr",
             .durationHoursMinutesFormat: "%d hr %d min",
             .durationMinutesFormat: "%d min"
         ]
