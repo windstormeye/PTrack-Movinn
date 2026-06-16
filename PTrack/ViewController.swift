@@ -52,6 +52,7 @@ class ViewController: UIViewController {
     private let pendingWorkoutFlushDelay: TimeInterval = 0.35
     private let activeScrollFlushDelay: TimeInterval = 0.45
     private let cacheSaveDebounceDelay: TimeInterval = 1.0
+    private let cacheLoadPreviewBatchSize = 32
     private let stravaIncrementalLookback: TimeInterval = 7 * 24 * 60 * 60
     private let pullRefreshTriggerDistance: CGFloat = 86
     private var columnSnapDisplayLink: CADisplayLink?
@@ -356,7 +357,14 @@ class ViewController: UIViewController {
                 return
             }
 
-            let cachedWorkouts = self.cacheStore.load()
+            let cachedWorkouts = self.cacheStore.load(
+                batchSize: self.cacheLoadPreviewBatchSize,
+                onBatch: { [weak self] cachedWorkoutBatch in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.appendCachedWorkoutBatch(cachedWorkoutBatch)
+                    }
+                }
+            )
             DispatchQueue.main.async { [weak self] in
                 guard let self else {
                     return
@@ -367,6 +375,29 @@ class ViewController: UIViewController {
                 self.endLoadingOperation()
                 self.synchronizeDataSourcesForAppOpen()
             }
+        }
+    }
+
+    private func appendCachedWorkoutBatch(_ cachedWorkoutBatch: [TrackedWorkout]) {
+        guard isCacheLoadInProgress, !cachedWorkoutBatch.isEmpty else {
+            return
+        }
+
+        var didAppendWorkout = false
+        for workout in cachedWorkoutBatch where knownWorkoutIDs.insert(workout.id).inserted {
+            workouts.append(workout)
+            totalDistanceMeters += workout.distanceMeters
+            didAppendWorkout = true
+        }
+
+        guard didAppendWorkout else {
+            return
+        }
+
+        workouts.sort { $0.startDate > $1.startDate }
+        updateTotalDistanceText()
+        UIView.performWithoutAnimation {
+            collectionView.reloadData()
         }
     }
 

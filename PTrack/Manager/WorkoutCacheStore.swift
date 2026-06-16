@@ -22,8 +22,11 @@ final class WorkoutCacheStore {
         workoutsDirectoryURL = directoryURL.appendingPathComponent("tracked-workouts", isDirectory: true)
     }
 
-    func load() -> [TrackedWorkout] {
-        if let splitCacheWorkouts = loadSplitCache() {
+    func load(
+        batchSize: Int = 0,
+        onBatch: (([TrackedWorkout]) -> Void)? = nil
+    ) -> [TrackedWorkout] {
+        if let splitCacheWorkouts = loadSplitCache(batchSize: batchSize, onBatch: onBatch) {
             return splitCacheWorkouts
         }
 
@@ -31,6 +34,7 @@ final class WorkoutCacheStore {
         if !legacyWorkouts.isEmpty {
             print("PTrack Cache: migrating legacy monolithic cache to per-workout files")
             save(legacyWorkouts)
+            onBatch?(legacyWorkouts)
         }
         return legacyWorkouts
     }
@@ -121,9 +125,13 @@ final class WorkoutCacheStore {
         }
     }
 
-    private func loadSplitCache() -> [TrackedWorkout]? {
+    private func loadSplitCache(
+        batchSize: Int = 0,
+        onBatch: (([TrackedWorkout]) -> Void)? = nil
+    ) -> [TrackedWorkout]? {
         let manifest = loadManifest()
         let fileURLs: [URL]
+        let shouldPublishBatches = batchSize > 0 && onBatch != nil
 
         if let manifest {
             fileURLs = manifest.workoutIDs.map(workoutFileURL(for:))
@@ -135,7 +143,11 @@ final class WorkoutCacheStore {
         }
 
         var workouts: [TrackedWorkout] = []
+        var batchWorkouts: [TrackedWorkout] = []
         workouts.reserveCapacity(fileURLs.count)
+        if shouldPublishBatches {
+            batchWorkouts.reserveCapacity(batchSize)
+        }
 
         for fileURL in fileURLs {
             guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -145,10 +157,23 @@ final class WorkoutCacheStore {
 
             do {
                 let data = try Data(contentsOf: fileURL)
-                workouts.append(try JSONDecoder().decode(TrackedWorkout.self, from: data))
+                let workout = try JSONDecoder().decode(TrackedWorkout.self, from: data)
+                workouts.append(workout)
+
+                if shouldPublishBatches {
+                    batchWorkouts.append(workout)
+                    if batchWorkouts.count >= batchSize {
+                        onBatch?(batchWorkouts)
+                        batchWorkouts.removeAll(keepingCapacity: true)
+                    }
+                }
             } catch {
                 print("PTrack Cache: failed to decode workout cache file \(fileURL.lastPathComponent): \(error)")
             }
+        }
+
+        if shouldPublishBatches, !batchWorkouts.isEmpty {
+            onBatch?(batchWorkouts)
         }
 
         let sortedWorkouts = sorted(workouts)

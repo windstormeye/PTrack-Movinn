@@ -517,7 +517,8 @@ extension MoreSettingsViewController: UICollectionViewDelegateFlowLayout {
         layout collectionViewLayout: UICollectionViewLayout,
         insetForSectionAt section: Int
     ) -> UIEdgeInsets {
-        UIEdgeInsets(top: section == 0 ? 4 : 18, left: 16, bottom: 0, right: 16)
+        let isLastSection = section == SettingsSection.allCases.count - 1
+        return UIEdgeInsets(top: 4, left: 16, bottom: isLastSection ? 0 : 22, right: 16)
     }
 
     func collectionView(
