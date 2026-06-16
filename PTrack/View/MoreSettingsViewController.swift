@@ -72,6 +72,20 @@ final class MoreSettingsViewController: UIViewController {
         }
     }
 
+    private enum ConnectionIndicatorState: Equatable {
+        case connected
+        case needsAttention
+
+        var color: UIColor {
+            switch self {
+            case .connected:
+                return AppColors.movinnGreen
+            case .needsAttention:
+                return .systemOrange
+            }
+        }
+    }
+
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let navigationBackgroundHeight: CGFloat = 124
@@ -96,6 +110,7 @@ final class MoreSettingsViewController: UIViewController {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         configureNavigationBar()
+        collectionView.reloadData()
     }
 
     override func viewDidLayoutSubviews() {
@@ -205,6 +220,31 @@ final class MoreSettingsViewController: UIViewController {
         SettingsSection.allCases[indexPath.section].items[indexPath.item]
     }
 
+    private func connectionIndicatorState(for item: SettingsItem) -> ConnectionIndicatorState? {
+        switch item {
+        case .appleHealth:
+            switch healthWorkoutStore.authorizationState {
+            case .notDetermined:
+                return nil
+            case .authorized:
+                return .connected
+            case .needsAttention:
+                return .needsAttention
+            }
+        case .strava:
+            switch StravaManager.shared.authorizationState {
+            case .notDetermined:
+                return nil
+            case .authorized:
+                return .connected
+            case .needsReauthorization:
+                return .needsAttention
+            }
+        case .appLanguage, .developerWebsite:
+            return nil
+        }
+    }
+
     private func presentLanguagePicker(from sourceView: UIView?) {
         let alertController = UIAlertController(
             title: AppLocalization.text(.appLanguage),
@@ -239,6 +279,11 @@ final class MoreSettingsViewController: UIViewController {
     }
 
     private func requestHealthAuthorization() {
+        if connectionIndicatorState(for: .appleHealth) == .connected {
+            Toast.show(AppLocalization.text(.healthDataReadAuthorized), in: view)
+            return
+        }
+
         healthWorkoutStore.requestAuthorization { [weak self] result in
             Task { @MainActor in
                 guard let self else {
@@ -248,8 +293,37 @@ final class MoreSettingsViewController: UIViewController {
                 if case .failure(let error) = result {
                     self.presentErrorAlert(error)
                 }
+                self.collectionView.reloadData()
             }
         }
+    }
+
+    private func handleStravaSelection() {
+        if connectionIndicatorState(for: .strava) == .connected {
+            presentStravaAlreadyAuthorizedAlert()
+            return
+        }
+
+        openStravaAuthorization()
+    }
+
+    private func presentStravaAlreadyAuthorizedAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.strava),
+            message: AppLocalization.text(.stravaAuthorizationAlreadyGrantedMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.stillOpen),
+            style: .default
+        ) { [weak self] _ in
+            self?.openStravaAuthorization()
+        })
+        present(alertController, animated: true)
     }
 
     private func openStravaAuthorization() {
@@ -267,6 +341,7 @@ final class MoreSettingsViewController: UIViewController {
                 guard (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin else {
                     return
                 }
+                collectionView.reloadData()
                 presentErrorAlert(title: AppLocalization.text(.strava), error: error)
             }
         }
@@ -357,7 +432,8 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
         let item = item(at: indexPath)
         cell.configure(
             iconName: item.iconName,
-            title: AppLocalization.text(item.titleKey)
+            title: AppLocalization.text(item.titleKey),
+            indicatorColor: connectionIndicatorState(for: item)?.color
         )
         return cell
     }
@@ -392,7 +468,7 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
         case .appleHealth:
             requestHealthAuthorization()
         case .strava:
-            openStravaAuthorization()
+            handleStravaSelection()
         case .developerWebsite:
             openDeveloperWebsite()
         }
@@ -457,6 +533,7 @@ private final class MoreSettingsCell: UICollectionViewCell {
 
     private let iconView = UIImageView()
     private let titleLabel = UILabel()
+    private let statusIndicatorView = UIView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -477,12 +554,14 @@ private final class MoreSettingsCell: UICollectionViewCell {
         }
     }
 
-    func configure(iconName: String, title: String) {
+    func configure(iconName: String, title: String, indicatorColor: UIColor?) {
         iconView.image = UIImage(
             systemName: iconName,
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
         )
         titleLabel.text = title
+        statusIndicatorView.backgroundColor = indicatorColor
+        statusIndicatorView.isHidden = indicatorColor == nil
     }
 
     private func configureViews() {
@@ -502,8 +581,13 @@ private final class MoreSettingsCell: UICollectionViewCell {
         titleLabel.minimumScaleFactor = 0.74
         titleLabel.lineBreakMode = .byTruncatingTail
 
+        statusIndicatorView.isHidden = true
+        statusIndicatorView.layer.cornerRadius = 4
+        statusIndicatorView.layer.masksToBounds = true
+
         contentView.addSubview(iconView)
         contentView.addSubview(titleLabel)
+        contentView.addSubview(statusIndicatorView)
 
         iconView.snp.makeConstraints { make in
             make.leading.equalToSuperview().offset(14)
@@ -515,6 +599,11 @@ private final class MoreSettingsCell: UICollectionViewCell {
             make.leading.equalTo(iconView.snp.trailing).offset(10)
             make.trailing.equalToSuperview().inset(12)
             make.centerY.equalToSuperview()
+        }
+
+        statusIndicatorView.snp.makeConstraints { make in
+            make.top.trailing.equalToSuperview().inset(8)
+            make.size.equalTo(8)
         }
     }
 }

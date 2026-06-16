@@ -22,6 +22,14 @@ final class StravaManager: NSObject {
 
     private enum DefaultsKey {
         static let credentials = "studio.pj.PTrack.strava.credentials"
+        static let authorizationAttempted = "studio.pj.PTrack.strava.authorizationAttempted"
+        static let authorizationNeedsReauthorization = "studio.pj.PTrack.strava.authorizationNeedsReauthorization"
+    }
+
+    enum AuthorizationState {
+        case notDetermined
+        case authorized
+        case needsReauthorization
     }
 
     init(defaults: UserDefaults = .standard, networkManager: NetworkManager = .shared) {
@@ -33,6 +41,19 @@ final class StravaManager: NSObject {
 
     var hasStoredAuthorization: Bool {
         storedCredentials() != nil
+    }
+
+    var authorizationState: AuthorizationState {
+        if storedCredentials() != nil {
+            return .authorized
+        }
+
+        if defaults.bool(forKey: DefaultsKey.authorizationNeedsReauthorization)
+            || defaults.bool(forKey: DefaultsKey.authorizationAttempted) {
+            return .needsReauthorization
+        }
+
+        return .notDetermined
     }
 
     func authorizeAndLoadTrackedWorkouts(
@@ -205,10 +226,12 @@ final class StravaManager: NSObject {
 
         let queryItems = components.queryItems ?? []
         if let error = queryItems.first(where: { $0.name == "error" })?.value {
+            markAuthorizationNeedsReauthorization()
             throw StravaManagerError.authorizationDenied(error)
         }
 
         guard let code = queryItems.first(where: { $0.name == "code" })?.value else {
+            markAuthorizationNeedsReauthorization()
             throw StravaManagerError.missingAuthorizationCode
         }
 
@@ -247,7 +270,7 @@ final class StravaManager: NSObject {
     private func refreshCredentials(_ credentials: StravaStoredCredentials) async throws -> StravaStoredCredentials {
         guard !credentials.refreshToken.isEmpty else {
             log("stored refresh token is empty; clearing authorization")
-            clearCredentials()
+            clearCredentials(markReauthorizationRequired: true)
             throw StravaManagerError.reauthorizationRequired
         }
 
@@ -262,7 +285,7 @@ final class StravaManager: NSObject {
             ])
         } catch let error as NetworkError where Self.isAuthorizationFailure(error) {
             log("access token refresh failed because authorization is invalid; clearing stored credentials")
-            clearCredentials()
+            clearCredentials(markReauthorizationRequired: true)
             throw StravaManagerError.reauthorizationRequired
         } catch {
             throw error
@@ -415,7 +438,7 @@ final class StravaManager: NSObject {
            let credentials = try? JSONDecoder().decode(StravaStoredCredentials.self, from: data) {
             guard credentials.athleteID != nil else {
                 log("clearing legacy Strava credentials without athlete ID")
-                clearCredentials()
+                clearCredentials(markReauthorizationRequired: false)
                 return nil
             }
             return credentials
@@ -431,10 +454,20 @@ final class StravaManager: NSObject {
         }
 
         defaults.set(data, forKey: DefaultsKey.credentials)
+        defaults.set(true, forKey: DefaultsKey.authorizationAttempted)
+        defaults.set(false, forKey: DefaultsKey.authorizationNeedsReauthorization)
     }
 
-    private func clearCredentials() {
+    private func clearCredentials(markReauthorizationRequired: Bool) {
         defaults.removeObject(forKey: DefaultsKey.credentials)
+        if markReauthorizationRequired {
+            markAuthorizationNeedsReauthorization()
+        }
+    }
+
+    private func markAuthorizationNeedsReauthorization() {
+        defaults.set(true, forKey: DefaultsKey.authorizationAttempted)
+        defaults.set(true, forKey: DefaultsKey.authorizationNeedsReauthorization)
     }
 
     static func requiresReauthorization(_ error: Error) -> Bool {

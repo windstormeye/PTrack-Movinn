@@ -42,6 +42,7 @@ enum AppTextKey: String {
     case healthAuthorizationDenied
     case healthAuthorizationFailed
     case healthAuthorizationProgress
+    case healthDataReadAuthorized
     case healthDataUnavailable
     case hiking
     case mapStyle
@@ -59,7 +60,9 @@ enum AppTextKey: String {
     case standard
     case sportType
     case strava
+    case stravaAuthorizationAlreadyGrantedMessage
     case stravaReauthorizationRequired
+    case stillOpen
     case systemMapsNotFound
     case totalActivityCountFormat
     case totalDistanceFormat
@@ -139,6 +142,7 @@ enum AppLocalization {
             .healthAuthorizationDenied: "未获得健康数据读取权限。",
             .healthAuthorizationFailed: "健康授权失败",
             .healthAuthorizationProgress: "正在请求 Apple 健康体能训练、路线和运动指标读取权限...",
+            .healthDataReadAuthorized: "已授权读取数据",
             .healthDataUnavailable: "当前设备不支持健康数据。",
             .hiking: "徒步",
             .mapStyle: "地图样式",
@@ -156,7 +160,9 @@ enum AppLocalization {
             .standard: "标准",
             .sportType: "运动类型",
             .strava: "Strava",
+            .stravaAuthorizationAlreadyGrantedMessage: "Strava 已拿到授权，可以读取你的运动数据。",
             .stravaReauthorizationRequired: "Strava 授权已失效，请进入“更多”页面点击 Strava 重新登录。",
+            .stillOpen: "仍要打开",
             .systemMapsNotFound: "未找到系统地图",
             .totalActivityCountFormat: "%d 次",
             .totalDistanceFormat: "%dkm",
@@ -190,6 +196,7 @@ enum AppLocalization {
             .healthAuthorizationDenied: "ヘルスケアデータの読み取り権限がありません。",
             .healthAuthorizationFailed: "ヘルスケア認証に失敗しました",
             .healthAuthorizationProgress: "Appleヘルスケアのワークアウト、ルート、運動指標の読み取り権限を要求しています...",
+            .healthDataReadAuthorized: "データ読み取りは許可されています",
             .healthDataUnavailable: "このデバイスはヘルスケアデータに対応していません。",
             .hiking: "ハイキング",
             .mapStyle: "地図スタイル",
@@ -207,7 +214,9 @@ enum AppLocalization {
             .standard: "標準",
             .sportType: "ワークアウト種別",
             .strava: "Strava",
+            .stravaAuthorizationAlreadyGrantedMessage: "Strava は認証済みで、ワークアウトデータを読み取れます。",
             .stravaReauthorizationRequired: "Strava の認証が無効になりました。「その他」画面で Strava をタップして再ログインしてください。",
+            .stillOpen: "それでも開く",
             .systemMapsNotFound: "システムマップが見つかりません",
             .totalActivityCountFormat: "%d回",
             .totalDistanceFormat: "%dkm",
@@ -241,6 +250,7 @@ enum AppLocalization {
             .healthAuthorizationDenied: "건강 데이터 읽기 권한이 없습니다.",
             .healthAuthorizationFailed: "건강 권한 요청 실패",
             .healthAuthorizationProgress: "Apple 건강의 운동, 경로, 운동 지표 읽기 권한을 요청하는 중...",
+            .healthDataReadAuthorized: "데이터 읽기 권한이 허용되었습니다",
             .healthDataUnavailable: "이 기기는 건강 데이터를 지원하지 않습니다.",
             .hiking: "하이킹",
             .mapStyle: "지도 스타일",
@@ -258,7 +268,9 @@ enum AppLocalization {
             .standard: "표준",
             .sportType: "운동 유형",
             .strava: "Strava",
+            .stravaAuthorizationAlreadyGrantedMessage: "Strava 권한을 이미 받았으며 운동 데이터를 읽을 수 있습니다.",
             .stravaReauthorizationRequired: "Strava 인증이 만료되었습니다. 더보기 화면에서 Strava를 눌러 다시 로그인하세요.",
+            .stillOpen: "그래도 열기",
             .systemMapsNotFound: "시스템 지도를 찾을 수 없음",
             .totalActivityCountFormat: "%d회",
             .totalDistanceFormat: "%dkm",
@@ -292,6 +304,7 @@ enum AppLocalization {
             .healthAuthorizationDenied: "Health data read permission has not been granted.",
             .healthAuthorizationFailed: "Health authorization failed",
             .healthAuthorizationProgress: "Requesting Apple Health workout, route, and metric read permissions...",
+            .healthDataReadAuthorized: "Data read access is authorized",
             .healthDataUnavailable: "Health data is not available on this device.",
             .hiking: "Hiking",
             .mapStyle: "Map Style",
@@ -309,7 +322,9 @@ enum AppLocalization {
             .standard: "Standard",
             .sportType: "Sport Type",
             .strava: "Strava",
+            .stravaAuthorizationAlreadyGrantedMessage: "Strava is already authorized to read your activity data.",
             .stravaReauthorizationRequired: "Strava authorization has expired. Open More and tap Strava to sign in again.",
+            .stillOpen: "Open Anyway",
             .systemMapsNotFound: "System Maps not found",
             .totalActivityCountFormat: "%d times",
             .totalDistanceFormat: "%dkm",
