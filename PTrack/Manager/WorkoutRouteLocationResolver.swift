@@ -61,7 +61,7 @@ final class WorkoutRouteLocationResolver {
     private var pendingCompletions: [String: [(WorkoutRouteResolvedLocation?) -> Void]] = [:]
     private var activeRequests: [String: MKReverseGeocodingRequest] = [:]
 
-    private static let currentCacheVersion = 3
+    private static let currentCacheVersion = 4
     private let cacheKeyPrefix = "workoutRouteLocation."
     private let cachedCoordinateToleranceMeters: CLLocationDistance = 100
 
@@ -104,6 +104,14 @@ final class WorkoutRouteLocationResolver {
             return
         }
 
+        let localRegion = CoordinateRegionManager.shared.region(for: coordinate)
+        let localLocation = Self.resolvedLocation(from: localRegion, coordinate: coordinate)
+        if localRegion?.isChina == true, let localLocation {
+            cache(CachedLocation(location: localLocation), for: workout.id)
+            completion(localLocation)
+            return
+        }
+
         if pendingCompletions[workout.id] != nil {
             pendingCompletions[workout.id]?.append(completion)
             return
@@ -112,7 +120,10 @@ final class WorkoutRouteLocationResolver {
         pendingCompletions[workout.id] = [completion]
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         guard let request = MKReverseGeocodingRequest(location: location) else {
-            completePendingRequests(for: workout.id, location: nil)
+            if let localLocation {
+                cache(CachedLocation(location: localLocation), for: workout.id)
+            }
+            completePendingRequests(for: workout.id, location: localLocation)
             return
         }
 
@@ -124,7 +135,7 @@ final class WorkoutRouteLocationResolver {
 
             let location = mapItems?.compactMap {
                 Self.resolvedLocation(from: $0, coordinate: coordinate)
-            }.first
+            }.first ?? localLocation
 
             if let location {
                 self.cache(CachedLocation(location: location), for: workout.id)
@@ -132,6 +143,37 @@ final class WorkoutRouteLocationResolver {
 
             self.completePendingRequests(for: workout.id, location: location)
         }
+    }
+
+    private static func resolvedLocation(
+        from region: CoordinateRegionResult?,
+        coordinate: CLLocationCoordinate2D
+    ) -> WorkoutRouteResolvedLocation? {
+        guard let region,
+              let title = region.title else {
+            return nil
+        }
+
+        let fullAddress = uniqueComponents([
+            region.countryName,
+            region.provinceName,
+            region.cityName,
+            region.districtName
+        ]).joined(separator: " ")
+
+        return WorkoutRouteResolvedLocation(
+            title: title,
+            countryCode: region.countryCode,
+            countryName: region.countryName,
+            administrativeArea: region.provinceName,
+            subAdministrativeArea: nil,
+            locality: region.cityName,
+            subLocality: region.districtName,
+            fullAddress: fullAddress.isEmpty ? nil : fullAddress,
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            updatedAt: Date()
+        )
     }
 
     private func startCoordinate(for workout: TrackedWorkout) -> CLLocationCoordinate2D? {

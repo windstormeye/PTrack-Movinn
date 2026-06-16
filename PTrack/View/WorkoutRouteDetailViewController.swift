@@ -28,7 +28,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let handleTouchView = UIView()
     private let handleView = UIView()
     private let iconView = UIImageView()
+    private let navigationTitleStackView = UIStackView()
     private let navigationTitleLabel = UILabel()
+    private let navigationSubtitleLabel = UILabel()
     private let titleStackView = UIStackView()
     private let titleLabel = UILabel()
     private let dataSourceLabel = UILabel()
@@ -203,6 +205,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func makeNavigationTitleView() -> UIView {
+        navigationTitleStackView.axis = .vertical
+        navigationTitleStackView.alignment = .center
+        navigationTitleStackView.spacing = 1
+        navigationTitleStackView.isLayoutMarginsRelativeArrangement = false
+        navigationTitleStackView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        navigationTitleStackView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
         navigationTitleLabel.attributedText = navigationTitleText(AppLocalization.text(.queryingLocation))
         navigationTitleLabel.textAlignment = .center
         navigationTitleLabel.lineBreakMode = .byTruncatingTail
@@ -210,8 +219,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
         navigationTitleLabel.minimumScaleFactor = 0.82
         navigationTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         navigationTitleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        navigationTitleLabel.sizeToFit()
-        return navigationTitleLabel
+
+        navigationSubtitleLabel.text = navigationWorkoutDateText()
+        navigationSubtitleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        navigationSubtitleLabel.textColor = .secondaryLabel
+        navigationSubtitleLabel.textAlignment = .center
+        navigationSubtitleLabel.lineBreakMode = .byTruncatingTail
+        navigationSubtitleLabel.adjustsFontSizeToFitWidth = true
+        navigationSubtitleLabel.minimumScaleFactor = 0.86
+        navigationSubtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        navigationSubtitleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        navigationTitleStackView.addArrangedSubview(navigationTitleLabel)
+        navigationTitleStackView.addArrangedSubview(navigationSubtitleLabel)
+        navigationTitleStackView.sizeToFit()
+        return navigationTitleStackView
     }
 
     private func navigationTitleText(_ titleText: String) -> NSAttributedString {
@@ -246,7 +268,49 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func updateNavigationLocationTitle(_ title: String) {
         navigationTitleLabel.attributedText = navigationTitleText(title)
-        navigationTitleLabel.sizeToFit()
+        navigationSubtitleLabel.text = navigationWorkoutDateText()
+        navigationTitleStackView.sizeToFit()
+    }
+
+    private func navigationWorkoutDateText() -> String {
+        let calendar = Calendar.current
+        let workoutDay = calendar.startOfDay(for: workout.startDate)
+        let today = calendar.startOfDay(for: Date())
+        let dayDifference = calendar.dateComponents([.day], from: workoutDay, to: today).day
+
+        switch dayDifference {
+        case 0:
+            return AppLocalization.text(.today)
+        case 1:
+            return AppLocalization.text(.yesterday)
+        case 2:
+            return AppLocalization.text(.dayBeforeYesterday)
+        default:
+            return formattedNavigationWorkoutDate()
+        }
+    }
+
+    private func formattedNavigationWorkoutDate() -> String {
+        let language = AppLanguageStore.shared.language
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+
+        switch language {
+        case .chinese:
+            formatter.locale = Locale(identifier: "zh_Hans")
+            formatter.dateFormat = "yyyy 年 M 月 d 日"
+        case .japanese:
+            formatter.locale = Locale(identifier: "ja_JP")
+            formatter.dateFormat = "yyyy年M月d日"
+        case .korean:
+            formatter.locale = Locale(identifier: "ko_KR")
+            formatter.dateFormat = "yyyy년 M월 d일"
+        case .english:
+            formatter.locale = Locale(identifier: "en_US")
+            formatter.dateFormat = "MMM d, yyyy"
+        }
+
+        return formatter.string(from: workout.startDate)
     }
 
     private func navigationDisplayTitle(for location: WorkoutRouteResolvedLocation) -> String {

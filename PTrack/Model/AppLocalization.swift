@@ -74,6 +74,7 @@ enum AppTextKey: String {
     case totalWorkoutDistance
     case totalWorkoutTime
     case trailRunning
+    case today
     case uiSettings
     case unknownDistance
     case unknownDuration
@@ -84,6 +85,8 @@ enum AppTextKey: String {
     case walkingHiking
     case workoutStart
     case startNotFound
+    case yesterday
+    case dayBeforeYesterday
     case burnedCaloriesFormat
     case durationHoursMinutesFormat
     case durationMinutesFormat
@@ -181,6 +184,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "运动总距离",
             .totalWorkoutTime: "运动总时间",
             .trailRunning: "越野跑",
+            .today: "今天",
             .uiSettings: "UI 设置",
             .unknownDistance: "未知距离",
             .unknownDuration: "未知时长",
@@ -191,6 +195,8 @@ enum AppLocalization {
             .walkingHiking: "行走/徒步",
             .workoutStart: "运动起点",
             .startNotFound: "未找到起点",
+            .yesterday: "昨天",
+            .dayBeforeYesterday: "前天",
             .burnedCaloriesFormat: "消耗 %.0f 大卡",
             .durationHoursMinutesFormat: "%d小时%d分钟",
             .durationMinutesFormat: "%d分钟"
@@ -242,6 +248,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "合計距離",
             .totalWorkoutTime: "合計時間",
             .trailRunning: "トレイルランニング",
+            .today: "今日",
             .uiSettings: "UI設定",
             .unknownDistance: "不明な距離",
             .unknownDuration: "不明な時間",
@@ -252,6 +259,8 @@ enum AppLocalization {
             .walkingHiking: "ウォーキング/ハイキング",
             .workoutStart: "ワークアウト開始地点",
             .startNotFound: "スタート地点が見つかりません",
+            .yesterday: "昨日",
+            .dayBeforeYesterday: "一昨日",
             .burnedCaloriesFormat: "%.0f kcal 消費",
             .durationHoursMinutesFormat: "%d時間%d分",
             .durationMinutesFormat: "%d分"
@@ -303,6 +312,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "총 운동 거리",
             .totalWorkoutTime: "총 운동 시간",
             .trailRunning: "트레일 러닝",
+            .today: "오늘",
             .uiSettings: "UI 설정",
             .unknownDistance: "알 수 없는 거리",
             .unknownDuration: "알 수 없는 시간",
@@ -313,6 +323,8 @@ enum AppLocalization {
             .walkingHiking: "걷기/하이킹",
             .workoutStart: "운동 시작점",
             .startNotFound: "시작점을 찾을 수 없음",
+            .yesterday: "어제",
+            .dayBeforeYesterday: "그저께",
             .burnedCaloriesFormat: "%.0f kcal 소비",
             .durationHoursMinutesFormat: "%d시간 %d분",
             .durationMinutesFormat: "%d분"
@@ -364,6 +376,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "Total Distance",
             .totalWorkoutTime: "Total Time",
             .trailRunning: "Trail Running",
+            .today: "Today",
             .uiSettings: "UI Settings",
             .unknownDistance: "Unknown Distance",
             .unknownDuration: "Unknown Duration",
@@ -374,6 +387,8 @@ enum AppLocalization {
             .walkingHiking: "Walking/Hiking",
             .workoutStart: "Workout Start",
             .startNotFound: "Start not found",
+            .yesterday: "Yesterday",
+            .dayBeforeYesterday: "The Day Before Yesterday",
             .burnedCaloriesFormat: "Burned %.0f kcal",
             .durationHoursMinutesFormat: "%d hr %d min",
             .durationMinutesFormat: "%d min"
