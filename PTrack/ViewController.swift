@@ -211,6 +211,13 @@ class ViewController: UIViewController {
     }
 
     private func makeHeaderMoreMenu() -> UIMenu {
+        let sportsCareerAction = UIAction(
+            title: AppLocalization.text(.sportsCareer),
+            image: UIImage(systemName: "chart.bar")
+        ) { [weak self] _ in
+            self?.showSportsCareer()
+        }
+
         let heatmapAction = UIAction(
             title: AppLocalization.text(.routeHeatmap),
             image: UIImage(systemName: "map")
@@ -225,7 +232,7 @@ class ViewController: UIViewController {
             self?.showMoreSettings()
         }
 
-        return UIMenu(children: [heatmapAction, moreAction])
+        return UIMenu(children: [sportsCareerAction, heatmapAction, moreAction])
     }
 
     private func configureLoadingIndicator() {
@@ -878,6 +885,12 @@ class ViewController: UIViewController {
         navigationController?.pushViewController(heatmapViewController, animated: true)
     }
 
+    private func showSportsCareer() {
+        flushPendingWorkouts(force: true)
+        let sportsCareerViewController = SportsCareerViewController(workouts: workouts)
+        navigationController?.pushViewController(sportsCareerViewController, animated: true)
+    }
+
     private func showMoreSettings() {
         let moreSettingsViewController = MoreSettingsViewController()
         moreSettingsViewController.existingStravaActivityIDsProvider = { [weak self] in
@@ -1077,28 +1090,65 @@ private extension TrackedWorkout {
             return false
         }
 
-        let startDateDifference = abs(startDate.timeIntervalSince(other.startDate))
-        guard startDateDifference <= 5 * 60 else {
+        guard startDate == other.startDate,
+              hasStrictRouteMatch(with: other) else {
             return false
         }
 
-        let hasComparableDistance = distanceMeters > 0 && other.distanceMeters > 0
-        if hasComparableDistance {
-            let distanceDifference = abs(distanceMeters - other.distanceMeters)
-            let maximumDistance = max(distanceMeters, other.distanceMeters)
-            return distanceDifference <= max(300, maximumDistance * 0.08)
-        }
+        return true
+    }
 
+    private func hasStrictRouteMatch(with other: TrackedWorkout) -> Bool {
         guard let durationSeconds,
               let otherDurationSeconds = other.durationSeconds,
               durationSeconds > 0,
-              otherDurationSeconds > 0 else {
-            return true
+              otherDurationSeconds > 0,
+              durationSeconds == otherDurationSeconds,
+              !coordinates.isEmpty,
+              !other.coordinates.isEmpty else {
+            return false
         }
 
-        let durationDifference = abs(durationSeconds - otherDurationSeconds)
-        let maximumDuration = max(durationSeconds, otherDurationSeconds)
-        return durationDifference <= max(5 * 60, maximumDuration * 0.15)
+        let routeStartDate = startDate
+        let routeEndDate = routeStartDate.addingTimeInterval(durationSeconds)
+        let middleDate = routeStartDate.addingTimeInterval(durationSeconds / 2)
+        let windows = [
+            DateInterval(start: routeStartDate, end: routeStartDate.addingTimeInterval(5 * 60)),
+            DateInterval(start: middleDate.addingTimeInterval(-(5 * 60 / 2)), end: middleDate.addingTimeInterval(5 * 60 / 2)),
+            DateInterval(start: routeEndDate.addingTimeInterval(-(5 * 60)), end: routeEndDate)
+        ]
+
+        return windows.allSatisfy { window in
+            let routePoints = strictRoutePoints(in: window)
+            guard !routePoints.isEmpty else {
+                return false
+            }
+
+            return routePoints == other.strictRoutePoints(in: window)
+        }
+    }
+
+    private func strictRoutePoints(in window: DateInterval) -> [StrictRoutePoint] {
+        coordinates.compactMap { coordinate in
+            guard coordinate.timestamp >= window.start,
+                  coordinate.timestamp <= window.end else {
+                return nil
+            }
+
+            return StrictRoutePoint(coordinate: coordinate)
+        }
+    }
+}
+
+private struct StrictRoutePoint: Equatable {
+    let timestamp: Date
+    let latitude: Double
+    let longitude: Double
+
+    init(coordinate: RouteCoordinate) {
+        timestamp = coordinate.timestamp
+        latitude = coordinate.latitude
+        longitude = coordinate.longitude
     }
 }
 

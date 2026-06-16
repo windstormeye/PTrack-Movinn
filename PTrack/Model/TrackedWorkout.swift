@@ -146,12 +146,25 @@ struct TrackedWorkout: Codable {
     }
 
     var symbolName: String {
+        switch stravaSportType {
+        case "TrailRun":
+            return "figure.walk.motion"
+        case "Hike":
+            return "figure.hiking"
+        case "VirtualRide":
+            return "figure.indoor.cycle"
+        default:
+            break
+        }
+
         switch activityType {
         case .cycling:
             return "figure.outdoor.cycle"
         case .handCycling:
             return "figure.hand.cycling"
-        case .hiking, .walking:
+        case .hiking:
+            return "figure.hiking"
+        case .walking:
             return "figure.walk"
         case .running:
             return "figure.run"

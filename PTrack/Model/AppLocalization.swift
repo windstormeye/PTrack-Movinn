@@ -57,8 +57,12 @@ enum AppTextKey: String {
     case routeHeatmap
     case running
     case satellite
+    case sportTypeCountSummary
+    case sportTypeTimeSummary
+    case sportsCareer
     case standard
     case sportType
+    case sportTypeSummary
     case strava
     case stravaAuthorizationAlreadyGrantedMessage
     case stravaReauthorizationRequired
@@ -66,6 +70,9 @@ enum AppTextKey: String {
     case systemMapsNotFound
     case totalActivityCountFormat
     case totalDistanceFormat
+    case totalWorkoutCount
+    case totalWorkoutDistance
+    case totalWorkoutTime
     case trailRunning
     case uiSettings
     case unknownDistance
@@ -157,8 +164,12 @@ enum AppLocalization {
             .routeHeatmap: "轨迹热图",
             .running: "跑步",
             .satellite: "卫星",
+            .sportTypeCountSummary: "不同运动类型的运动次数汇总",
+            .sportTypeTimeSummary: "运动时间汇总",
+            .sportsCareer: "运动生涯",
             .standard: "标准",
             .sportType: "运动类型",
+            .sportTypeSummary: "运动类型汇总",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 已拿到授权，可以读取你的运动数据。",
             .stravaReauthorizationRequired: "Strava 授权已失效，请进入“更多”页面点击 Strava 重新登录。",
@@ -166,6 +177,9 @@ enum AppLocalization {
             .systemMapsNotFound: "未找到系统地图",
             .totalActivityCountFormat: "%d 次",
             .totalDistanceFormat: "%dkm",
+            .totalWorkoutCount: "运动总次数",
+            .totalWorkoutDistance: "运动总距离",
+            .totalWorkoutTime: "运动总时间",
             .trailRunning: "越野跑",
             .uiSettings: "UI 设置",
             .unknownDistance: "未知距离",
@@ -211,8 +225,12 @@ enum AppLocalization {
             .routeHeatmap: "軌跡ヒートマップ",
             .running: "ランニング",
             .satellite: "衛星",
+            .sportTypeCountSummary: "種目別ワークアウト回数",
+            .sportTypeTimeSummary: "ワークアウト時間の集計",
+            .sportsCareer: "運動履歴",
             .standard: "標準",
             .sportType: "ワークアウト種別",
+            .sportTypeSummary: "種目別サマリー",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava は認証済みで、ワークアウトデータを読み取れます。",
             .stravaReauthorizationRequired: "Strava の認証が無効になりました。「その他」画面で Strava をタップして再ログインしてください。",
@@ -220,6 +238,9 @@ enum AppLocalization {
             .systemMapsNotFound: "システムマップが見つかりません",
             .totalActivityCountFormat: "%d回",
             .totalDistanceFormat: "%dkm",
+            .totalWorkoutCount: "合計回数",
+            .totalWorkoutDistance: "合計距離",
+            .totalWorkoutTime: "合計時間",
             .trailRunning: "トレイルランニング",
             .uiSettings: "UI設定",
             .unknownDistance: "不明な距離",
@@ -265,8 +286,12 @@ enum AppLocalization {
             .routeHeatmap: "경로 히트맵",
             .running: "달리기",
             .satellite: "위성",
+            .sportTypeCountSummary: "운동 유형별 횟수 요약",
+            .sportTypeTimeSummary: "운동 시간 요약",
+            .sportsCareer: "운동 경력",
             .standard: "표준",
             .sportType: "운동 유형",
+            .sportTypeSummary: "운동 유형 요약",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 권한을 이미 받았으며 운동 데이터를 읽을 수 있습니다.",
             .stravaReauthorizationRequired: "Strava 인증이 만료되었습니다. 더보기 화면에서 Strava를 눌러 다시 로그인하세요.",
@@ -274,6 +299,9 @@ enum AppLocalization {
             .systemMapsNotFound: "시스템 지도를 찾을 수 없음",
             .totalActivityCountFormat: "%d회",
             .totalDistanceFormat: "%dkm",
+            .totalWorkoutCount: "총 운동 횟수",
+            .totalWorkoutDistance: "총 운동 거리",
+            .totalWorkoutTime: "총 운동 시간",
             .trailRunning: "트레일 러닝",
             .uiSettings: "UI 설정",
             .unknownDistance: "알 수 없는 거리",
@@ -319,8 +347,12 @@ enum AppLocalization {
             .routeHeatmap: "Route Heatmap",
             .running: "Running",
             .satellite: "Satellite",
+            .sportTypeCountSummary: "Workout Count by Type",
+            .sportTypeTimeSummary: "Workout Time Summary",
+            .sportsCareer: "Sports Career",
             .standard: "Standard",
             .sportType: "Sport Type",
+            .sportTypeSummary: "Sport Type Summary",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava is already authorized to read your activity data.",
             .stravaReauthorizationRequired: "Strava authorization has expired. Open More and tap Strava to sign in again.",
@@ -328,6 +360,9 @@ enum AppLocalization {
             .systemMapsNotFound: "System Maps not found",
             .totalActivityCountFormat: "%d times",
             .totalDistanceFormat: "%dkm",
+            .totalWorkoutCount: "Total Workouts",
+            .totalWorkoutDistance: "Total Distance",
+            .totalWorkoutTime: "Total Time",
             .trailRunning: "Trail Running",
             .uiSettings: "UI Settings",
             .unknownDistance: "Unknown Distance",
