@@ -61,6 +61,11 @@ enum AppTextKey: String {
     case sportsCareerAnnualData
     case sportsCareerMonthlyData
     case sportsCareerOverview
+    case sportsCareerLocations
+    case sportsCareerWorldMap
+    case sportsCareerChinaMap
+    case sportsCareerCountryCountFormat
+    case sportsCareerCityCountFormat
     case sportsCareerSummary
     case sportsCareerWeeklyData
     case sportsCareerWeekDistanceFormat
@@ -178,6 +183,11 @@ enum AppLocalization {
             .sportsCareerAnnualData: "全年",
             .sportsCareerMonthlyData: "月度",
             .sportsCareerOverview: "总览",
+            .sportsCareerLocations: "运动地点",
+            .sportsCareerWorldMap: "世界",
+            .sportsCareerChinaMap: "中国",
+            .sportsCareerCountryCountFormat: "%d 个国家",
+            .sportsCareerCityCountFormat: "%d 个城市",
             .sportsCareerSummary: "总览",
             .sportsCareerWeeklyData: "本周",
             .sportsCareerWeekDistanceFormat: "第 %d 周\n%.1f km",
@@ -249,6 +259,11 @@ enum AppLocalization {
             .sportsCareerAnnualData: "年間",
             .sportsCareerMonthlyData: "月別",
             .sportsCareerOverview: "概要",
+            .sportsCareerLocations: "運動した場所",
+            .sportsCareerWorldMap: "世界",
+            .sportsCareerChinaMap: "中国",
+            .sportsCareerCountryCountFormat: "%dか国",
+            .sportsCareerCityCountFormat: "%d都市",
             .sportsCareerSummary: "概要",
             .sportsCareerWeeklyData: "今週",
             .sportsCareerWeekDistanceFormat: "%d週目\n%.1f km",
@@ -320,6 +335,11 @@ enum AppLocalization {
             .sportsCareerAnnualData: "연간",
             .sportsCareerMonthlyData: "월간",
             .sportsCareerOverview: "개요",
+            .sportsCareerLocations: "운동 장소",
+            .sportsCareerWorldMap: "세계",
+            .sportsCareerChinaMap: "중국",
+            .sportsCareerCountryCountFormat: "%d개 국가",
+            .sportsCareerCityCountFormat: "%d개 도시",
             .sportsCareerSummary: "요약",
             .sportsCareerWeeklyData: "이번 주",
             .sportsCareerWeekDistanceFormat: "%d주차\n%.1f km",
@@ -391,6 +411,11 @@ enum AppLocalization {
             .sportsCareerAnnualData: "Year",
             .sportsCareerMonthlyData: "Month",
             .sportsCareerOverview: "Overview",
+            .sportsCareerLocations: "Workout Places",
+            .sportsCareerWorldMap: "World",
+            .sportsCareerChinaMap: "China",
+            .sportsCareerCountryCountFormat: "%d countries",
+            .sportsCareerCityCountFormat: "%d cities",
             .sportsCareerSummary: "Summary",
             .sportsCareerWeeklyData: "This Week",
             .sportsCareerWeekDistanceFormat: "Week %d\n%.1f km",

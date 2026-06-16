@@ -30,46 +30,101 @@ struct CoordinateRegionResult: Equatable {
     }
 }
 
+enum CoordinateRegionMapScope {
+    case world
+    case china
+}
+
+struct CoordinateRegionMapBounds {
+    let minLongitude: Double
+    let minLatitude: Double
+    let maxLongitude: Double
+    let maxLatitude: Double
+
+    nonisolated var isValid: Bool {
+        maxLongitude > minLongitude && maxLatitude > minLatitude
+    }
+}
+
+struct CoordinateRegionMapFeature {
+    let identifiers: Set<String>
+    let displayName: String
+    let rings: [[CLLocationCoordinate2D]]
+    let bounds: CoordinateRegionMapBounds
+}
+
 final class CoordinateRegionManager {
     static let shared = CoordinateRegionManager()
 
     private var chinaIndex: GeoBoundaryIndex?
     private var worldIndex: GeoBoundaryIndex?
+    private var chinaMapFeatures: [CoordinateRegionMapFeature]?
+    private var worldMapFeatures: [CoordinateRegionMapFeature]?
     private let loadingLock = NSLock()
 
     private init() {}
 
-    func region(for coordinate: CLLocationCoordinate2D) -> CoordinateRegionResult? {
+    func region(
+        for coordinate: CLLocationCoordinate2D,
+        language: AppLanguage = AppLanguageStore.shared.language
+    ) -> CoordinateRegionResult? {
         guard CLLocationCoordinate2DIsValid(coordinate) else {
             return nil
         }
 
         if Self.mightBeInChinaDataBounds(coordinate),
-           let chinaRegion = chinaRegion(for: coordinate) {
+           let chinaRegion = chinaRegion(for: coordinate, language: language) {
             return chinaRegion
         }
 
-        return worldRegion(for: coordinate)
+        return worldRegion(for: coordinate, language: language)
     }
 
     func isCoordinateInMainlandChina(_ coordinate: CLLocationCoordinate2D) -> Bool {
         guard CLLocationCoordinate2DIsValid(coordinate),
               Self.mightBeInChinaDataBounds(coordinate),
-              let chinaRegion = chinaRegion(for: coordinate) else {
+              let chinaRegion = chinaRegion(for: coordinate, language: .chinese) else {
             return false
         }
 
         return chinaRegion.isMainlandChina
     }
 
-    private func chinaRegion(for coordinate: CLLocationCoordinate2D) -> CoordinateRegionResult? {
-        guard let feature = loadChinaIndex()?.feature(containing: coordinate),
+    func mapFeatures(for scope: CoordinateRegionMapScope) -> [CoordinateRegionMapFeature] {
+        switch scope {
+        case .world:
+            if let features = cachedWorldMapFeatures() {
+                return features
+            }
+
+            let features = loadWorldIndex()?.mapFeatures(for: scope) ?? []
+            cacheWorldMapFeatures(features)
+            return features
+        case .china:
+            if let features = cachedChinaMapFeatures() {
+                return features
+            }
+
+            let features = loadChinaIndex()?.mapFeatures(for: scope) ?? []
+            cacheChinaMapFeatures(features)
+            return features
+        }
+    }
+
+    private func chinaRegion(
+        for coordinate: CLLocationCoordinate2D,
+        language: AppLanguage
+    ) -> CoordinateRegionResult? {
+        guard let index = loadChinaIndex(),
+              let feature = index.feature(containing: coordinate),
               let adcode = feature.adcode else {
             return nil
         }
 
         let provinceCode = provinceCode(for: adcode, parentAdcode: feature.parentAdcode)
-        let provinceName = Self.chinaProvinceNames[provinceCode]
+        let provinceName = Self.localizedChinaProvinceName(for: provinceCode, language: language)
+        let parentFeatureName = feature.parentAdcode.flatMap { index.feature(adcode: $0)?.localizedName(for: language) }
+        let featureName = feature.localizedName(for: language)
         let isDirectAdmin = Self.directAdminProvinceCodes.contains(provinceCode)
         let level = feature.level
         let cityName: String?
@@ -77,23 +132,23 @@ final class CoordinateRegionManager {
 
         switch level {
         case .district:
-            cityName = isDirectAdmin ? provinceName : nil
-            districtName = feature.name
+            cityName = isDirectAdmin ? provinceName : parentFeatureName
+            districtName = featureName
         case .city:
-            cityName = feature.name
+            cityName = featureName
             districtName = nil
         case .province:
             cityName = nil
             districtName = nil
         case .none:
-            cityName = feature.name.isEmpty ? nil : feature.name
+            cityName = featureName
             districtName = nil
         }
 
         let isMainlandChina = adcode != 710000
         return CoordinateRegionResult(
             countryCode: "CN",
-            countryName: Self.localizedChinaName(),
+            countryName: Self.localizedChinaName(for: language),
             provinceName: provinceName ?? (level == .province ? feature.name : nil),
             cityName: cityName,
             districtName: districtName,
@@ -103,13 +158,16 @@ final class CoordinateRegionManager {
         )
     }
 
-    private func worldRegion(for coordinate: CLLocationCoordinate2D) -> CoordinateRegionResult? {
+    private func worldRegion(
+        for coordinate: CLLocationCoordinate2D,
+        language: AppLanguage
+    ) -> CoordinateRegionResult? {
         guard let feature = loadWorldIndex()?.feature(containing: coordinate) else {
             return nil
         }
 
         let countryCode = feature.countryCode
-        let countryName = feature.localizedName
+        let countryName = feature.localizedName(for: language)
         let isChina = countryCode == "CN" || countryCode == "CHN" || feature.name == "China"
 
         return CoordinateRegionResult(
@@ -160,6 +218,42 @@ final class CoordinateRegionManager {
         return loadedIndex
     }
 
+    private func cachedWorldMapFeatures() -> [CoordinateRegionMapFeature]? {
+        loadingLock.lock()
+        defer {
+            loadingLock.unlock()
+        }
+
+        return worldMapFeatures
+    }
+
+    private func cachedChinaMapFeatures() -> [CoordinateRegionMapFeature]? {
+        loadingLock.lock()
+        defer {
+            loadingLock.unlock()
+        }
+
+        return chinaMapFeatures
+    }
+
+    private func cacheWorldMapFeatures(_ features: [CoordinateRegionMapFeature]) {
+        loadingLock.lock()
+        defer {
+            loadingLock.unlock()
+        }
+
+        worldMapFeatures = features
+    }
+
+    private func cacheChinaMapFeatures(_ features: [CoordinateRegionMapFeature]) {
+        loadingLock.lock()
+        defer {
+            loadingLock.unlock()
+        }
+
+        chinaMapFeatures = features
+    }
+
     private func provinceCode(for adcode: Int, parentAdcode: Int?) -> Int {
         let directProvinceCode = adcode / 10_000 * 10_000
         if Self.chinaProvinceNames[directProvinceCode] != nil {
@@ -180,17 +274,72 @@ final class CoordinateRegionManager {
             && coordinate.latitude <= 54
     }
 
-    private static func localizedChinaName() -> String {
-        switch AppLanguageStore.shared.language {
+    private static func localizedChinaName(for language: AppLanguage) -> String {
+        switch language {
         case .chinese:
             return "中国"
-        case .japanese:
-            return "中国"
-        case .korean:
-            return "중국"
-        case .english:
+        case .english, .japanese, .korean:
             return "China"
         }
+    }
+
+    private static func localizedChinaProvinceName(
+        for provinceCode: Int,
+        language: AppLanguage
+    ) -> String? {
+        guard let chineseName = chinaProvinceNames[provinceCode] else {
+            return nil
+        }
+
+        switch language {
+        case .chinese:
+            return chineseName
+        case .english, .japanese, .korean:
+            return englishChinaProvinceNames[provinceCode] ?? englishChinaAdministrativeName(from: chineseName)
+        }
+    }
+
+    fileprivate static func englishChinaAdministrativeName(from name: String?) -> String? {
+        var trimmedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedName.isEmpty else {
+            return nil
+        }
+
+        let suffixes = [
+            "特别行政区",
+            "维吾尔自治区",
+            "壮族自治区",
+            "回族自治区",
+            "自治区",
+            "自治州",
+            "地区",
+            "盟",
+            "省",
+            "市",
+            "县",
+            "区"
+        ]
+        for suffix in suffixes where trimmedName.hasSuffix(suffix) {
+            trimmedName.removeLast(suffix.count)
+            break
+        }
+
+        guard let latinName = trimmedName
+            .applyingTransform(.toLatin, reverse: false)?
+            .applyingTransform(.stripDiacritics, reverse: false) else {
+            return nil
+        }
+
+        let words = latinName
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() }
+
+        guard !words.isEmpty else {
+            return nil
+        }
+
+        return words.joined()
     }
 
     private static let directAdminProvinceCodes: Set<Int> = [
@@ -236,6 +385,43 @@ final class CoordinateRegionManager {
         810000: "香港特别行政区",
         820000: "澳门特别行政区"
     ]
+
+    private static let englishChinaProvinceNames: [Int: String] = [
+        110000: "Beijing",
+        120000: "Tianjin",
+        130000: "Hebei",
+        140000: "Shanxi",
+        150000: "Inner Mongolia",
+        210000: "Liaoning",
+        220000: "Jilin",
+        230000: "Heilongjiang",
+        310000: "Shanghai",
+        320000: "Jiangsu",
+        330000: "Zhejiang",
+        340000: "Anhui",
+        350000: "Fujian",
+        360000: "Jiangxi",
+        370000: "Shandong",
+        410000: "Henan",
+        420000: "Hubei",
+        430000: "Hunan",
+        440000: "Guangdong",
+        450000: "Guangxi",
+        460000: "Hainan",
+        500000: "Chongqing",
+        510000: "Sichuan",
+        520000: "Guizhou",
+        530000: "Yunnan",
+        540000: "Tibet",
+        610000: "Shaanxi",
+        620000: "Gansu",
+        630000: "Qinghai",
+        640000: "Ningxia",
+        650000: "Xinjiang",
+        710000: "Taiwan",
+        810000: "Hong Kong",
+        820000: "Macau"
+    ]
 }
 
 private enum GeoBoundaryFeatureKind {
@@ -264,6 +450,7 @@ private enum GeoAdministrativeLevel: Int {
 
 private struct GeoBoundaryIndex {
     let features: [GeoBoundaryFeature]
+    let featuresByAdcode: [Int: GeoBoundaryFeature]
 
     static func load(
         resourceName: String,
@@ -290,7 +477,19 @@ private struct GeoBoundaryIndex {
             return lhs.boundingBox.area < rhs.boundingBox.area
         }
 
-        return GeoBoundaryIndex(features: features)
+        let featuresByAdcode = features.reduce(into: [Int: GeoBoundaryFeature]()) { result, feature in
+            guard let adcode = feature.adcode,
+                  result[adcode] == nil else {
+                return
+            }
+
+            result[adcode] = feature
+        }
+
+        return GeoBoundaryIndex(
+            features: features,
+            featuresByAdcode: featuresByAdcode
+        )
     }
 
     func feature(containing coordinate: CLLocationCoordinate2D) -> GeoBoundaryFeature? {
@@ -301,6 +500,16 @@ private struct GeoBoundaryIndex {
 
         return features.first { feature in
             feature.contains(point)
+        }
+    }
+
+    func feature(adcode: Int) -> GeoBoundaryFeature? {
+        featuresByAdcode[adcode]
+    }
+
+    func mapFeatures(for scope: CoordinateRegionMapScope) -> [CoordinateRegionMapFeature] {
+        features.compactMap { feature in
+            feature.mapFeature(for: scope)
         }
     }
 }
@@ -349,7 +558,102 @@ private struct GeoBoundaryFeature {
     }
 
     var localizedName: String? {
-        localizedNames.localizedName(fallback: name)
+        localizedNames.localizedName(
+            for: AppLanguageStore.shared.language,
+            fallback: name
+        )
+    }
+
+    func localizedName(for language: AppLanguage) -> String? {
+        if language == .chinese,
+           let localizedName = localizedNames.localizedName(for: language, fallback: name) {
+            return localizedName
+        }
+
+        if language != .chinese {
+            if let englishName = Self.normalizedDisplayName(localizedNames.englishName) {
+                return englishName
+            }
+
+            if let englishName = CoordinateRegionManager.englishChinaAdministrativeName(from: name) {
+                return englishName
+            }
+        }
+
+        return Self.normalizedDisplayName(localizedNames.fallbackName) ?? Self.normalizedDisplayName(name)
+    }
+
+    func mapFeature(for scope: CoordinateRegionMapScope) -> CoordinateRegionMapFeature? {
+        switch scope {
+        case .world:
+            break
+        case .china:
+            guard level == .city || level == .province else {
+                return nil
+            }
+        }
+
+        let rings = polygons
+            .compactMap(\.outerCoordinates)
+            .filter { $0.count >= 3 }
+        guard !rings.isEmpty else {
+            return nil
+        }
+
+        var identifiers = Set<String>()
+        [
+            name,
+            localizedName,
+            localizedNames.fallbackName,
+            localizedNames.englishName,
+            localizedNames.chineseName,
+            localizedNames.japaneseName,
+            localizedNames.koreanName,
+            CoordinateRegionManager.englishChinaAdministrativeName(from: name),
+            countryCode,
+            adcode.map(String.init)
+        ].forEach { identifier in
+            guard let normalizedIdentifier = Self.normalizedIdentifier(identifier) else {
+                return
+            }
+
+            identifiers.insert(normalizedIdentifier)
+        }
+
+        guard !identifiers.isEmpty else {
+            return nil
+        }
+
+        return CoordinateRegionMapFeature(
+            identifiers: identifiers,
+            displayName: localizedName ?? name,
+            rings: rings,
+            bounds: boundingBox.mapBounds
+        )
+    }
+
+    private static func normalizedIdentifier(_ value: String?) -> String? {
+        let normalizedValue = value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard let normalizedValue,
+              !normalizedValue.isEmpty,
+              normalizedValue != "-99" else {
+            return nil
+        }
+
+        return normalizedValue
+    }
+
+    private static func normalizedDisplayName(_ value: String?) -> String? {
+        let normalizedValue = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let normalizedValue,
+              !normalizedValue.isEmpty,
+              normalizedValue != "-99" else {
+            return nil
+        }
+
+        return normalizedValue
     }
 }
 
@@ -403,15 +707,14 @@ private struct GeoLocalizedNames {
     let japaneseName: String?
     let koreanName: String?
 
-    func localizedName(fallback: String?) -> String? {
-        switch AppLanguageStore.shared.language {
+    func localizedName(
+        for language: AppLanguage,
+        fallback: String?
+    ) -> String? {
+        switch language {
         case .chinese:
             return chineseName ?? englishName ?? fallbackName ?? fallback
-        case .japanese:
-            return japaneseName ?? englishName ?? fallbackName ?? fallback
-        case .korean:
-            return koreanName ?? englishName ?? fallbackName ?? fallback
-        case .english:
+        case .english, .japanese, .korean:
             return englishName ?? fallbackName ?? fallback
         }
     }
@@ -523,7 +826,7 @@ private struct GeoPolygon {
     let rings: [GeoRing]
     let boundingBox: GeoBoundingBox
 
-    init?(rawRings: [[[Double]]]) {
+    nonisolated init?(rawRings: [[[Double]]]) {
         let rings = rawRings.compactMap(GeoRing.init(rawCoordinates:))
         guard !rings.isEmpty,
               let boundingBox = GeoBoundingBox(rings: rings) else {
@@ -543,13 +846,22 @@ private struct GeoPolygon {
 
         return !rings.dropFirst().contains { $0.contains(point) }
     }
+
+    var outerCoordinates: [CLLocationCoordinate2D]? {
+        rings.first?.points.map { point in
+            CLLocationCoordinate2D(
+                latitude: point.latitude,
+                longitude: point.longitude
+            )
+        }
+    }
 }
 
 private struct GeoRing {
     let points: [GeoPoint]
     let boundingBox: GeoBoundingBox
 
-    init?(rawCoordinates: [[Double]]) {
+    nonisolated init?(rawCoordinates: [[Double]]) {
         let points = rawCoordinates.compactMap { rawCoordinate -> GeoPoint? in
             guard rawCoordinate.count >= 2 else {
                 return nil
@@ -635,11 +947,20 @@ private struct GeoBoundingBox {
     let maxLongitude: Double
     let maxLatitude: Double
 
-    var area: Double {
+    nonisolated var area: Double {
         max(maxLongitude - minLongitude, 0) * max(maxLatitude - minLatitude, 0)
     }
 
-    init?(points: [GeoPoint]) {
+    nonisolated var mapBounds: CoordinateRegionMapBounds {
+        CoordinateRegionMapBounds(
+            minLongitude: minLongitude,
+            minLatitude: minLatitude,
+            maxLongitude: maxLongitude,
+            maxLatitude: maxLatitude
+        )
+    }
+
+    nonisolated init?(points: [GeoPoint]) {
         guard let firstPoint = points.first else {
             return nil
         }
@@ -662,7 +983,7 @@ private struct GeoBoundingBox {
         self.maxLatitude = maxLatitude
     }
 
-    init?(rings: [GeoRing]) {
+    nonisolated init?(rings: [GeoRing]) {
         guard let firstBox = rings.first?.boundingBox else {
             return nil
         }
@@ -672,7 +993,7 @@ private struct GeoBoundingBox {
         }
     }
 
-    init?(polygons: [GeoPolygon]) {
+    nonisolated init?(polygons: [GeoPolygon]) {
         guard let firstBox = polygons.first?.boundingBox else {
             return nil
         }
@@ -682,14 +1003,14 @@ private struct GeoBoundingBox {
         }
     }
 
-    func contains(_ point: GeoPoint) -> Bool {
+    nonisolated func contains(_ point: GeoPoint) -> Bool {
         point.longitude >= minLongitude
             && point.longitude <= maxLongitude
             && point.latitude >= minLatitude
             && point.latitude <= maxLatitude
     }
 
-    private func union(_ other: GeoBoundingBox) -> GeoBoundingBox {
+    nonisolated private func union(_ other: GeoBoundingBox) -> GeoBoundingBox {
         GeoBoundingBox(
             minLongitude: min(minLongitude, other.minLongitude),
             minLatitude: min(minLatitude, other.minLatitude),
@@ -698,7 +1019,7 @@ private struct GeoBoundingBox {
         )
     }
 
-    private init(
+    nonisolated private init(
         minLongitude: Double,
         minLatitude: Double,
         maxLongitude: Double,

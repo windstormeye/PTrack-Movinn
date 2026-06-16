@@ -6,6 +6,7 @@
 //
 
 import Charts
+import CoreLocation
 import SnapKit
 import SwiftUI
 import UIKit
@@ -38,7 +39,8 @@ final class SportsCareerViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private var collectionView: UICollectionView!
-    private var statistics: SportsCareerStatistics
+    private var statistics: SportsCareerStatistics?
+    private var statisticsLoadToken = UUID()
     private var hasPlayedAppearanceAnimation = false
     private var monthlyWorkoutSelectionIndexesByDateKey: [String: Int] = [:]
 
@@ -46,7 +48,6 @@ final class SportsCareerViewController: UIViewController {
 
     init(workouts: [TrackedWorkout]) {
         self.workouts = workouts
-        statistics = SportsCareerStatistics(workouts: workouts)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -64,6 +65,7 @@ final class SportsCareerViewController: UIViewController {
         configureNavigationBar()
         configureViews()
         registerLanguageObserver()
+        reloadStatisticsAsync()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -172,8 +174,39 @@ final class SportsCareerViewController: UIViewController {
 
     @objc private func handleLanguageDidChange() {
         title = AppLocalization.text(.sportsCareer)
-        statistics = SportsCareerStatistics(workouts: workouts)
-        collectionView.reloadData()
+        reloadStatisticsAsync()
+    }
+
+    private func reloadStatisticsAsync() {
+        let loadToken = UUID()
+        let workouts = workouts
+        let language = AppLanguageStore.shared.language
+        statisticsLoadToken = loadToken
+        statistics = nil
+        collectionView?.reloadData()
+        collectionView?.collectionViewLayout.invalidateLayout()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let statistics = SportsCareerStatistics(
+                workouts: workouts,
+                language: language
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.statisticsLoadToken == loadToken else {
+                    return
+                }
+
+                self.statistics = statistics
+                self.collectionView.collectionViewLayout.invalidateLayout()
+                self.collectionView.reloadData()
+
+                if self.hasPlayedAppearanceAnimation {
+                    self.animateVisibleMetricCells()
+                }
+            }
+        }
     }
 
     private func playAppearanceAnimationIfNeeded() {
@@ -219,18 +252,34 @@ final class SportsCareerViewController: UIViewController {
         case .summary:
             return 64
         case .annual:
-            return max(210, CGFloat(statistics.annualDurationSeries.count) * 72 + 28)
+            return max(210, CGFloat(statistics?.annualDurationSeries.count ?? 0) * 72 + 28)
         case .monthly:
             return 292
         case .weekly:
             return 244
         case .overview:
-            return 238 + sportGridHeight(width: width)
+            let locationHeight = locationOverviewHeight(width: width)
+            return 238
+                + (locationHeight > 0 ? locationHeight + 16 : 0)
+                + sportGridHeight(width: width)
         }
     }
 
+    private func locationOverviewHeight(width: CGFloat) -> CGFloat {
+        guard let statistics,
+              !statistics.locationSummary.isEmpty else {
+            return 0
+        }
+
+        return CareerLocationOverviewView.height(
+            for: statistics.locationSummary,
+            width: width
+        )
+    }
+
     private func sportGridHeight(width: CGFloat) -> CGFloat {
-        guard !statistics.sportRows.isEmpty else {
+        guard let statistics,
+              !statistics.sportRows.isEmpty else {
             return 0
         }
 
@@ -293,7 +342,11 @@ extension SportsCareerViewController: UICollectionViewDataSource {
                 return UICollectionViewCell()
             }
 
-            cell.configure(statistics: statistics)
+            if let statistics {
+                cell.configure(statistics: statistics)
+            } else {
+                cell.configureLoading()
+            }
             return cell
         case .annual:
             guard let cell = collectionView.dequeueReusableCell(
@@ -303,7 +356,11 @@ extension SportsCareerViewController: UICollectionViewDataSource {
                 return UICollectionViewCell()
             }
 
-            cell.configure(series: statistics.annualDurationSeries)
+            if let statistics {
+                cell.configure(series: statistics.annualDurationSeries)
+            } else {
+                cell.configureLoading()
+            }
             return cell
         case .monthly:
             guard let cell = collectionView.dequeueReusableCell(
@@ -316,9 +373,13 @@ extension SportsCareerViewController: UICollectionViewDataSource {
             cell.onSelectDayWorkouts = { [weak self] date, workouts in
                 self?.showNextMonthlyWorkout(on: date, workouts: workouts)
             }
-            cell.configure(days: statistics.monthActivityDays, monthDate: statistics.currentMonthDate)
+            if let statistics {
+                cell.configure(days: statistics.monthActivityDays, monthDate: statistics.currentMonthDate)
+            } else {
+                cell.configureLoading()
+            }
             return cell
-        case .weekly:
+        case .weekly: 
             guard let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: CareerWeeklyChartCell.reuseIdentifier,
                 for: indexPath
@@ -326,7 +387,11 @@ extension SportsCareerViewController: UICollectionViewDataSource {
                 return UICollectionViewCell()
             }
 
-            cell.configure(rows: statistics.weeklyDistanceRows)
+            if let statistics {
+                cell.configure(rows: statistics.weeklyDistanceRows)
+            } else {
+                cell.configureLoading()
+            }
             return cell
         case .overview:
             guard let cell = collectionView.dequeueReusableCell(
@@ -336,7 +401,17 @@ extension SportsCareerViewController: UICollectionViewDataSource {
                 return UICollectionViewCell()
             }
 
-            cell.configure(rows: statistics.sportRows, slices: statistics.sportDistributionSlices)
+            if let statistics {
+                let contentWidth = collectionView.bounds.width - 32
+                cell.configure(
+                    rows: statistics.sportRows,
+                    slices: statistics.sportDistributionSlices,
+                    locationSummary: statistics.locationSummary,
+                    locationHeight: locationOverviewHeight(width: contentWidth)
+                )
+            } else {
+                cell.configureLoading()
+            }
             return cell
         }
     }
@@ -457,6 +532,21 @@ private struct SportsCareerStatistics {
         let color: Color
     }
 
+    struct LocationSummary {
+        let countryNames: [String]
+        let chinaCityNames: [String]
+        let worldHighlightedIdentifiers: Set<String>
+        let chinaHighlightedIdentifiers: Set<String>
+
+        var isEmpty: Bool {
+            countryNames.isEmpty
+        }
+
+        var hasChinaMap: Bool {
+            !chinaHighlightedIdentifiers.isEmpty
+        }
+    }
+
     let totalDistanceMeters: Double
     let totalCount: Int
     let totalDurationSeconds: TimeInterval
@@ -465,9 +555,15 @@ private struct SportsCareerStatistics {
     let monthActivityDays: [MonthActivityDay]
     let weeklyDistanceRows: [WeeklyDistanceRow]
     let sportDistributionSlices: [SportDistributionSlice]
+    let locationSummary: LocationSummary
     let currentMonthDate: Date
 
-    init(workouts: [TrackedWorkout], calendar: Calendar = .current, now: Date = Date()) {
+    init(
+        workouts: [TrackedWorkout],
+        calendar: Calendar = .current,
+        now: Date = Date(),
+        language: AppLanguage = AppLanguageStore.shared.language
+    ) {
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
         totalCount = workouts.count
         totalDurationSeconds = workouts.reduce(0) { $0 + ($1.durationSeconds ?? 0) }
@@ -476,7 +572,7 @@ private struct SportsCareerStatistics {
             .map { sportKind, workouts in
                 let symbolName = sportKind.symbolName
                 return SportRow(
-                    title: sportKind.title,
+                    title: Self.sportTitle(for: sportKind, language: language),
                     symbolName: symbolName,
                     iconStyle: CareerSportIconStyle(symbolName: symbolName),
                     count: workouts.count,
@@ -509,9 +605,14 @@ private struct SportsCareerStatistics {
         weeklyDistanceRows = Self.makeWeeklyDistanceRows(
             workouts: workouts,
             calendar: calendar,
-            now: now
+            now: now,
+            language: language
         )
         sportDistributionSlices = Self.makeSportDistributionSlices(from: sportRows)
+        locationSummary = Self.makeLocationSummary(
+            from: workouts,
+            language: language
+        )
     }
 
     private static func makeAnnualDurationSeries(
@@ -591,23 +692,27 @@ private struct SportsCareerStatistics {
     private static func makeWeeklyDistanceRows(
         workouts: [TrackedWorkout],
         calendar: Calendar,
-        now: Date
+        now: Date,
+        language: AppLanguage
     ) -> [WeeklyDistanceRow] {
-        guard let weekInterval = calendar.dateInterval(of: .weekOfYear, for: now) else {
+        var weekCalendar = calendar
+        weekCalendar.firstWeekday = 2
+
+        guard let weekInterval = weekCalendar.dateInterval(of: .weekOfYear, for: now) else {
             return []
         }
 
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        formatter.locale = Locale(identifier: language.rawValue)
         formatter.dateFormat = "E"
 
         return (0..<7).compactMap { dayOffset in
-            guard let date = calendar.date(byAdding: .day, value: dayOffset, to: weekInterval.start) else {
+            guard let date = weekCalendar.date(byAdding: .day, value: dayOffset, to: weekInterval.start) else {
                 return nil
             }
 
             let dayWorkouts = workouts.filter { workout in
-                calendar.isDate(workout.startDate, inSameDayAs: date)
+                weekCalendar.isDate(workout.startDate, inSameDayAs: date)
             }
 
             return WeeklyDistanceRow(
@@ -645,6 +750,163 @@ private struct SportsCareerStatistics {
             UIColor(red: 38 / 255, green: 70 / 255, blue: 83 / 255, alpha: 1)
         ]
         return Color(uiColor: colors[index % colors.count])
+    }
+
+    private static func sportTitle(
+        for sportKind: TrackedWorkoutSportKind,
+        language: AppLanguage
+    ) -> String {
+        let textKey: AppTextKey
+        switch sportKind {
+        case .cycling:
+            textKey = .cycling
+        case .hiking:
+            textKey = .hiking
+        case .outdoorSwimming:
+            textKey = .outdoorSwimming
+        case .outdoorWorkout:
+            textKey = .outdoorWorkout
+        case .running:
+            textKey = .running
+        case .trailRunning:
+            textKey = .trailRunning
+        case .virtualCycling:
+            textKey = .virtualCycling
+        case .virtualRunning:
+            textKey = .virtualRunning
+        case .walking:
+            textKey = .walking
+        }
+
+        return AppLocalization.text(textKey, language: language)
+    }
+
+    private static func makeLocationSummary(
+        from workouts: [TrackedWorkout],
+        language: AppLanguage
+    ) -> LocationSummary {
+        var countryNamesByIdentifier: [String: String] = [:]
+        var chinaCityNamesByIdentifier: [String: String] = [:]
+        var worldHighlightedIdentifiers = Set<String>()
+        var chinaHighlightedIdentifiers = Set<String>()
+        let regionManager = CoordinateRegionManager.shared
+
+        for workout in workouts where !isVirtualWorkout(workout) {
+            for coordinate in routeEndpointCoordinates(for: workout) {
+                guard let region = regionManager.region(for: coordinate, language: language) else {
+                    continue
+                }
+
+                addLocationIdentifiers(
+                    [
+                        region.countryCode,
+                        region.countryName,
+                        region.countryCode == "CN" ? "China" : nil
+                    ],
+                    to: &worldHighlightedIdentifiers
+                )
+
+                if let countryName = normalizedDisplayName(region.countryName),
+                   let key = normalizedIdentifier(region.countryCode ?? countryName) {
+                    countryNamesByIdentifier[key] = countryName
+                }
+
+                guard region.isChina else {
+                    continue
+                }
+
+                let chinaRegion = regionManager.region(for: coordinate, language: .chinese) ?? region
+                let chinaCityName = normalizedDisplayName(chinaRegion.cityName)
+                    ?? normalizedDisplayName(chinaRegion.provinceName)
+                guard let chinaCityName else {
+                    continue
+                }
+
+                addLocationIdentifiers(
+                    [
+                        chinaRegion.cityName,
+                        chinaRegion.provinceName,
+                        chinaRegion.adcode.map { String($0) }
+                    ],
+                    to: &chinaHighlightedIdentifiers
+                )
+
+                if let key = normalizedIdentifier(chinaCityName) {
+                    chinaCityNamesByIdentifier[key] = chinaCityName
+                }
+            }
+        }
+
+        return LocationSummary(
+            countryNames: countryNamesByIdentifier.values.sorted(),
+            chinaCityNames: chinaCityNamesByIdentifier.values.sorted(),
+            worldHighlightedIdentifiers: worldHighlightedIdentifiers,
+            chinaHighlightedIdentifiers: chinaHighlightedIdentifiers
+        )
+    }
+
+    private static func routeEndpointCoordinates(for workout: TrackedWorkout) -> [CLLocationCoordinate2D] {
+        var coordinates: [CLLocationCoordinate2D] = []
+
+        if let startCoordinate = workout.coordinates.first?.coordinate,
+           CLLocationCoordinate2DIsValid(startCoordinate) {
+            coordinates.append(startCoordinate)
+        }
+
+        if let endCoordinate = workout.coordinates.last?.coordinate,
+           CLLocationCoordinate2DIsValid(endCoordinate),
+           !coordinates.contains(where: { isSameCoordinate($0, endCoordinate) }) {
+            coordinates.append(endCoordinate)
+        }
+
+        return coordinates
+    }
+
+    private static func isSameCoordinate(
+        _ lhs: CLLocationCoordinate2D,
+        _ rhs: CLLocationCoordinate2D
+    ) -> Bool {
+        lhs.latitude == rhs.latitude && lhs.longitude == rhs.longitude
+    }
+
+    private static func isVirtualWorkout(_ workout: TrackedWorkout) -> Bool {
+        workout.sportKind == .virtualCycling || workout.sportKind == .virtualRunning
+    }
+
+    private static func addLocationIdentifiers(
+        _ values: [String?],
+        to identifiers: inout Set<String>
+    ) {
+        values.forEach { value in
+            guard let identifier = normalizedIdentifier(value) else {
+                return
+            }
+
+            identifiers.insert(identifier)
+        }
+    }
+
+    private static func normalizedDisplayName(_ value: String?) -> String? {
+        let trimmedValue = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmedValue.isEmpty,
+              normalizedIdentifier(trimmedValue) != nil else {
+            return nil
+        }
+
+        return trimmedValue
+    }
+
+    private static func normalizedIdentifier(_ value: String?) -> String? {
+        let normalizedValue = value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard let normalizedValue,
+              !normalizedValue.isEmpty,
+              normalizedValue != "-99" else {
+            return nil
+        }
+
+        return normalizedValue
     }
 }
 
@@ -771,6 +1033,41 @@ private struct CareerSportIconStyle {
     }
 }
 
+private final class CareerLoadingView: UIView {
+    private let activityIndicatorView = UIActivityIndicatorView(style: .medium)
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    func show() {
+        isHidden = false
+        activityIndicatorView.startAnimating()
+    }
+
+    func hide() {
+        isHidden = true
+        activityIndicatorView.stopAnimating()
+    }
+
+    private func configureViews() {
+        backgroundColor = .clear
+        isHidden = true
+        activityIndicatorView.color = UIColor.black.withAlphaComponent(0.38)
+
+        addSubview(activityIndicatorView)
+        activityIndicatorView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+        }
+    }
+}
+
 private final class CareerSectionHeaderView: UICollectionReusableView {
     static let reuseIdentifier = "CareerSectionHeaderView"
 
@@ -818,6 +1115,7 @@ private final class CareerSummaryCell: UICollectionViewCell {
     private let totalDistanceView = CareerSummaryMetricView()
     private let totalCountView = CareerSummaryMetricView()
     private let totalDurationView = CareerSummaryMetricView()
+    private let loadingView = CareerLoadingView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -830,6 +1128,8 @@ private final class CareerSummaryCell: UICollectionViewCell {
     }
 
     func configure(statistics: SportsCareerStatistics) {
+        stackView.isHidden = false
+        loadingView.hide()
         totalDistanceView.configure(
             title: AppLocalization.text(.totalWorkoutDistance),
             value: statistics.totalDistanceMeters,
@@ -847,7 +1147,16 @@ private final class CareerSummaryCell: UICollectionViewCell {
         )
     }
 
+    func configureLoading() {
+        stackView.isHidden = true
+        loadingView.show()
+    }
+
     func animateValuesFromZero(duration: TimeInterval) {
+        guard !stackView.isHidden else {
+            return
+        }
+
         totalDistanceView.animateValueFromZero(duration: duration)
         totalCountView.animateValueFromZero(duration: duration)
         totalDurationView.animateValueFromZero(duration: duration)
@@ -866,7 +1175,11 @@ private final class CareerSummaryCell: UICollectionViewCell {
         }
 
         contentView.addSubview(stackView)
+        contentView.addSubview(loadingView)
         stackView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        loadingView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
     }
@@ -943,6 +1256,7 @@ private final class CareerAnnualCurveCell: UICollectionViewCell {
     static let reuseIdentifier = "CareerAnnualCurveCell"
 
     private let curveView = CareerAnnualCurveView()
+    private let loadingView = CareerLoadingView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -955,7 +1269,15 @@ private final class CareerAnnualCurveCell: UICollectionViewCell {
     }
 
     func configure(series: [SportsCareerStatistics.AnnualDurationSeries]) {
+        curveView.isHidden = false
+        loadingView.hide()
         curveView.configure(series: series)
+    }
+
+    func configureLoading() {
+        curveView.isHidden = true
+        curveView.configure(series: [])
+        loadingView.show()
     }
 
     private func configureViews() {
@@ -964,8 +1286,12 @@ private final class CareerAnnualCurveCell: UICollectionViewCell {
         contentView.layer.masksToBounds = true
 
         contentView.addSubview(curveView)
+        contentView.addSubview(loadingView)
         curveView.snp.makeConstraints { make in
             make.edges.equalToSuperview().inset(14)
+        }
+        loadingView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
         }
     }
 }
@@ -986,6 +1312,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
     private var selection: CurveSelection?
     private let selectionFeedbackGenerator = UISelectionFeedbackGenerator()
     private let yearLabelWidth: CGFloat = 74
+    private var lastRenderedSize: CGSize = .zero
     private weak var disabledInteractivePopGestureRecognizer: UIGestureRecognizer?
     private var disabledInteractivePopGestureWasEnabled: Bool?
     private var hasConfiguredInteractivePopGestureFailureRequirement = false
@@ -1001,6 +1328,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
         backgroundColor = .clear
         isOpaque = false
         isUserInteractionEnabled = true
+        contentMode = .redraw
         addGestureRecognizer(selectionPanGestureRecognizer)
     }
 
@@ -1009,12 +1337,24 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
         backgroundColor = .clear
         isOpaque = false
         isUserInteractionEnabled = true
+        contentMode = .redraw
         addGestureRecognizer(selectionPanGestureRecognizer)
     }
 
     func configure(series: [SportsCareerStatistics.AnnualDurationSeries]) {
         self.series = series
         selection = nil
+        lastRenderedSize = .zero
+        setNeedsDisplay()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard lastRenderedSize != bounds.size else {
+            return
+        }
+
+        lastRenderedSize = bounds.size
         setNeedsDisplay()
     }
 
@@ -1366,6 +1706,7 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
     var onSelectDayWorkouts: ((Date, [TrackedWorkout]) -> Void)?
 
     private let pageContainerView = UIView()
+    private let loadingView = CareerLoadingView()
     private var pageContentView: UIView?
     private var interactiveTargetContentView: UIView?
     private var interactiveTargetMonthDate: Date?
@@ -1398,6 +1739,10 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
     }
 
     func configure(days: [SportsCareerStatistics.MonthActivityDay], monthDate: Date) {
+        pageContainerView.isHidden = false
+        monthPanGestureRecognizer.isEnabled = true
+        loadingView.hide()
+
         calendar = Calendar.current
         calendar.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
         calendar.firstWeekday = 1
@@ -1417,6 +1762,13 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         reloadMonth()
     }
 
+    func configureLoading() {
+        onSelectDayWorkouts = nil
+        pageContainerView.isHidden = true
+        monthPanGestureRecognizer.isEnabled = false
+        loadingView.show()
+    }
+
     private func configureViews() {
         contentView.backgroundColor = UIColor(white: 0.965, alpha: 1)
         contentView.layer.cornerRadius = 8
@@ -1425,9 +1777,13 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         pageContainerView.clipsToBounds = true
 
         contentView.addSubview(pageContainerView)
+        contentView.addSubview(loadingView)
         contentView.addGestureRecognizer(monthPanGestureRecognizer)
 
         pageContainerView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        loadingView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
     }
@@ -1908,6 +2264,7 @@ private final class CareerWeeklyChartCell: UICollectionViewCell {
     static let reuseIdentifier = "CareerWeeklyChartCell"
 
     private let hostingView = CareerChartHostingView()
+    private let loadingView = CareerLoadingView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1920,7 +2277,14 @@ private final class CareerWeeklyChartCell: UICollectionViewCell {
     }
 
     func configure(rows: [SportsCareerStatistics.WeeklyDistanceRow]) {
+        hostingView.isHidden = false
+        loadingView.hide()
         hostingView.setContent(CareerWeeklyDistanceChart(rows: rows))
+    }
+
+    func configureLoading() {
+        hostingView.isHidden = true
+        loadingView.show()
     }
 
     private func configureViews() {
@@ -1929,7 +2293,11 @@ private final class CareerWeeklyChartCell: UICollectionViewCell {
         contentView.layer.masksToBounds = true
 
         contentView.addSubview(hostingView)
+        contentView.addSubview(loadingView)
         hostingView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        loadingView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
     }
@@ -1939,7 +2307,10 @@ private final class CareerSportOverviewCell: UICollectionViewCell {
     static let reuseIdentifier = "CareerSportOverviewCell"
 
     private let hostingView = CareerChartHostingView()
+    private let locationOverviewView = CareerLocationOverviewView()
     private let sportTypeGridView = CareerSportTypeGridView()
+    private let loadingView = CareerLoadingView()
+    private var locationHeightConstraint: Constraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1953,13 +2324,37 @@ private final class CareerSportOverviewCell: UICollectionViewCell {
 
     func configure(
         rows: [SportsCareerStatistics.SportRow],
-        slices: [SportsCareerStatistics.SportDistributionSlice]
+        slices: [SportsCareerStatistics.SportDistributionSlice],
+        locationSummary: SportsCareerStatistics.LocationSummary,
+        locationHeight: CGFloat
     ) {
+        hostingView.isHidden = false
+        sportTypeGridView.isHidden = false
+        loadingView.hide()
         hostingView.setContent(CareerSportDistributionChart(slices: slices))
+        locationOverviewView.isHidden = locationSummary.isEmpty
+        if !locationSummary.isEmpty {
+            locationOverviewView.configure(summary: locationSummary)
+        }
+        locationHeightConstraint?.update(offset: locationHeight)
         sportTypeGridView.configure(rows: rows)
+        remakeSportGridConstraints(hasLocation: !locationSummary.isEmpty)
+    }
+
+    func configureLoading() {
+        hostingView.isHidden = true
+        locationOverviewView.isHidden = true
+        sportTypeGridView.isHidden = true
+        locationHeightConstraint?.update(offset: 0)
+        remakeSportGridConstraints(hasLocation: false)
+        loadingView.show()
     }
 
     func animateValuesFromZero(duration: TimeInterval) {
+        guard !sportTypeGridView.isHidden else {
+            return
+        }
+
         sportTypeGridView.animateValuesFromZero(duration: duration)
     }
 
@@ -1967,15 +2362,35 @@ private final class CareerSportOverviewCell: UICollectionViewCell {
         contentView.backgroundColor = .clear
 
         contentView.addSubview(hostingView)
+        contentView.addSubview(locationOverviewView)
         contentView.addSubview(sportTypeGridView)
+        contentView.addSubview(loadingView)
 
         hostingView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
             make.height.equalTo(222)
         }
 
-        sportTypeGridView.snp.makeConstraints { make in
+        locationOverviewView.snp.makeConstraints { make in
             make.top.equalTo(hostingView.snp.bottom).offset(16)
+            make.leading.trailing.equalToSuperview()
+            locationHeightConstraint = make.height.equalTo(0).constraint
+        }
+
+        remakeSportGridConstraints(hasLocation: false)
+
+        loadingView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    private func remakeSportGridConstraints(hasLocation: Bool) {
+        sportTypeGridView.snp.remakeConstraints { make in
+            if hasLocation {
+                make.top.equalTo(locationOverviewView.snp.bottom).offset(16)
+            } else {
+                make.top.equalTo(hostingView.snp.bottom).offset(16)
+            }
             make.leading.trailing.bottom.equalToSuperview()
         }
     }
@@ -1998,6 +2413,521 @@ private final class CareerChartHostingView: UIView {
         hostingController.view.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+    }
+}
+
+private final class CareerLocationOverviewView: UIView {
+    private static let cardSpacing: CGFloat = 14
+
+    private let mapStackView = UIStackView()
+    private let worldMapCardView = CareerLocationMapCardView()
+    private let chinaMapCardView = CareerLocationMapCardView()
+    private var summary: SportsCareerStatistics.LocationSummary?
+    private var worldMapCardHeightConstraint: Constraint?
+    private var chinaMapCardHeightConstraint: Constraint?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    static func height(
+        for summary: SportsCareerStatistics.LocationSummary,
+        width: CGFloat
+    ) -> CGFloat {
+        guard !summary.isEmpty else {
+            return 0
+        }
+
+        let worldHeight = CareerLocationMapCardView.height(
+            detail: summary.countryNames.joined(separator: "、"),
+            width: width,
+            mapHeight: CareerLocationMapCardView.worldMapHeight
+        )
+        guard summary.hasChinaMap else {
+            return worldHeight
+        }
+
+        let chinaHeight = CareerLocationMapCardView.height(
+            detail: summary.chinaCityNames.joined(separator: "、"),
+            width: width,
+            mapHeight: CareerLocationMapCardView.chinaMapHeight
+        )
+        return worldHeight + cardSpacing + chinaHeight
+    }
+
+    func configure(summary: SportsCareerStatistics.LocationSummary) {
+        self.summary = summary
+        worldMapCardView.configure(
+            detail: summary.countryNames.joined(separator: "、"),
+            mapHeight: CareerLocationMapCardView.worldMapHeight,
+            scope: .world,
+            highlightedIdentifiers: summary.worldHighlightedIdentifiers
+        )
+        chinaMapCardView.configure(
+            detail: summary.chinaCityNames.joined(separator: "、"),
+            mapHeight: CareerLocationMapCardView.chinaMapHeight,
+            scope: .china,
+            highlightedIdentifiers: summary.chinaHighlightedIdentifiers
+        )
+        chinaMapCardView.isHidden = !summary.hasChinaMap
+        updateCardHeights()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateCardHeights()
+    }
+
+    private func configureViews() {
+        mapStackView.axis = .vertical
+        mapStackView.alignment = .fill
+        mapStackView.distribution = .fill
+        mapStackView.spacing = Self.cardSpacing
+
+        addSubview(mapStackView)
+
+        mapStackView.addArrangedSubview(worldMapCardView)
+        worldMapCardView.snp.makeConstraints { make in
+            worldMapCardHeightConstraint = make.height.equalTo(0).constraint
+        }
+
+        mapStackView.addArrangedSubview(chinaMapCardView)
+        chinaMapCardView.snp.makeConstraints { make in
+            chinaMapCardHeightConstraint = make.height.equalTo(0).constraint
+        }
+
+        mapStackView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    private func updateCardHeights() {
+        guard let summary,
+              bounds.width > 0 else {
+            return
+        }
+
+        let worldHeight = CareerLocationMapCardView.height(
+            detail: summary.countryNames.joined(separator: "、"),
+            width: bounds.width,
+            mapHeight: CareerLocationMapCardView.worldMapHeight
+        )
+        worldMapCardHeightConstraint?.update(offset: worldHeight)
+
+        let chinaHeight = summary.hasChinaMap
+            ? CareerLocationMapCardView.height(
+                detail: summary.chinaCityNames.joined(separator: "、"),
+                width: bounds.width,
+                mapHeight: CareerLocationMapCardView.chinaMapHeight
+            )
+            : 0
+        chinaMapCardHeightConstraint?.update(offset: chinaHeight)
+    }
+}
+
+private final class CareerLocationMapCardView: UIView {
+    static let worldMapHeight: CGFloat = 168
+    static let chinaMapHeight: CGFloat = 260
+
+    private static let horizontalInset: CGFloat = 12
+    private static let topInset: CGFloat = 12
+    private static let mapDetailSpacing: CGFloat = 10
+    private static let bottomInset: CGFloat = 12
+    private static let detailFont = UIFont.systemFont(ofSize: 10, weight: .semibold)
+
+    private let detailLabel = UILabel()
+    private let mapView = CareerRegionMapView()
+    private var mapHeightConstraint: Constraint?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    func configure(
+        detail: String,
+        mapHeight: CGFloat,
+        scope: CoordinateRegionMapScope,
+        highlightedIdentifiers: Set<String>
+    ) {
+        detailLabel.text = detail
+        mapHeightConstraint?.update(offset: mapHeight)
+        mapView.configure(scope: scope, highlightedIdentifiers: highlightedIdentifiers)
+    }
+
+    static func height(
+        detail: String,
+        width: CGFloat,
+        mapHeight: CGFloat
+    ) -> CGFloat {
+        let detailWidth = max(width - horizontalInset * 2, 1)
+        let detailHeight = max(
+            ceil(
+                (detail as NSString).boundingRect(
+                    with: CGSize(width: detailWidth, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    attributes: [.font: detailFont],
+                    context: nil
+                ).height
+            ),
+            detailFont.lineHeight
+        )
+
+        return topInset
+            + mapHeight
+            + mapDetailSpacing
+            + detailHeight
+            + bottomInset
+    }
+
+    private func configureViews() {
+        backgroundColor = UIColor(white: 0.965, alpha: 1)
+        layer.cornerRadius = 8
+        layer.masksToBounds = true
+
+        detailLabel.textColor = UIColor.black.withAlphaComponent(0.45)
+        detailLabel.font = Self.detailFont
+        detailLabel.textAlignment = .left
+        detailLabel.lineBreakMode = .byWordWrapping
+        detailLabel.numberOfLines = 0
+
+        addSubview(mapView)
+        addSubview(detailLabel)
+
+        mapView.snp.makeConstraints { make in
+            make.top.equalToSuperview().offset(Self.topInset)
+            make.leading.trailing.equalToSuperview().inset(Self.horizontalInset)
+            mapHeightConstraint = make.height.equalTo(Self.worldMapHeight).constraint
+        }
+
+        detailLabel.snp.makeConstraints { make in
+            make.top.equalTo(mapView.snp.bottom).offset(Self.mapDetailSpacing)
+            make.leading.trailing.equalToSuperview().inset(Self.horizontalInset)
+            make.bottom.equalToSuperview().inset(Self.bottomInset)
+        }
+    }
+}
+
+private final class CareerRegionMapView: UIView {
+    private struct DrawingBounds {
+        let minLongitude: Double
+        let minLatitude: Double
+        let maxLongitude: Double
+        let maxLatitude: Double
+
+        nonisolated var width: Double {
+            max(maxLongitude - minLongitude, 0)
+        }
+
+        nonisolated var height: Double {
+            max(maxLatitude - minLatitude, 0)
+        }
+    }
+
+    private let imageView = UIImageView()
+    private let loadingView = CareerLoadingView()
+    private var highlightedIdentifiers = Set<String>()
+    private var scope: CoordinateRegionMapScope = .world
+    private var renderToken = UUID()
+    private var requestedRenderSize: CGSize = .zero
+    private var requestedRenderScope: CoordinateRegionMapScope?
+    private var requestedHighlightedIdentifiers = Set<String>()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    func configure(scope: CoordinateRegionMapScope, highlightedIdentifiers: Set<String>) {
+        let needsNewRender = self.scope != scope || self.highlightedIdentifiers != highlightedIdentifiers
+        self.scope = scope
+        self.highlightedIdentifiers = highlightedIdentifiers
+
+        if needsNewRender {
+            imageView.image = nil
+            requestedRenderSize = .zero
+        }
+
+        if imageView.image == nil {
+            loadingView.show()
+        } else {
+            loadingView.hide()
+        }
+        setNeedsLayout()
+    }
+
+    private func configureViews() {
+        backgroundColor = .clear
+        isOpaque = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.backgroundColor = .clear
+
+        addSubview(imageView)
+        addSubview(loadingView)
+
+        imageView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        loadingView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        renderMapIfNeeded()
+    }
+
+    private func renderMapIfNeeded() {
+        let renderSize = bounds.size
+        guard renderSize.width > 2,
+              renderSize.height > 2 else {
+            return
+        }
+
+        guard requestedRenderSize != renderSize
+                || requestedRenderScope != scope
+                || requestedHighlightedIdentifiers != highlightedIdentifiers else {
+            return
+        }
+
+        let token = UUID()
+        let targetScope = scope
+        let targetHighlightedIdentifiers = highlightedIdentifiers
+        let displayScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+        renderToken = token
+        requestedRenderSize = renderSize
+        requestedRenderScope = targetScope
+        requestedHighlightedIdentifiers = targetHighlightedIdentifiers
+        imageView.image = nil
+        loadingView.show()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let features = CoordinateRegionManager.shared.mapFeatures(for: targetScope)
+            let image = Self.renderMapImage(
+                scope: targetScope,
+                features: features,
+                highlightedIdentifiers: targetHighlightedIdentifiers,
+                size: renderSize,
+                scale: displayScale
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.renderToken == token,
+                      self.scope == targetScope,
+                      self.highlightedIdentifiers == targetHighlightedIdentifiers else {
+                    return
+                }
+
+                self.imageView.image = image
+                self.loadingView.hide()
+            }
+        }
+    }
+
+    nonisolated private static func renderMapImage(
+        scope: CoordinateRegionMapScope,
+        features: [CoordinateRegionMapFeature],
+        highlightedIdentifiers: Set<String>,
+        size: CGSize,
+        scale: CGFloat
+    ) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { _ in
+            let rect = CGRect(origin: .zero, size: size)
+            guard !features.isEmpty,
+                  let bounds = drawingBounds(for: features, scope: scope),
+                  bounds.width > 0,
+                  bounds.height > 0 else {
+                drawPlaceholder(in: rect)
+                return
+            }
+
+            let targetRect = fittedRect(
+                for: bounds,
+                scope: scope,
+                in: rect.insetBy(dx: 2, dy: 2)
+            )
+            let baseFillColor = UIColor.black.withAlphaComponent(0.075)
+            let baseStrokeColor = UIColor.white.withAlphaComponent(0.95)
+            let highlightedFillColor = UIColor(red: 141 / 255, green: 189 / 255, blue: 0, alpha: 1)
+            let highlightedStrokeColor = UIColor.black.withAlphaComponent(0.18)
+
+            for feature in features {
+                let path = path(for: feature, bounds: bounds, targetRect: targetRect)
+                guard !path.isEmpty else {
+                    continue
+                }
+
+                let isHighlighted = !feature.identifiers.isDisjoint(with: highlightedIdentifiers)
+                (isHighlighted ? highlightedFillColor : baseFillColor).setFill()
+                path.fill()
+                (isHighlighted ? highlightedStrokeColor : baseStrokeColor).setStroke()
+                path.lineWidth = isHighlighted ? 0.55 : 0.35
+                path.stroke()
+            }
+        }
+    }
+
+    nonisolated private static func drawPlaceholder(in rect: CGRect) {
+        let path = UIBezierPath(roundedRect: rect.insetBy(dx: 8, dy: 18), cornerRadius: 8)
+        UIColor.black.withAlphaComponent(0.045).setFill()
+        path.fill()
+    }
+
+    nonisolated private static func drawingBounds(
+        for features: [CoordinateRegionMapFeature],
+        scope: CoordinateRegionMapScope
+    ) -> DrawingBounds? {
+        guard let firstBounds = features.first?.bounds,
+              firstBounds.isValid else {
+            return nil
+        }
+
+        let bounds = features.dropFirst().reduce(
+            DrawingBounds(
+                minLongitude: firstBounds.minLongitude,
+                minLatitude: firstBounds.minLatitude,
+                maxLongitude: firstBounds.maxLongitude,
+                maxLatitude: firstBounds.maxLatitude
+            )
+        ) { result, feature in
+            DrawingBounds(
+                minLongitude: min(result.minLongitude, feature.bounds.minLongitude),
+                minLatitude: min(result.minLatitude, feature.bounds.minLatitude),
+                maxLongitude: max(result.maxLongitude, feature.bounds.maxLongitude),
+                maxLatitude: max(result.maxLatitude, feature.bounds.maxLatitude)
+            )
+        }
+
+        switch scope {
+        case .world:
+            return bounds
+        case .china:
+            return DrawingBounds(
+                minLongitude: bounds.minLongitude,
+                minLatitude: max(bounds.minLatitude, 17.5),
+                maxLongitude: bounds.maxLongitude,
+                maxLatitude: bounds.maxLatitude
+            )
+        }
+    }
+
+    nonisolated private static func fittedRect(
+        for bounds: DrawingBounds,
+        scope: CoordinateRegionMapScope,
+        in rect: CGRect
+    ) -> CGRect {
+        let mapAspectRatio = CGFloat(bounds.width / bounds.height)
+        let rectAspectRatio = rect.width / max(rect.height, 1)
+        let fittedRect: CGRect
+        if mapAspectRatio > rectAspectRatio {
+            let height = rect.width / max(mapAspectRatio, 0.1)
+            fittedRect = CGRect(
+                x: rect.minX,
+                y: rect.midY - height / 2,
+                width: rect.width,
+                height: height
+            )
+        } else {
+            let width = rect.height * mapAspectRatio
+            fittedRect = CGRect(
+                x: rect.midX - width / 2,
+                y: rect.minY,
+                width: width,
+                height: rect.height
+            )
+        }
+
+        switch scope {
+        case .world:
+            return fittedRect
+        case .china:
+            let expandedHeight = min(rect.height, max(fittedRect.height, rect.height * 0.96))
+            return CGRect(
+                x: fittedRect.minX,
+                y: rect.midY - expandedHeight / 2,
+                width: fittedRect.width,
+                height: expandedHeight
+            )
+        }
+    }
+
+    nonisolated private static func path(
+        for feature: CoordinateRegionMapFeature,
+        bounds: DrawingBounds,
+        targetRect: CGRect
+    ) -> UIBezierPath {
+        let path = UIBezierPath()
+        for ring in feature.rings {
+            let points = simplifiedCoordinates(ring)
+            guard let firstCoordinate = points.first else {
+                continue
+            }
+
+            path.move(to: projectedPoint(firstCoordinate, bounds: bounds, targetRect: targetRect))
+            for coordinate in points.dropFirst() {
+                path.addLine(to: projectedPoint(coordinate, bounds: bounds, targetRect: targetRect))
+            }
+            path.close()
+        }
+
+        return path
+    }
+
+    nonisolated private static func simplifiedCoordinates(_ coordinates: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        let maxPointCount = 520
+        guard coordinates.count > maxPointCount else {
+            return coordinates
+        }
+
+        let stride = Int(ceil(Double(coordinates.count) / Double(maxPointCount)))
+        var result = coordinates.enumerated().compactMap { index, coordinate in
+            index % stride == 0 ? coordinate : nil
+        }
+        if let lastCoordinate = coordinates.last {
+            let currentLastCoordinate = result.last
+            if currentLastCoordinate == nil
+                || currentLastCoordinate?.latitude != lastCoordinate.latitude
+                || currentLastCoordinate?.longitude != lastCoordinate.longitude {
+                result.append(lastCoordinate)
+            }
+        }
+        return result
+    }
+
+    nonisolated private static func projectedPoint(
+        _ coordinate: CLLocationCoordinate2D,
+        bounds: DrawingBounds,
+        targetRect: CGRect
+    ) -> CGPoint {
+        let xRatio = (coordinate.longitude - bounds.minLongitude) / max(bounds.width, 0.000_001)
+        let yRatio = (coordinate.latitude - bounds.minLatitude) / max(bounds.height, 0.000_001)
+        return CGPoint(
+            x: targetRect.minX + CGFloat(xRatio) * targetRect.width,
+            y: targetRect.maxY - CGFloat(yRatio) * targetRect.height
+        )
     }
 }
 
