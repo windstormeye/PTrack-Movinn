@@ -430,11 +430,28 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
         }
 
         let item = item(at: indexPath)
-        cell.configure(
-            iconName: item.iconName,
-            title: AppLocalization.text(item.titleKey),
-            indicatorColor: connectionIndicatorState(for: item)?.color
-        )
+        let indicatorColor = connectionIndicatorState(for: item)?.color
+        switch item {
+        case .appleHealth:
+            cell.configureAssetIcon(
+                image: UIImage(named: "apple_health")?.withRenderingMode(.alwaysOriginal),
+                title: AppLocalization.text(item.titleKey),
+                indicatorColor: indicatorColor
+            )
+        case .strava:
+            cell.configureBrandImage(
+                image: UIImage(named: "strava")?.withRenderingMode(.alwaysTemplate),
+                backgroundColor: AppColors.stravaOrange,
+                imageTintColor: .white,
+                indicatorColor: indicatorColor
+            )
+        case .appLanguage, .developerWebsite:
+            cell.configureSystemIcon(
+                iconName: item.iconName,
+                title: AppLocalization.text(item.titleKey),
+                indicatorColor: indicatorColor
+            )
+        }
         return cell
     }
 
@@ -532,6 +549,7 @@ private final class MoreSettingsCell: UICollectionViewCell {
     static let reuseIdentifier = "MoreSettingsCell"
 
     private let iconView = UIImageView()
+    private let brandImageView = UIImageView()
     private let titleLabel = UILabel()
     private let statusIndicatorView = UIView()
 
@@ -554,12 +572,62 @@ private final class MoreSettingsCell: UICollectionViewCell {
         }
     }
 
-    func configure(iconName: String, title: String, indicatorColor: UIColor?) {
-        iconView.image = UIImage(
-            systemName: iconName,
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+    func configureSystemIcon(iconName: String, title: String, indicatorColor: UIColor?) {
+        configureIconAndTitle(
+            image: UIImage(
+                systemName: iconName,
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+            ),
+            imageTintColor: .black,
+            title: title,
+            indicatorColor: indicatorColor
         )
+    }
+
+    func configureAssetIcon(image: UIImage?, title: String, indicatorColor: UIColor?) {
+        configureIconAndTitle(
+            image: image,
+            imageTintColor: nil,
+            title: title,
+            indicatorColor: indicatorColor
+        )
+    }
+
+    func configureBrandImage(
+        image: UIImage?,
+        backgroundColor: UIColor,
+        imageTintColor: UIColor?,
+        indicatorColor: UIColor?
+    ) {
+        applyBaseStyle(backgroundColor: backgroundColor, indicatorColor: indicatorColor)
+        iconView.isHidden = true
+        titleLabel.isHidden = true
+        brandImageView.isHidden = false
+        brandImageView.image = image
+        brandImageView.tintColor = imageTintColor
+    }
+
+    private func configureIconAndTitle(
+        image: UIImage?,
+        imageTintColor: UIColor?,
+        title: String,
+        indicatorColor: UIColor?
+    ) {
+        applyBaseStyle(backgroundColor: UIColor(white: 0.945, alpha: 1), indicatorColor: indicatorColor)
+        iconView.isHidden = false
+        titleLabel.isHidden = false
+        brandImageView.isHidden = true
+        iconView.image = image
+        iconView.tintColor = imageTintColor ?? .black
         titleLabel.text = title
+    }
+
+    private func applyBaseStyle(backgroundColor: UIColor, indicatorColor: UIColor?) {
+        contentView.backgroundColor = backgroundColor
+        brandImageView.image = nil
+        iconView.image = nil
+        iconView.tintColor = .black
+        titleLabel.text = nil
         statusIndicatorView.backgroundColor = indicatorColor
         statusIndicatorView.isHidden = indicatorColor == nil
     }
@@ -575,6 +643,11 @@ private final class MoreSettingsCell: UICollectionViewCell {
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        brandImageView.isHidden = true
+        brandImageView.contentMode = .scaleAspectFit
+        brandImageView.setContentHuggingPriority(.required, for: .horizontal)
+        brandImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         titleLabel.textColor = .black
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.adjustsFontSizeToFitWidth = true
@@ -584,8 +657,11 @@ private final class MoreSettingsCell: UICollectionViewCell {
         statusIndicatorView.isHidden = true
         statusIndicatorView.layer.cornerRadius = 4
         statusIndicatorView.layer.masksToBounds = true
+        statusIndicatorView.layer.borderWidth = 1
+        statusIndicatorView.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
 
         contentView.addSubview(iconView)
+        contentView.addSubview(brandImageView)
         contentView.addSubview(titleLabel)
         contentView.addSubview(statusIndicatorView)
 
@@ -599,6 +675,12 @@ private final class MoreSettingsCell: UICollectionViewCell {
             make.leading.equalTo(iconView.snp.trailing).offset(10)
             make.trailing.equalToSuperview().inset(12)
             make.centerY.equalToSuperview()
+        }
+
+        brandImageView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.width.equalTo(100)
+            make.height.equalTo(21)
         }
 
         statusIndicatorView.snp.makeConstraints { make in
