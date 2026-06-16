@@ -40,6 +40,7 @@ final class SportsCareerViewController: UIViewController {
     private var collectionView: UICollectionView!
     private var statistics: SportsCareerStatistics
     private var hasPlayedAppearanceAnimation = false
+    private var monthlyWorkoutSelectionIndexesByDateKey: [String: Int] = [:]
 
     private let navigationBackgroundHeight: CGFloat = 124
 
@@ -220,7 +221,7 @@ final class SportsCareerViewController: UIViewController {
         case .annual:
             return max(210, CGFloat(statistics.annualDurationSeries.count) * 72 + 28)
         case .monthly:
-            return 344
+            return 292
         case .weekly:
             return 218
         case .overview:
@@ -238,6 +239,31 @@ final class SportsCareerViewController: UIViewController {
         let spacing: CGFloat = 10
         let rowCount = ceil(CGFloat(statistics.sportRows.count) / columnCount)
         return rowCount * itemHeight + max(rowCount - 1, 0) * spacing
+    }
+
+    private func showNextMonthlyWorkout(on date: Date, workouts: [TrackedWorkout]) {
+        guard !workouts.isEmpty else {
+            return
+        }
+
+        let key = Self.dateKey(for: date)
+        let currentIndex = monthlyWorkoutSelectionIndexesByDateKey[key, default: 0]
+        let selectedWorkout = workouts[currentIndex % workouts.count]
+        monthlyWorkoutSelectionIndexesByDateKey[key] = (currentIndex + 1) % workouts.count
+
+        let detailViewController = WorkoutRouteDetailViewController(workout: selectedWorkout)
+        navigationController?.pushViewController(detailViewController, animated: true)
+    }
+
+    private static func dateKey(for date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year,
+              let month = components.month,
+              let day = components.day else {
+            return ""
+        }
+
+        return "\(year)-\(month)-\(day)"
     }
 }
 
@@ -287,6 +313,9 @@ extension SportsCareerViewController: UICollectionViewDataSource {
                 return UICollectionViewCell()
             }
 
+            cell.onSelectDayWorkouts = { [weak self] date, workouts in
+                self?.showNextMonthlyWorkout(on: date, workouts: workouts)
+            }
             cell.configure(days: statistics.monthActivityDays, monthDate: statistics.currentMonthDate)
             return cell
         case .weekly:
@@ -399,6 +428,7 @@ private struct SportsCareerStatistics {
         let date: Date
         let day: Int
         let symbolNames: [String]
+        let workouts: [TrackedWorkout]
     }
 
     struct WeeklyDistanceRow: Identifiable {
@@ -434,11 +464,11 @@ private struct SportsCareerStatistics {
         totalCount = workouts.count
         totalDurationSeconds = workouts.reduce(0) { $0 + ($1.durationSeconds ?? 0) }
 
-        sportRows = Dictionary(grouping: workouts, by: \.title)
-            .map { title, workouts in
-                let symbolName = workouts.first?.symbolName ?? "figure.walk"
+        sportRows = Dictionary(grouping: workouts, by: \.sportKind)
+            .map { sportKind, workouts in
+                let symbolName = sportKind.symbolName
                 return SportRow(
-                    title: title,
+                    title: sportKind.title,
                     symbolName: symbolName,
                     iconStyle: CareerSportIconStyle(symbolName: symbolName),
                     count: workouts.count,
@@ -527,7 +557,8 @@ private struct SportsCareerStatistics {
         }
         .map { date, workouts in
             let day = calendar.component(.day, from: date)
-            let symbolNames = workouts
+            let sortedWorkouts = workouts.sorted { $0.startDate < $1.startDate }
+            let symbolNames = sortedWorkouts
                 .map(\.symbolName)
                 .reduce(into: [String]()) { result, symbolName in
                     guard !result.contains(symbolName) else {
@@ -537,7 +568,12 @@ private struct SportsCareerStatistics {
                     result.append(symbolName)
                 }
 
-            return MonthActivityDay(date: date, day: day, symbolNames: Array(symbolNames.prefix(4)))
+            return MonthActivityDay(
+                date: date,
+                day: day,
+                symbolNames: Array(symbolNames.prefix(4)),
+                workouts: sortedWorkouts
+            )
         }
         .sorted { $0.date < $1.date }
     }
@@ -934,7 +970,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
     private struct CurveLayout {
         let chartRect: CGRect
         let rowHeight: CGFloat
-        let maxValue: TimeInterval
+        let maxValue: Double
     }
 
     private var series: [SportsCareerStatistics.AnnualDurationSeries] = []
@@ -993,7 +1029,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
             let rowMinY = layout.chartRect.minY + CGFloat(seriesIndex) * layout.rowHeight
             let baselineY = rowMinY + layout.rowHeight * 0.78
             let amplitude = layout.rowHeight * 0.66
-            let values = Array(item.weeklyDurationSeconds.prefix(item.visibleWeekCount))
+            let values = Array(item.weeklyDistanceMeters.prefix(item.visibleWeekCount))
             let xDenominator = CGFloat(max(item.weeklyDurationSeconds.count - 1, 1))
 
             let yearText = "\(item.year)" as NSString
@@ -1112,7 +1148,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
             height: rect.height
         )
         let visibleValues = series.flatMap { item in
-            Array(item.weeklyDurationSeconds.prefix(item.visibleWeekCount))
+            Array(item.weeklyDistanceMeters.prefix(item.visibleWeekCount))
         }
         return CurveLayout(
             chartRect: chartRect,
@@ -1295,14 +1331,35 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
     }
 }
 
-private final class CareerMonthCalendarCell: UICollectionViewCell {
+private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     static let reuseIdentifier = "CareerMonthCalendarCell"
 
-    private static let calendarScale: CGFloat = 0.84
-    private let calendarWrapperView = UIView()
-    private let calendarView = UICalendarView()
+    private struct DayItem {
+        let date: Date
+        let day: Int
+        let isCurrentMonth: Bool
+        let symbolNames: [String]
+        let workouts: [TrackedWorkout]
+    }
+
+    var onSelectDayWorkouts: ((Date, [TrackedWorkout]) -> Void)?
+
+    private let pageContainerView = UIView()
+    private var pageContentView: UIView?
+    private var interactiveTargetContentView: UIView?
+    private var interactiveTargetMonthDate: Date?
+    private var interactiveTargetOffset: Int?
     private var activitySymbolsByDateKey: [String: [String]] = [:]
-    private var decoratedDateComponents: [DateComponents] = []
+    private var activityWorkoutsByDateKey: [String: [TrackedWorkout]] = [:]
+    private var displayedMonthDate = Date()
+    private var calendar = Calendar.current
+    private var hasConfiguredMonth = false
+    private lazy var monthPanGestureRecognizer: UIPanGestureRecognizer = {
+        let gestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleMonthPan(_:)))
+        gestureRecognizer.cancelsTouchesInView = false
+        gestureRecognizer.delegate = self
+        return gestureRecognizer
+    }()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1314,20 +1371,29 @@ private final class CareerMonthCalendarCell: UICollectionViewCell {
         configureViews()
     }
 
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onSelectDayWorkouts = nil
+    }
+
     func configure(days: [SportsCareerStatistics.MonthActivityDay], monthDate: Date) {
+        calendar = Calendar.current
+        calendar.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        calendar.firstWeekday = 1
+
         activitySymbolsByDateKey = Dictionary(uniqueKeysWithValues: days.map { day in
             (Self.dateKey(for: day.date), day.symbolNames)
         })
-        decoratedDateComponents = days.map { day in
-            Calendar.current.dateComponents([.year, .month, .day], from: day.date)
+        activityWorkoutsByDateKey = Dictionary(uniqueKeysWithValues: days.map { day in
+            (Self.dateKey(for: day.date), day.workouts)
+        })
+
+        if !hasConfiguredMonth {
+            displayedMonthDate = Self.startOfMonth(for: monthDate, calendar: calendar)
+            hasConfiguredMonth = true
         }
 
-        var visibleDateComponents = Calendar.current.dateComponents([.year, .month], from: monthDate)
-        visibleDateComponents.day = 1
-        calendarView.calendar = .current
-        calendarView.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
-        calendarView.visibleDateComponents = visibleDateComponents
-        calendarView.reloadDecorations(forDateComponents: decoratedDateComponents, animated: false)
+        reloadMonth()
     }
 
     private func configureViews() {
@@ -1335,30 +1401,318 @@ private final class CareerMonthCalendarCell: UICollectionViewCell {
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
-        calendarWrapperView.clipsToBounds = true
+        pageContainerView.clipsToBounds = true
 
-        calendarView.backgroundColor = .clear
-        calendarView.tintColor = AppColors.movinnGreen
-        calendarView.delegate = self
-        calendarView.selectionBehavior = nil
-        calendarView.transform = CGAffineTransform(
-            scaleX: Self.calendarScale,
-            y: Self.calendarScale
+        contentView.addSubview(pageContainerView)
+        contentView.addGestureRecognizer(monthPanGestureRecognizer)
+
+        pageContainerView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    private func makeMonthPageView(for monthDate: Date) -> UIView {
+        let pageView = UIView()
+        let monthLabel = UILabel()
+        let weekdayStackView = makeWeekdayStackView()
+        let gridStackView = makeDayGridStackView(for: monthDate)
+
+        monthLabel.text = monthTitle(for: monthDate)
+        monthLabel.textColor = .black
+        monthLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        monthLabel.adjustsFontSizeToFitWidth = true
+        monthLabel.minimumScaleFactor = 0.7
+
+        pageView.addSubview(monthLabel)
+        pageView.addSubview(weekdayStackView)
+        pageView.addSubview(gridStackView)
+
+        monthLabel.snp.makeConstraints { make in
+            make.top.equalToSuperview().offset(14)
+            make.leading.equalToSuperview().offset(16)
+            make.trailing.equalToSuperview().inset(16)
+            make.height.equalTo(24)
+        }
+
+        weekdayStackView.snp.makeConstraints { make in
+            make.top.equalTo(monthLabel.snp.bottom).offset(10)
+            make.leading.trailing.equalToSuperview().inset(16)
+            make.height.equalTo(18)
+        }
+
+        gridStackView.snp.makeConstraints { make in
+            make.top.equalTo(weekdayStackView.snp.bottom).offset(6)
+            make.leading.trailing.equalToSuperview().inset(16)
+            make.bottom.equalToSuperview().inset(12)
+        }
+
+        return pageView
+    }
+
+    private func makeWeekdayStackView() -> UIStackView {
+        let weekdayStackView = UIStackView()
+        weekdayStackView.axis = .horizontal
+        weekdayStackView.distribution = .fillEqually
+        weekdayStackView.alignment = .fill
+        weekdayStackView.spacing = 4
+
+        let weekdaySymbols = reorderedWeekdaySymbols()
+        for text in weekdaySymbols {
+            let label = UILabel()
+            label.text = text
+            label.textColor = UIColor.black.withAlphaComponent(0.42)
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
+            label.textAlignment = .center
+            weekdayStackView.addArrangedSubview(label)
+        }
+
+        return weekdayStackView
+    }
+
+    private func makeDayGridStackView(for monthDate: Date) -> UIStackView {
+        let gridStackView = UIStackView()
+        gridStackView.axis = .vertical
+        gridStackView.distribution = .fillEqually
+        gridStackView.alignment = .fill
+        gridStackView.spacing = 2
+
+        let items = makeDayItems(for: monthDate)
+        var itemIndex = 0
+
+        for _ in 0..<6 {
+            let rowStackView = UIStackView()
+            rowStackView.axis = .horizontal
+            rowStackView.distribution = .fillEqually
+            rowStackView.alignment = .fill
+            rowStackView.spacing = 4
+            gridStackView.addArrangedSubview(rowStackView)
+
+            for _ in 0..<7 {
+                let dayView = CareerCalendarDayView()
+                if items.indices.contains(itemIndex) {
+                    configure(dayView, with: items[itemIndex])
+                }
+                itemIndex += 1
+                rowStackView.addArrangedSubview(dayView)
+            }
+        }
+
+        return gridStackView
+    }
+
+    private func reloadMonth() {
+        let pageView = makeMonthPageView(for: displayedMonthDate)
+        installPageView(pageView)
+    }
+
+    private func installPageView(_ pageView: UIView) {
+        pageContentView?.removeFromSuperview()
+        pageContentView = pageView
+        pageContainerView.addSubview(pageView)
+        pageView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    private func configure(_ dayView: CareerCalendarDayView, with item: DayItem) {
+        let startOfToday = calendar.startOfDay(for: Date())
+        dayView.configure(
+            day: item.day,
+            isCurrentMonth: item.isCurrentMonth,
+            isToday: calendar.isDateInToday(item.date),
+            isPast: item.date < startOfToday,
+            symbolNames: item.symbolNames
         )
-        calendarView.layer.allowsEdgeAntialiasing = true
+        dayView.onTap = { [weak self] in
+            guard !item.workouts.isEmpty else {
+                return
+            }
 
-        contentView.addSubview(calendarWrapperView)
-        calendarWrapperView.addSubview(calendarView)
+            self?.onSelectDayWorkouts?(item.date, item.workouts)
+        }
+    }
 
-        calendarWrapperView.snp.makeConstraints { make in
-            make.edges.equalToSuperview().inset(4)
+    private func makeDayItems(for monthDate: Date) -> [DayItem] {
+        let monthStartDate = Self.startOfMonth(for: monthDate, calendar: calendar)
+        let dayRange = calendar.range(of: .day, in: .month, for: monthStartDate) ?? 1..<1
+        let weekday = calendar.component(.weekday, from: monthStartDate)
+        let leadingEmptyCount = (weekday - calendar.firstWeekday + 7) % 7
+        let dayCount = dayRange.count
+
+        return (0..<42).map { index in
+            let dayOffset = index - leadingEmptyCount
+            let date = calendar.date(byAdding: .day, value: dayOffset, to: monthStartDate) ?? monthStartDate
+            let isCurrentMonth = dayOffset >= 0 && dayOffset < dayCount
+
+            let symbolNames = activitySymbolsByDateKey[Self.dateKey(for: date)] ?? []
+            let workouts = activityWorkoutsByDateKey[Self.dateKey(for: date)] ?? []
+            return DayItem(
+                date: date,
+                day: calendar.component(.day, from: date),
+                isCurrentMonth: isCurrentMonth,
+                symbolNames: symbolNames,
+                workouts: workouts
+            )
+        }
+    }
+
+    private func reorderedWeekdaySymbols() -> [String] {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        formatter.calendar = calendar
+        let symbols = formatter.shortWeekdaySymbols ?? []
+        guard symbols.count == 7 else {
+            return ["日", "一", "二", "三", "四", "五", "六"]
         }
 
-        calendarView.snp.makeConstraints { make in
-            make.center.equalToSuperview()
-            make.width.equalTo(calendarWrapperView.snp.width).multipliedBy(1 / Self.calendarScale)
-            make.height.equalTo(calendarWrapperView.snp.height).multipliedBy(1 / Self.calendarScale)
+        let firstIndex = max(calendar.firstWeekday - 1, 0)
+        return Array(symbols[firstIndex...]) + Array(symbols[..<firstIndex])
+    }
+
+    private func monthTitle(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        formatter.calendar = calendar
+        formatter.setLocalizedDateFormatFromTemplate("yyyyMMMM")
+        return formatter.string(from: date)
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === monthPanGestureRecognizer else {
+            return true
         }
+
+        let velocity = monthPanGestureRecognizer.velocity(in: contentView)
+        return abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func handleMonthPan(_ gestureRecognizer: UIPanGestureRecognizer) {
+        switch gestureRecognizer.state {
+        case .began:
+            pageContainerView.layoutIfNeeded()
+        case .changed:
+            updateInteractiveMonthTransition(translationX: gestureRecognizer.translation(in: contentView).x)
+        case .ended:
+            finishInteractiveMonthTransition(
+                translationX: gestureRecognizer.translation(in: contentView).x,
+                velocityX: gestureRecognizer.velocity(in: contentView).x
+            )
+        case .cancelled, .failed:
+            cancelInteractiveMonthTransition()
+        default:
+            break
+        }
+    }
+
+    private func updateInteractiveMonthTransition(translationX: CGFloat) {
+        let width = max(pageContainerView.bounds.width, 1)
+        guard abs(translationX) > 1 else {
+            pageContentView?.transform = .identity
+            interactiveTargetContentView?.transform = .identity
+            return
+        }
+
+        let offset = translationX < 0 ? 1 : -1
+        prepareInteractiveMonthTransitionIfNeeded(offset: offset)
+
+        let clampedTranslationX = min(max(translationX, -width), width)
+        pageContentView?.transform = CGAffineTransform(translationX: clampedTranslationX, y: 0)
+        let incomingStartX = offset > 0 ? width : -width
+        interactiveTargetContentView?.transform = CGAffineTransform(
+            translationX: incomingStartX + clampedTranslationX,
+            y: 0
+        )
+    }
+
+    private func prepareInteractiveMonthTransitionIfNeeded(offset: Int) {
+        guard interactiveTargetOffset != offset else {
+            return
+        }
+
+        interactiveTargetContentView?.removeFromSuperview()
+        interactiveTargetContentView = nil
+        interactiveTargetMonthDate = nil
+        interactiveTargetOffset = nil
+
+        guard let date = calendar.date(byAdding: .month, value: offset, to: displayedMonthDate) else {
+            return
+        }
+
+        let targetMonthDate = Self.startOfMonth(for: date, calendar: calendar)
+        let targetContentView = makeMonthPageView(for: targetMonthDate)
+        pageContainerView.addSubview(targetContentView)
+        targetContentView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        pageContainerView.layoutIfNeeded()
+
+        let width = max(pageContainerView.bounds.width, 1)
+        targetContentView.transform = CGAffineTransform(translationX: offset > 0 ? width : -width, y: 0)
+        interactiveTargetContentView = targetContentView
+        interactiveTargetMonthDate = targetMonthDate
+        interactiveTargetOffset = offset
+    }
+
+    private func finishInteractiveMonthTransition(translationX: CGFloat, velocityX: CGFloat) {
+        guard let targetContentView = interactiveTargetContentView,
+              let targetMonthDate = interactiveTargetMonthDate,
+              let targetOffset = interactiveTargetOffset else {
+            return
+        }
+
+        let width = max(pageContainerView.bounds.width, 1)
+        let progress = min(abs(translationX) / width, 1)
+        let shouldFinish = progress > 0.32 || abs(velocityX) > 520
+
+        if shouldFinish {
+            let outgoingX = targetOffset > 0 ? -width : width
+            UIView.animate(
+                withDuration: 0.24,
+                delay: 0,
+                options: [.curveEaseOut, .allowUserInteraction]
+            ) {
+                self.pageContentView?.transform = CGAffineTransform(translationX: outgoingX, y: 0)
+                targetContentView.transform = .identity
+            } completion: { _ in
+                self.displayedMonthDate = targetMonthDate
+                self.pageContentView?.removeFromSuperview()
+                self.pageContentView = targetContentView
+                self.clearInteractiveMonthTransition(keepingTarget: true)
+            }
+        } else {
+            cancelInteractiveMonthTransition()
+        }
+    }
+
+    private func cancelInteractiveMonthTransition() {
+        guard let targetContentView = interactiveTargetContentView,
+              let targetOffset = interactiveTargetOffset else {
+            pageContentView?.transform = .identity
+            return
+        }
+
+        let width = max(pageContainerView.bounds.width, 1)
+        let targetX = targetOffset > 0 ? width : -width
+        UIView.animate(
+            withDuration: 0.2,
+            delay: 0,
+            options: [.curveEaseOut, .allowUserInteraction]
+        ) {
+            self.pageContentView?.transform = .identity
+            targetContentView.transform = CGAffineTransform(translationX: targetX, y: 0)
+        } completion: { _ in
+            self.clearInteractiveMonthTransition(keepingTarget: false)
+        }
+    }
+
+    private func clearInteractiveMonthTransition(keepingTarget: Bool) {
+        pageContentView?.transform = .identity
+        if !keepingTarget {
+            interactiveTargetContentView?.removeFromSuperview()
+        }
+        interactiveTargetContentView = nil
+        interactiveTargetMonthDate = nil
+        interactiveTargetOffset = nil
     }
 
     private static func dateKey(for date: Date) -> String {
@@ -1373,105 +1727,124 @@ private final class CareerMonthCalendarCell: UICollectionViewCell {
         }
         return "\(year)-\(month)-\(day)"
     }
-}
 
-extension CareerMonthCalendarCell: UICalendarViewDelegate {
-    func calendarView(
-        _ calendarView: UICalendarView,
-        decorationFor dateComponents: DateComponents
-    ) -> UICalendarView.Decoration? {
-        let key = Self.dateKey(for: dateComponents)
-        guard let symbolNames = activitySymbolsByDateKey[key],
-              !symbolNames.isEmpty else {
-            return nil
-        }
-
-        return .customView {
-            CareerCalendarDecorationView(symbolNames: symbolNames)
-        }
+    private static func startOfMonth(for date: Date, calendar: Calendar) -> Date {
+        let components = calendar.dateComponents([.year, .month], from: date)
+        return calendar.date(from: components) ?? date
     }
 }
 
-private final class CareerCalendarDecorationView: UIView {
-    private var iconViews: [UIImageView] = []
+private final class CareerCalendarDayView: UIView {
+    private let circleView = UIView()
+    private let dayLabel = UILabel()
+    private let iconStackView = UIStackView()
+    var onTap: (() -> Void)?
+    private lazy var tapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap))
 
-    init(symbolNames: [String]) {
-        super.init(frame: .zero)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
         configureViews()
-        configure(symbolNames: symbolNames)
     }
 
     required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+        super.init(coder: coder)
+        configureViews()
     }
 
-    override var intrinsicContentSize: CGSize {
-        CGSize(width: 42, height: 18)
-    }
+    func configure(
+        day: Int,
+        isCurrentMonth: Bool,
+        isToday: Bool,
+        isPast: Bool,
+        symbolNames: [String]
+    ) {
+        let hasWorkout = !symbolNames.isEmpty
+        isUserInteractionEnabled = hasWorkout
+        dayLabel.text = "\(day)"
+        dayLabel.isHidden = hasWorkout
+        iconStackView.isHidden = !hasWorkout
 
-    private func configure(symbolNames: [String]) {
-        let limitedSymbolNames = Array(symbolNames.prefix(4))
-        let pointSize: CGFloat = limitedSymbolNames.count == 1 ? 12 : 9
-
-        iconViews = limitedSymbolNames.map { symbolName in
-            let configuration = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
-            let imageView = UIImageView(
-                image: UIImage(
-                    systemName: symbolName,
-                    withConfiguration: configuration
-                ) ?? UIImage(systemName: "figure.walk", withConfiguration: configuration)
-            )
-            imageView.tintColor = .black
-            imageView.contentMode = .scaleAspectFit
-            addSubview(imageView)
-            return imageView
+        if isToday {
+            dayLabel.textColor = AppColors.movinnGreen
+        } else if !isCurrentMonth {
+            dayLabel.textColor = UIColor.black.withAlphaComponent(0.24)
+        } else if isPast {
+            dayLabel.textColor = UIColor.black.withAlphaComponent(0.48)
+        } else {
+            dayLabel.textColor = .black
         }
 
-        setNeedsLayout()
+        circleView.layer.borderColor = isToday ? AppColors.movinnGreen.cgColor : UIColor.clear.cgColor
+        configureIcons(
+            symbolNames: symbolNames,
+            tintColor: isToday ? AppColors.movinnGreen : .black
+        )
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let iconArea = bounds.insetBy(dx: 4, dy: 3)
-        let count = iconViews.count
+    @objc private func handleTap() {
+        onTap?()
+    }
 
-        for (index, imageView) in iconViews.enumerated() {
-            switch count {
-            case 1:
-                let side = min(iconArea.width, iconArea.height)
-                imageView.frame = CGRect(
-                    x: iconArea.midX - side / 2,
-                    y: iconArea.midY - side / 2,
-                    width: side,
-                    height: side
-                )
-            case 2:
-                let width = iconArea.width / 2
-                imageView.frame = CGRect(
-                    x: iconArea.minX + CGFloat(index) * width,
-                    y: iconArea.minY,
-                    width: width,
-                    height: iconArea.height
-                )
-            default:
-                let width = iconArea.width / 2
-                let height = iconArea.height / 2
-                imageView.frame = CGRect(
-                    x: iconArea.minX + CGFloat(index % 2) * width,
-                    y: iconArea.minY + CGFloat(index / 2) * height,
-                    width: width,
-                    height: height
-                )
-            }
+    private func configureIcons(symbolNames: [String], tintColor: UIColor) {
+        iconStackView.arrangedSubviews.forEach { view in
+            iconStackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        let limitedSymbolNames = Array(symbolNames.prefix(4))
+        let pointSize: CGFloat = limitedSymbolNames.count == 1 ? 15 : 12
+
+        for symbolName in limitedSymbolNames {
+            let configuration = UIImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
+            let imageView = UIImageView(
+                image: UIImage(systemName: symbolName, withConfiguration: configuration)
+                    ?? UIImage(systemName: "figure.walk", withConfiguration: configuration)
+            )
+            imageView.tintColor = tintColor
+            imageView.contentMode = .scaleAspectFit
+            iconStackView.addArrangedSubview(imageView)
         }
     }
 
     private func configureViews() {
-        backgroundColor = UIColor.white.withAlphaComponent(0.9)
-        layer.cornerRadius = 6
-        layer.borderColor = UIColor.black.withAlphaComponent(0.06).cgColor
-        layer.borderWidth = 0.5
-        layer.masksToBounds = true
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+
+        circleView.backgroundColor = .clear
+        circleView.layer.borderWidth = 1.5
+        circleView.layer.borderColor = UIColor.clear.cgColor
+
+        dayLabel.textColor = .black
+        dayLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        dayLabel.textAlignment = .center
+
+        iconStackView.axis = .horizontal
+        iconStackView.alignment = .fill
+        iconStackView.distribution = .fillEqually
+        iconStackView.spacing = 0
+
+        addSubview(circleView)
+        circleView.addSubview(dayLabel)
+        circleView.addSubview(iconStackView)
+        addGestureRecognizer(tapGestureRecognizer)
+
+        circleView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.size.equalTo(CGSize(width: 32, height: 32))
+        }
+
+        dayLabel.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        iconStackView.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(4)
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        circleView.layer.cornerRadius = min(circleView.bounds.width, circleView.bounds.height) / 2
     }
 }
 

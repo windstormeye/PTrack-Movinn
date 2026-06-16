@@ -30,7 +30,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private var visibleRoutes: [HeatmapRoute] = []
     private var loadGeneration = 0
     private var hasFittedRoutes = false
-    private var selectedFilter: HeatmapFilter = .all
+    private var selectedFilters = HeatmapFilterStore.shared.selectedFilters()
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.heatmapStyle()
     var routesOverlayRenderer: HeatmapRoutesOverlayRenderer?
     private var renderedRoutesByID: [String: HeatmapRenderedRoute] = [:]
@@ -191,9 +191,11 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         let filterActions = HeatmapFilter.allCases.map { filter in
             UIAction(
                 title: filter.title,
-                state: filter == selectedFilter ? .on : .off
+                image: filter.image,
+                attributes: [.keepsMenuPresented],
+                state: selectedFilters.contains(filter) ? .on : .off
             ) { [weak self] _ in
-                self?.applyFilter(filter, resetCamera: true)
+                self?.toggleFilter(filter)
             }
         }
 
@@ -229,7 +231,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
         if let cachedRoutes = Self.routeCache.object(forKey: cacheKey)?.routes {
             preparedRoutes = cachedRoutes
-            applyFilter(selectedFilter, resetCamera: true)
+            applySelectedFilters(resetCamera: true)
             return
         }
 
@@ -257,7 +259,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
                 Self.routeCache.setObject(HeatmapRouteCacheBox(routes: routes), forKey: cacheKey)
                 self.preparedRoutes = routes
-                self.applyFilter(self.selectedFilter, resetCamera: true)
+                self.applySelectedFilters(resetCamera: true)
             }
         }
     }
@@ -275,6 +277,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         for workout in workouts {
             hasher.combine(workout.id)
             hasher.combine(workout.coordinates.count)
+            hasher.combine(workout.sportKind.rawValue)
         }
 
         return "\(workouts.count)-\(hasher.finalize())" as NSString
@@ -288,12 +291,24 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         fitMap(to: visibleRoutes, animated: false)
     }
 
-    private func applyFilter(_ filter: HeatmapFilter, resetCamera: Bool) {
-        selectedFilter = filter
+    private func toggleFilter(_ filter: HeatmapFilter) {
+        if selectedFilters.contains(filter) {
+            selectedFilters.remove(filter)
+        } else {
+            selectedFilters.insert(filter)
+        }
+
+        HeatmapFilterStore.shared.setSelectedFilters(selectedFilters)
+        applySelectedFilters(resetCamera: true)
+    }
+
+    private func applySelectedFilters(resetCamera: Bool) {
         navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
 
         visibleRoutes = preparedRoutes.filter { route in
-            filter.includes(route.activityType)
+            selectedFilters.contains { filter in
+                filter.includes(route.sportKind)
+            }
         }
         clearRouteOverlays()
 
@@ -602,7 +617,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             id: workout.id,
             coordinates: displayCoordinates,
             boundingMapRect: boundingMapRect,
-            activityType: workout.activityType
+            sportKind: workout.sportKind
         )
     }
 

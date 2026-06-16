@@ -10,6 +10,64 @@ import Foundation
 import HealthKit
 import UIKit
 
+enum TrackedWorkoutSportKind: String, CaseIterable, Codable, Hashable {
+    case cycling
+    case hiking
+    case outdoorSwimming
+    case outdoorWorkout
+    case running
+    case trailRunning
+    case virtualCycling
+    case virtualRunning
+    case walking
+
+    var title: String {
+        switch self {
+        case .cycling:
+            return AppLocalization.text(.cycling)
+        case .hiking:
+            return AppLocalization.text(.hiking)
+        case .outdoorSwimming:
+            return AppLocalization.text(.outdoorSwimming)
+        case .outdoorWorkout:
+            return AppLocalization.text(.outdoorWorkout)
+        case .running:
+            return AppLocalization.text(.running)
+        case .trailRunning:
+            return AppLocalization.text(.trailRunning)
+        case .virtualCycling:
+            return AppLocalization.text(.virtualCycling)
+        case .virtualRunning:
+            return AppLocalization.text(.virtualRunning)
+        case .walking:
+            return AppLocalization.text(.walking)
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .cycling:
+            return "figure.outdoor.cycle"
+        case .hiking:
+            return "figure.hiking"
+        case .outdoorSwimming:
+            return "figure.open.water.swim"
+        case .outdoorWorkout:
+            return "figure.walk"
+        case .running:
+            return "figure.run"
+        case .trailRunning:
+            return "figure.walk.motion"
+        case .virtualCycling:
+            return "figure.indoor.cycle"
+        case .virtualRunning:
+            return "figure.run"
+        case .walking:
+            return "figure.walk"
+        }
+    }
+}
+
 struct TrackedWorkout: Codable {
     nonisolated static let currentHealthDataVersion = 2
 
@@ -109,82 +167,48 @@ struct TrackedWorkout: Codable {
         return AppLocalization.text(.appleHealth)
     }
 
-    var title: String {
+    var sportKind: TrackedWorkoutSportKind {
         switch stravaSportType {
         case "Run":
-            return AppLocalization.text(.running)
+            return .running
         case "TrailRun":
-            return AppLocalization.text(.trailRunning)
+            return .trailRunning
         case "Walk":
-            return AppLocalization.text(.walking)
+            return .walking
         case "Hike":
-            return AppLocalization.text(.hiking)
+            return .hiking
         case "Swim":
-            return AppLocalization.text(.outdoorSwimming)
+            return .outdoorSwimming
         case "VirtualRide":
-            return AppLocalization.text(.virtualCycling)
+            return .virtualCycling
         case "VirtualRun":
-            return AppLocalization.text(.virtualRunning)
+            return .virtualRunning
         default:
             break
         }
 
         switch activityType {
         case .cycling:
-            return AppLocalization.text(.cycling)
+            return .cycling
         case .hiking:
-            return AppLocalization.text(.hiking)
+            return .hiking
         case .walking:
-            return AppLocalization.text(.walking)
+            return .walking
         case .running:
-            return AppLocalization.text(.running)
+            return .running
         case .swimming:
-            return AppLocalization.text(.outdoorSwimming)
+            return .outdoorSwimming
         default:
-            return AppLocalization.text(.outdoorWorkout)
+            return .outdoorWorkout
         }
     }
 
-    var symbolName: String {
-        switch stravaSportType {
-        case "TrailRun":
-            return "figure.walk.motion"
-        case "Hike":
-            return "figure.hiking"
-        case "VirtualRide":
-            return "figure.indoor.cycle"
-        default:
-            break
-        }
+    var title: String {
+        sportKind.title
+    }
 
-        switch activityType {
-        case .cycling:
-            return "figure.outdoor.cycle"
-        case .handCycling:
-            return "figure.hand.cycling"
-        case .hiking:
-            return "figure.hiking"
-        case .walking:
-            return "figure.walk"
-        case .running:
-            return "figure.run"
-        case .swimming:
-            return "figure.open.water.swim"
-        case .paddleSports:
-            return "figure.paddleboarding"
-        case .rowing:
-            return "figure.rower"
-        case .sailing:
-            return "sailboat"
-        case .surfingSports:
-            return "figure.surfing"
-        case .snowSports:
-            return "snowflake"
-        case .skatingSports:
-            return "figure.skating"
-        default:
-            return "figure.walk"
-        }
+    var symbolName: String {
+        sportKind.symbolName
     }
 
     var routeColor: UIColor {

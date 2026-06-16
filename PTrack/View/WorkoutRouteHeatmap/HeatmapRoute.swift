@@ -6,12 +6,11 @@
 //
 
 import CoreLocation
-import HealthKit
 import MapKit
 
 struct HeatmapRoute {
     let id: String
     let coordinates: [CLLocationCoordinate2D]
     let boundingMapRect: MKMapRect
-    let activityType: HKWorkoutActivityType
+    let sportKind: TrackedWorkoutSportKind
 }
