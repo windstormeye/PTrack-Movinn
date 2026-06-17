@@ -22,6 +22,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.rootViewController = navigationController
         window.makeKeyAndVisible()
         self.window = window
+
+        if !connectionOptions.urlContexts.isEmpty {
+            handleURLContexts(connectionOptions.urlContexts)
+        }
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
@@ -45,6 +49,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // App-open data refresh is intentionally limited to cold launch and manual pull refresh.
     }
 
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        handleURLContexts(URLContexts)
+    }
+
     func sceneDidEnterBackground(_ scene: UIScene) {
         // Called as the scene transitions from the foreground to the background.
         // Use this method to save data, release shared resources, and store enough scene-specific state information
@@ -52,4 +60,26 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
 
+}
+
+private extension SceneDelegate {
+    func handleURLContexts(_ urlContexts: Set<UIOpenURLContext>) {
+        let shouldOpenRouteCollection = urlContexts.contains { context in
+            context.url.host == "pj.studio" && context.url.path == "/routes/import"
+        }
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: SharedRouteImportInbox.pendingRoutesDidChangeNotification,
+                object: nil
+            )
+
+            if shouldOpenRouteCollection {
+                NotificationCenter.default.post(
+                    name: SharedRouteImportInbox.openRouteCollectionNotification,
+                    object: nil
+                )
+            }
+        }
+    }
 }

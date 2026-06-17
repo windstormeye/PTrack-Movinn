@@ -49,11 +49,14 @@ enum AppTextKey: String {
     case healthDataReadAuthorized
     case healthDataUnavailable
     case appleHealthDataSourceSubtitle
+    case gpxImportInvalidFile
+    case gpxImportNoRoute
     case hiking
     case mapStyle
     case more
     case movinnLocalDataPrivacyStatement
     case newActivity
+    case newRoute
     case ok
     case navigation
     case openEnd
@@ -72,7 +75,12 @@ enum AppTextKey: String {
     case routeBookExitMessage
     case routeBookLocationPermissionRequiredMessage
     case routeBookLocationPermissionRequiredTitle
+    case routeCollection
+    case routeCollectionEmptyMessage
+    case routeCollectionImportSuccess
+    case routeCollectionImporting
     case routeHeatmap
+    case routeLoading
     case running
     case satellite
     case sportsCareerAnnualData
@@ -192,11 +200,14 @@ enum AppLocalization {
             .healthDataReadAuthorized: "已授权读取数据",
             .healthDataUnavailable: "当前设备不支持健康数据。",
             .appleHealthDataSourceSubtitle: "读取 Apple 健康中记录的数据。",
+            .gpxImportInvalidFile: "无法解析这个 GPX 文件。",
+            .gpxImportNoRoute: "这个 GPX 文件里没有可用轨迹。",
             .hiking: "徒步",
             .mapStyle: "地图样式",
             .more: "更多",
             .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
             .newActivity: "新活动！",
+            .newRoute: "新路线！",
             .ok: "好",
             .navigation: "导航",
             .openEnd: "去终点",
@@ -215,7 +226,12 @@ enum AppLocalization {
             .routeBookExitMessage: "退出后将回到运动列表。",
             .routeBookLocationPermissionRequiredMessage: "请在系统设置中允许 Movinn 使用位置，这样才能在路书模式下显示你的位置。",
             .routeBookLocationPermissionRequiredTitle: "需要位置权限",
+            .routeCollection: "路线收藏",
+            .routeCollectionEmptyMessage: "还没有收藏路线",
+            .routeCollectionImportSuccess: "已导入 GPX 路线",
+            .routeCollectionImporting: "正在导入 GPX",
             .routeHeatmap: "轨迹热图",
+            .routeLoading: "正在加载轨迹",
             .running: "跑步",
             .satellite: "卫星",
             .sportsCareerAnnualData: "全年",
@@ -289,11 +305,14 @@ enum AppLocalization {
             .healthDataReadAuthorized: "データ読み取りは許可されています",
             .healthDataUnavailable: "このデバイスはヘルスケアデータに対応していません。",
             .appleHealthDataSourceSubtitle: "Appleヘルスケアに記録されたデータを読み取ります。",
+            .gpxImportInvalidFile: "この GPX ファイルを解析できません。",
+            .gpxImportNoRoute: "この GPX ファイルに利用できるルートがありません。",
             .hiking: "ハイキング",
             .mapStyle: "地図スタイル",
             .more: "その他",
             .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
             .newActivity: "新規",
+            .newRoute: "新規ルート",
             .ok: "OK",
             .navigation: "ナビゲーション",
             .openEnd: "ゴールへ",
@@ -312,7 +331,12 @@ enum AppLocalization {
             .routeBookExitMessage: "終了するとワークアウト一覧に戻ります。",
             .routeBookLocationPermissionRequiredMessage: "ルートブックモードで現在地を表示するには、システム設定で Movinn の位置情報利用を許可してください。",
             .routeBookLocationPermissionRequiredTitle: "位置情報の許可が必要です",
+            .routeCollection: "ルート保存",
+            .routeCollectionEmptyMessage: "保存したルートはまだありません",
+            .routeCollectionImportSuccess: "GPX ルートを読み込みました",
+            .routeCollectionImporting: "GPX を読み込み中",
             .routeHeatmap: "軌跡ヒートマップ",
+            .routeLoading: "ルートを読み込み中",
             .running: "ランニング",
             .satellite: "衛星",
             .sportsCareerAnnualData: "年間",
@@ -386,11 +410,14 @@ enum AppLocalization {
             .healthDataReadAuthorized: "데이터 읽기 권한이 허용되었습니다",
             .healthDataUnavailable: "이 기기는 건강 데이터를 지원하지 않습니다.",
             .appleHealthDataSourceSubtitle: "Apple 건강에 기록된 데이터를 읽습니다.",
+            .gpxImportInvalidFile: "이 GPX 파일을 해석할 수 없습니다.",
+            .gpxImportNoRoute: "이 GPX 파일에 사용할 수 있는 경로가 없습니다.",
             .hiking: "하이킹",
             .mapStyle: "지도 스타일",
             .more: "더보기",
             .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
             .newActivity: "새 활동!",
+            .newRoute: "새 경로!",
             .ok: "확인",
             .navigation: "내비게이션",
             .openEnd: "도착점으로",
@@ -409,7 +436,12 @@ enum AppLocalization {
             .routeBookExitMessage: "종료하면 운동 목록으로 돌아갑니다.",
             .routeBookLocationPermissionRequiredMessage: "루트북 모드에서 현재 위치를 표시하려면 시스템 설정에서 Movinn의 위치 사용을 허용해 주세요.",
             .routeBookLocationPermissionRequiredTitle: "위치 권한 필요",
+            .routeCollection: "경로 보관함",
+            .routeCollectionEmptyMessage: "아직 저장한 경로가 없습니다",
+            .routeCollectionImportSuccess: "GPX 경로를 가져왔습니다",
+            .routeCollectionImporting: "GPX 가져오는 중",
             .routeHeatmap: "경로 히트맵",
+            .routeLoading: "경로 불러오는 중",
             .running: "달리기",
             .satellite: "위성",
             .sportsCareerAnnualData: "연간",
@@ -483,11 +515,14 @@ enum AppLocalization {
             .healthDataReadAuthorized: "Data read access is authorized",
             .healthDataUnavailable: "Health data is not available on this device.",
             .appleHealthDataSourceSubtitle: "Read data recorded in Apple Health.",
+            .gpxImportInvalidFile: "This GPX file could not be parsed.",
+            .gpxImportNoRoute: "This GPX file does not contain a usable route.",
             .hiking: "Hiking",
             .mapStyle: "Map Style",
             .more: "More",
             .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
             .newActivity: "New!",
+            .newRoute: "New Route!",
             .ok: "OK",
             .navigation: "Navigation",
             .openEnd: "Go to End",
@@ -506,7 +541,12 @@ enum AppLocalization {
             .routeBookExitMessage: "You will return to the workout list.",
             .routeBookLocationPermissionRequiredMessage: "Allow Movinn to use location in system Settings so your position can be shown in Route Book mode.",
             .routeBookLocationPermissionRequiredTitle: "Location Permission Required",
+            .routeCollection: "Route Collection",
+            .routeCollectionEmptyMessage: "No saved routes yet",
+            .routeCollectionImportSuccess: "GPX route imported",
+            .routeCollectionImporting: "Importing GPX",
             .routeHeatmap: "Route Heatmap",
+            .routeLoading: "Loading Route",
             .running: "Running",
             .satellite: "Satellite",
             .sportsCareerAnnualData: "Year",

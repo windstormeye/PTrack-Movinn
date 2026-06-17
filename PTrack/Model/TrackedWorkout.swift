@@ -160,6 +160,10 @@ struct TrackedWorkout: Codable {
     }
 
     var routeDataSourceTitle: String {
+        if isRouteCollectionSource {
+            return AppLocalization.text(.routeCollection)
+        }
+
         if isStravaSource {
             return AppLocalization.text(.strava)
         }
@@ -204,7 +208,11 @@ struct TrackedWorkout: Codable {
     }
 
     var title: String {
-        sportKind.title
+        if let routeCollectionTitle {
+            return routeCollectionTitle
+        }
+
+        return sportKind.title
     }
 
     var symbolName: String {

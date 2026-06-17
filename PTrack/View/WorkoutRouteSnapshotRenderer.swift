@@ -24,13 +24,14 @@ enum WorkoutRouteSnapshotRenderer {
         for workout: TrackedWorkout,
         size: CGSize,
         showsMap: Bool,
+        mapStyle: AppMapDisplayStyle = .appDefault,
         traitCollection: UITraitCollection,
         completion: @escaping (UIImage?) -> Void
     ) {
         let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
         let cacheSizeKey = "\(Int(size.width * scale))x\(Int(size.height * scale))"
-        let cacheKey = "\(workout.id)-gcj\(CoordinateTransformer.version)-\(cacheSizeKey)-\(showsMap)-\(traitCollection.userInterfaceStyle.rawValue)" as NSString
-        let userInterfaceStyle = traitCollection.userInterfaceStyle
+        let userInterfaceStyle = effectiveUserInterfaceStyle(for: mapStyle)
+        let cacheKey = "\(workout.id)-gcj\(CoordinateTransformer.version)-\(cacheSizeKey)-\(showsMap)-\(mapStyle.rawValue)-\(userInterfaceStyle.rawValue)" as NSString
 
         if let image = imageCache.object(forKey: cacheKey) {
             completion(image)
@@ -41,6 +42,7 @@ enum WorkoutRouteSnapshotRenderer {
             for: workout,
             size: size,
             showsMap: showsMap,
+            mapStyle: mapStyle,
             displayScale: scale,
             userInterfaceStyle: userInterfaceStyle
         ) { image in
@@ -56,6 +58,7 @@ enum WorkoutRouteSnapshotRenderer {
         for workout: TrackedWorkout,
         size: CGSize,
         showsMap: Bool,
+        mapStyle: AppMapDisplayStyle,
         displayScale: CGFloat,
         userInterfaceStyle: UIUserInterfaceStyle,
         completion: @escaping (UIImage?) -> Void
@@ -77,8 +80,7 @@ enum WorkoutRouteSnapshotRenderer {
         options.size = size
         options.scale = displayScale
         options.traitCollection = UITraitCollection(userInterfaceStyle: userInterfaceStyle)
-        options.mapType = .standard
-        options.pointOfInterestFilter = .excludingAll
+        AppMapStyle.apply(mapStyle, to: options)
         options.mapRect = paddedMapRect(for: coordinates, aspectRatio: Double(size.width / size.height), paddingRatio: mapPaddingRatio)
 
         MKMapSnapshotter(options: options).start(with: DispatchQueue.global(qos: .userInitiated)) { snapshot, error in
@@ -88,8 +90,17 @@ enum WorkoutRouteSnapshotRenderer {
                 return
             }
 
-            let image = drawRoute(coordinates, color: workout.routeColor, on: snapshot)
+            let image = drawRoute(coordinates, color: workout.routeColor, mapStyle: mapStyle, on: snapshot)
             completion(image)
+        }
+    }
+
+    private static func effectiveUserInterfaceStyle(for mapStyle: AppMapDisplayStyle) -> UIUserInterfaceStyle {
+        switch mapStyle {
+        case .appDefault, .standard, .satellite:
+            return .light
+        case .dark:
+            return .dark
         }
     }
 
@@ -132,6 +143,7 @@ enum WorkoutRouteSnapshotRenderer {
     private static func drawRoute(
         _ coordinates: [CLLocationCoordinate2D],
         color: UIColor,
+        mapStyle: AppMapDisplayStyle,
         on snapshot: MKMapSnapshotter.Snapshot
     ) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
@@ -141,6 +153,10 @@ enum WorkoutRouteSnapshotRenderer {
 
         return renderer.image { context in
             snapshot.image.draw(at: .zero)
+            if mapStyle == .appDefault {
+                AppMapStyle.appDefaultToneOverlayColor.setFill()
+                context.fill(CGRect(origin: .zero, size: snapshot.image.size))
+            }
 
             let path = UIBezierPath()
             for (index, coordinate) in coordinates.enumerated() {

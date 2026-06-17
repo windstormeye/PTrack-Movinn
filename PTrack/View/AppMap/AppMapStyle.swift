@@ -9,6 +9,8 @@ import MapKit
 import UIKit
 
 enum AppMapStyle {
+    static let appDefaultToneOverlayColor = UIColor(red: 246 / 255, green: 249 / 255, blue: 248 / 255, alpha: 0.44)
+
     static func apply(_ style: AppMapDisplayStyle = .appDefault, to mapView: MKMapView) {
         mapView.backgroundColor = .systemBackground
 
@@ -30,6 +32,21 @@ enum AppMapStyle {
             mapView.pointOfInterestFilter = .excludingAll
         case .standard, .satellite, .dark:
             mapView.pointOfInterestFilter = .includingAll
+        }
+    }
+
+    static func apply(_ style: AppMapDisplayStyle = .appDefault, to options: MKMapSnapshotter.Options) {
+        if #available(iOS 17.0, *) {
+            options.preferredConfiguration = configuration(for: style)
+        } else {
+            options.mapType = mapType(for: style)
+        }
+
+        switch style {
+        case .appDefault:
+            options.pointOfInterestFilter = .excludingAll
+        case .standard, .satellite, .dark:
+            options.pointOfInterestFilter = .includingAll
         }
     }
 

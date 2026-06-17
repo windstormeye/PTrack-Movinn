@@ -36,7 +36,7 @@ class ViewController: UIViewController {
     private var isHealthAuthorizationRequestedFromEmptyState = false
     private var isPullRefreshArmedInCurrentDrag = false
     private var collectionView: UICollectionView!
-    private let gridLayout = WorkoutGridLayout()
+    private let routeGridView = WorkoutRouteGridView()
     private let routeBookMapContainerView = AppMapContainerView()
     private var routeBookMapView: MKMapView { routeBookMapContainerView.mapView }
     private let routeBookMapToneOverlay = AppMapStyle.makeToneOverlay()
@@ -44,8 +44,9 @@ class ViewController: UIViewController {
     private lazy var routeBookScaleView: MKScaleView = {
         let scaleView = MKScaleView(mapView: routeBookMapView)
         scaleView.legendAlignment = .leading
-        scaleView.scaleVisibility = .visible
+        scaleView.scaleVisibility = .hidden
         scaleView.isHidden = true
+        scaleView.alpha = 0
         return scaleView
     }()
     private let headerView = UIView()
@@ -56,30 +57,20 @@ class ViewController: UIViewController {
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let moreButton = UIButton(type: .system)
+    private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
     private let routeBookLocateButton = UIButton(type: .system)
     private let emptyDataSourceView = HomeDataSourceEmptyView()
-    var columnCount: CGFloat = 3
-    private var pinchStartColumnCount: CGFloat = 3
+    private let columnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
     private let lineSpacing: CGFloat = 2
     private let headerBottomPadding: CGFloat = 8
     private let sectionInset = UIEdgeInsets(top: 12, left: 12, bottom: 16, right: 12)
-    private var pinchAnchorIndexPath: IndexPath?
-    private var pinchAnchorUnitPoint = CGPoint(x: 0.5, y: 0.5)
-    private let pinchResponse: CGFloat = 0.86
-    private let pinchUpdateThreshold: CGFloat = 0.006
     private let pendingWorkoutFlushDelay: TimeInterval = 0.35
     private let activeScrollFlushDelay: TimeInterval = 0.45
     private let cacheSaveDebounceDelay: TimeInterval = 1.0
     private let cacheLoadPreviewBatchSize = 32
     private let stravaIncrementalLookback: TimeInterval = 7 * 24 * 60 * 60
     private let pullRefreshTriggerDistance: CGFloat = 86
-    private var columnSnapDisplayLink: CADisplayLink?
-    private var columnSnapStartTime: CFTimeInterval = 0
-    private var columnSnapStartCount: CGFloat = 3
-    private var columnSnapTargetCount: CGFloat = 3
-    private var columnSnapVisibleAnchorPoint = CGPoint.zero
-    private let columnSnapDuration: CFTimeInterval = 0.28
     private var isRouteBookModeActive = false
     private var routeBookWorkout: TrackedWorkout?
     private var routeBookPolyline: MKPolyline?
@@ -89,7 +80,6 @@ class ViewController: UIViewController {
     private var routeBookHeadingDisplayDegrees: CLLocationDirection?
 
     deinit {
-        columnSnapDisplayLink?.invalidate()
         pendingFlushWorkItem?.cancel()
         pendingCacheSaveWorkItem?.cancel()
         NotificationCenter.default.removeObserver(self)
@@ -106,9 +96,11 @@ class ViewController: UIViewController {
         registerLanguageObserver()
         registerStravaImportObserver()
         registerRouteBookObserver()
+        registerSharedRouteImportObserver()
         store.progressHandler = { message in
             print("PTrack HealthKit: \(message)")
         }
+        importPendingSharedRoutesIfNeeded()
         loadCachedWorkoutsThenSynchronize()
     }
 
@@ -121,6 +113,7 @@ class ViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: animated)
+        applyRouteBookInterfaceState()
         updateFullScreenInsets(force: true)
     }
 
@@ -140,26 +133,56 @@ class ViewController: UIViewController {
     private func configureCollectionView() {
         view.backgroundColor = .systemBackground
 
-        gridLayout.columns = columnCount
-        gridLayout.itemSpacing = itemSpacing
-        gridLayout.lineSpacing = lineSpacing
-        gridLayout.sectionInset = sectionInset
+        routeGridView.configureLayout(
+            columns: columnCount,
+            itemSpacing: itemSpacing,
+            lineSpacing: lineSpacing,
+            sectionInset: sectionInset
+        )
+        routeGridView.numberOfItemsProvider = { [weak self] in
+            self?.workouts.count ?? 0
+        }
+        routeGridView.itemProvider = { [weak self] index in
+            guard let self else {
+                return nil
+            }
 
-        collectionView = UICollectionView(frame: .zero, collectionViewLayout: gridLayout)
-        collectionView.backgroundColor = .systemBackground
-        collectionView.clipsToBounds = false
-        collectionView.layer.masksToBounds = false
-        collectionView.dataSource = self
-        collectionView.delegate = self
-        collectionView.prefetchDataSource = self
-        collectionView.alwaysBounceVertical = true
-        collectionView.contentInsetAdjustmentBehavior = .never
-        collectionView.register(WorkoutRouteCell.self, forCellWithReuseIdentifier: WorkoutRouteCell.reuseIdentifier)
-        collectionView.addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:))))
+            guard index >= 0, index < self.workouts.count else {
+                return nil
+            }
 
-        view.addSubview(collectionView)
+            let workout = self.workouts[index]
+            return WorkoutRouteGridItem.route(
+                workout,
+                showsMap: false,
+                showsNewBadge: self.newWorkoutBadgeStore.contains(workout)
+            )
+        }
+        routeGridView.onSelectRoute = { [weak self] workout, indexPath, cell in
+            self?.showWorkoutDetail(workout, indexPath: indexPath, cell: cell)
+        }
+        routeGridView.onScroll = { [weak self] scrollView in
+            self?.updatePullRefreshTracking(for: scrollView)
+        }
+        routeGridView.onEndDragging = { [weak self] _, decelerate in
+            self?.performPullRefreshIfNeeded()
+            if !decelerate {
+                self?.flushPendingWorkouts()
+            }
+        }
+        routeGridView.onEndDecelerating = { [weak self] _ in
+            self?.finishPullRefreshTracking()
+            self?.flushPendingWorkouts()
+        }
+        routeGridView.onColumnSnapFinished = { [weak self] in
+            self?.flushPendingWorkouts()
+        }
 
-        collectionView.snp.makeConstraints { make in
+        collectionView = routeGridView.collectionView
+
+        view.addSubview(routeGridView)
+
+        routeGridView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
     }
@@ -259,6 +282,8 @@ class ViewController: UIViewController {
         moreButton.configuration = buttonConfiguration
         moreButton.tintColor = .label
         moreButton.addTarget(self, action: #selector(handleHeaderMoreButtonTap), for: .touchUpInside)
+        moreButton.addTarget(self, action: #selector(handleHeaderMoreMenuTriggered), for: .menuActionTriggered)
+        configureRouteCollectionBadgeLabel()
         updateHeaderMoreButtonMode()
 
         view.addSubview(headerView)
@@ -268,6 +293,7 @@ class ViewController: UIViewController {
         headerView.addSubview(totalDistanceLabel)
         headerView.addSubview(loadingIndicator)
         headerView.addSubview(moreButton)
+        headerView.addSubview(routeCollectionBadgeLabel)
 
         headerView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
@@ -306,8 +332,24 @@ class ViewController: UIViewController {
             make.size.equalTo(36)
         }
 
+        routeCollectionBadgeLabel.snp.makeConstraints { make in
+            make.trailing.equalTo(moreButton.snp.trailing).offset(2)
+            make.bottom.equalTo(moreButton.snp.top).offset(5)
+        }
+
         updateTotalDistanceText()
         configureRouteBookScaleView()
+    }
+
+    private func configureRouteCollectionBadgeLabel() {
+        routeCollectionBadgeLabel.text = AppLocalization.text(.newRoute)
+        routeCollectionBadgeLabel.textColor = UIColor.black.withAlphaComponent(0.86)
+        routeCollectionBadgeLabel.font = .systemFont(ofSize: 8, weight: .bold)
+        routeCollectionBadgeLabel.backgroundColor = AppColors.movinnGreen
+        routeCollectionBadgeLabel.layer.cornerRadius = 5
+        routeCollectionBadgeLabel.layer.masksToBounds = true
+        routeCollectionBadgeLabel.isUserInteractionEnabled = false
+        routeCollectionBadgeLabel.isHidden = true
     }
 
     private func updateHeaderBlurMask() {
@@ -333,6 +375,15 @@ class ViewController: UIViewController {
             self?.showSportsCareer()
         }
 
+        let hasUnseenRoute = SharedRouteImportInbox.hasUnseenRoute
+        let routeCollectionAction = UIAction(
+            title: AppLocalization.text(.routeCollection),
+            image: routeCollectionMenuImage(hasUnseenRoute: hasUnseenRoute)
+        ) { [weak self] _ in
+            self?.showRouteCollection()
+        }
+        routeCollectionAction.subtitle = hasUnseenRoute ? AppLocalization.text(.newRoute) : nil
+
         let heatmapAction = UIAction(
             title: AppLocalization.text(.routeHeatmap),
             image: UIImage(systemName: "map")
@@ -347,7 +398,7 @@ class ViewController: UIViewController {
             self?.showMoreSettings()
         }
 
-        return UIMenu(children: [sportsCareerAction, heatmapAction, moreAction])
+        return UIMenu(children: [sportsCareerAction, routeCollectionAction, heatmapAction, moreAction])
     }
 
     private func updateHeaderMoreButtonMode() {
@@ -364,6 +415,7 @@ class ViewController: UIViewController {
             : NSDirectionalEdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         moreButton.configuration = buttonConfiguration
         moreButton.tintColor = .label
+        updateRouteCollectionBadgeVisibility()
 
         if isRouteBookModeActive {
             moreButton.menu = nil
@@ -371,13 +423,25 @@ class ViewController: UIViewController {
             return
         }
 
-        if hasReadableDataSourceAuthorization {
+        moreButton.menu = makeHeaderMoreMenu()
+        moreButton.showsMenuAsPrimaryAction = true
+    }
+
+    private func updateRouteCollectionBadgeVisibility() {
+        routeCollectionBadgeLabel.text = AppLocalization.text(.newRoute)
+        routeCollectionBadgeLabel.isHidden = isRouteBookModeActive || !SharedRouteImportInbox.hasUnseenRoute
+        if !isRouteBookModeActive {
             moreButton.menu = makeHeaderMoreMenu()
-            moreButton.showsMenuAsPrimaryAction = true
-        } else {
-            moreButton.menu = nil
-            moreButton.showsMenuAsPrimaryAction = false
         }
+    }
+
+    private func routeCollectionMenuImage(hasUnseenRoute: Bool) -> UIImage? {
+        guard hasUnseenRoute else {
+            return UIImage(systemName: "bookmark")
+        }
+
+        return UIImage(systemName: "sparkles")?
+            .withTintColor(AppColors.movinnGreen, renderingMode: .alwaysOriginal)
     }
 
     @objc private func handleHeaderMoreButtonTap() {
@@ -389,8 +453,37 @@ class ViewController: UIViewController {
         guard !hasReadableDataSourceAuthorization else {
             return
         }
+    }
 
-        showMoreSettings()
+    @objc private func handleHeaderMoreMenuTriggered() {
+        guard !isRouteBookModeActive else {
+            return
+        }
+
+        moreButton.menu = makeHeaderMoreMenu()
+        guard SharedRouteImportInbox.hasUnseenRoute else {
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            self?.markRoutePromptSeenWhenMenuDismissed()
+        }
+    }
+
+    private func markRoutePromptSeenWhenMenuDismissed() {
+        guard SharedRouteImportInbox.hasUnseenRoute else {
+            return
+        }
+
+        guard !moreButton.isHeld else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.markRoutePromptSeenWhenMenuDismissed()
+            }
+            return
+        }
+
+        SharedRouteImportInbox.markRoutePromptSeen()
+        updateHeaderMoreButtonMode()
     }
 
     private func configureLoadingIndicator() {
@@ -563,6 +656,63 @@ class ViewController: UIViewController {
             name: RouteBookMode.didSelectWorkoutNotification,
             object: nil
         )
+    }
+
+    private func registerSharedRouteImportObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePendingSharedRoutesDidChange),
+            name: SharedRouteImportInbox.pendingRoutesDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteCollectionOpenRequest),
+            name: SharedRouteImportInbox.openRouteCollectionNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handlePendingSharedRoutesDidChange() {
+        importPendingSharedRoutesIfNeeded()
+        updateHeaderMoreButtonMode()
+    }
+
+    @objc private func handleRouteCollectionOpenRequest() {
+        importPendingSharedRoutesIfNeeded()
+        updateHeaderMoreButtonMode()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.openRouteCollectionFromDeepLink()
+        }
+    }
+
+    private func importPendingSharedRoutesIfNeeded() {
+        let importedRoutes = SharedRouteImportInbox.importPendingRoutes()
+        if !importedRoutes.isEmpty {
+            print("PTrack Route Collection: imported \(importedRoutes.count) shared GPX routes")
+        }
+        updateRouteCollectionBadgeVisibility()
+    }
+
+    private func openRouteCollectionFromDeepLink() {
+        guard let navigationController else {
+            return
+        }
+
+        if navigationController.topViewController is RouteCollectionViewController {
+            return
+        }
+
+        if isRouteBookModeActive {
+            exitRouteBookMode()
+        }
+
+        if navigationController.topViewController !== self {
+            navigationController.popToViewController(self, animated: false)
+        }
+
+        showRouteCollection()
     }
 
     @objc private func handleRouteBookWorkoutDidSelect(_ notification: Notification) {
@@ -997,7 +1147,6 @@ class ViewController: UIViewController {
             || collectionView.isDragging
             || collectionView.isDecelerating
             || !collectionView.isScrollEnabled
-            || columnSnapDisplayLink != nil
     }
 
     private func markCacheDirty(_ workoutID: String) {
@@ -1162,6 +1311,26 @@ class ViewController: UIViewController {
         navigationController?.pushViewController(sportsCareerViewController, animated: true)
     }
 
+    private func showWorkoutDetail(
+        _ workout: TrackedWorkout,
+        indexPath: IndexPath,
+        cell: WorkoutRouteCell?
+    ) {
+        if newWorkoutBadgeStore.markSeen(workout) {
+            cell?.setShowsNewBadge(false)
+        }
+
+        let detailViewController = WorkoutRouteDetailViewController(workout: workout)
+        navigationController?.pushViewController(detailViewController, animated: true)
+    }
+
+    private func showRouteCollection() {
+        SharedRouteImportInbox.markRoutePromptSeen()
+        updateHeaderMoreButtonMode()
+        let routeCollectionViewController = RouteCollectionViewController()
+        navigationController?.pushViewController(routeCollectionViewController, animated: true)
+    }
+
     private func showMoreSettings() {
         let moreSettingsViewController = MoreSettingsViewController()
         moreSettingsViewController.existingStravaActivityIDsProvider = { [weak self] in
@@ -1278,177 +1447,6 @@ class ViewController: UIViewController {
         }
     }
 
-    @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
-        switch recognizer.state {
-        case .began:
-            stopColumnSnap()
-            pinchStartColumnCount = columnCount
-            collectionView.isScrollEnabled = false
-            capturePinchAnchor(at: recognizer.location(in: collectionView))
-        case .changed:
-            let scaledColumns = pinchStartColumnCount / pow(recognizer.scale, pinchResponse)
-            let newColumnCount = min(max(scaledColumns, 2), 6)
-            guard abs(newColumnCount - columnCount) > pinchUpdateThreshold else { return }
-            updateColumnCount(newColumnCount, anchoredAt: recognizer.location(in: collectionView))
-        case .ended, .cancelled, .failed:
-            let snappedColumnCount = min(max(round(columnCount), 2), 6)
-            guard abs(snappedColumnCount - columnCount) > pinchUpdateThreshold else {
-                syncColumnCountWithoutAnchor(snappedColumnCount)
-                finishColumnSnap()
-                return
-            }
-            animateColumnSnap(to: snappedColumnCount, anchoredAt: recognizer.location(in: collectionView))
-        default:
-            break
-        }
-    }
-
-    private func capturePinchAnchor(at location: CGPoint) {
-        collectionView.layoutIfNeeded()
-        guard let indexPath = collectionView.indexPathForItem(at: location) ?? nearestVisibleIndexPath(to: location),
-              let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(at: indexPath) else {
-            pinchAnchorIndexPath = nil
-            pinchAnchorUnitPoint = CGPoint(x: 0.5, y: 0.5)
-            return
-        }
-
-        let frame = attributes.frame
-        pinchAnchorIndexPath = indexPath
-        pinchAnchorUnitPoint = CGPoint(
-            x: min(max((location.x - frame.minX) / frame.width, 0), 1),
-            y: min(max((location.y - frame.minY) / frame.height, 0), 1)
-        )
-    }
-
-    private func nearestVisibleIndexPath(to location: CGPoint) -> IndexPath? {
-        collectionView.indexPathsForVisibleItems.min { lhs, rhs in
-            let lhsDistance = distance(from: location, toCenterOfItemAt: lhs)
-            let rhsDistance = distance(from: location, toCenterOfItemAt: rhs)
-            return lhsDistance < rhsDistance
-        }
-    }
-
-    private func distance(from location: CGPoint, toCenterOfItemAt indexPath: IndexPath) -> CGFloat {
-        guard let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(at: indexPath) else {
-            return .greatestFiniteMagnitude
-        }
-
-        let dx = location.x - attributes.center.x
-        let dy = location.y - attributes.center.y
-        return dx * dx + dy * dy
-    }
-
-    private func updateColumnCount(_ newColumnCount: CGFloat, anchoredAt location: CGPoint) {
-        let visibleAnchorPoint = CGPoint(
-            x: location.x - collectionView.contentOffset.x,
-            y: location.y - collectionView.contentOffset.y
-        )
-        updateColumnCount(newColumnCount, preservingVisibleAnchor: visibleAnchorPoint)
-    }
-
-    private func updateColumnCount(_ newColumnCount: CGFloat, preservingVisibleAnchor visibleAnchorPoint: CGPoint) {
-        columnCount = newColumnCount
-
-        UIView.performWithoutAnimation {
-            self.gridLayout.columns = newColumnCount
-            self.collectionView.layoutIfNeeded()
-            self.restorePinchAnchor(toVisiblePoint: visibleAnchorPoint)
-        }
-    }
-
-    private func animateColumnSnap(to targetColumnCount: CGFloat, anchoredAt location: CGPoint) {
-        let visibleAnchorPoint = CGPoint(
-            x: location.x - collectionView.contentOffset.x,
-            y: location.y - collectionView.contentOffset.y
-        )
-
-        guard abs(targetColumnCount - columnCount) > 0.001 else {
-            syncColumnCountWithoutAnchor(targetColumnCount)
-            finishColumnSnap()
-            return
-        }
-
-        stopColumnSnap()
-        columnSnapStartTime = CACurrentMediaTime()
-        columnSnapStartCount = columnCount
-        columnSnapTargetCount = targetColumnCount
-        columnSnapVisibleAnchorPoint = visibleAnchorPoint
-
-        let displayLink = CADisplayLink(target: self, selector: #selector(handleColumnSnapFrame(_:)))
-        displayLink.add(to: .main, forMode: .common)
-        columnSnapDisplayLink = displayLink
-    }
-
-    private func syncColumnCountWithoutAnchor(_ newColumnCount: CGFloat) {
-        columnCount = newColumnCount
-        UIView.performWithoutAnimation {
-            self.gridLayout.columns = newColumnCount
-            self.collectionView.layoutIfNeeded()
-        }
-    }
-
-    @objc private func handleColumnSnapFrame(_ displayLink: CADisplayLink) {
-        let elapsed = displayLink.timestamp - columnSnapStartTime
-        let progress = min(max(elapsed / columnSnapDuration, 0), 1)
-        let easedProgress = easeOutCubic(CGFloat(progress))
-        let currentColumnCount = columnSnapStartCount + (columnSnapTargetCount - columnSnapStartCount) * easedProgress
-
-        updateColumnCount(currentColumnCount, preservingVisibleAnchor: columnSnapVisibleAnchorPoint)
-
-        if progress >= 1 {
-            updateColumnCount(columnSnapTargetCount, preservingVisibleAnchor: columnSnapVisibleAnchorPoint)
-            finishColumnSnap()
-        }
-    }
-
-    private func finishColumnSnap() {
-        stopColumnSnap()
-        pinchAnchorIndexPath = nil
-        collectionView.isScrollEnabled = true
-        flushPendingWorkouts()
-    }
-
-    private func stopColumnSnap() {
-        columnSnapDisplayLink?.invalidate()
-        columnSnapDisplayLink = nil
-    }
-
-    private func easeOutCubic(_ progress: CGFloat) -> CGFloat {
-        let inverse = 1 - min(max(progress, 0), 1)
-        return 1 - inverse * inverse * inverse
-    }
-
-    private func restorePinchAnchor(toVisiblePoint visiblePoint: CGPoint) {
-        guard let pinchAnchorIndexPath,
-              pinchAnchorIndexPath.item < workouts.count,
-              let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(at: pinchAnchorIndexPath) else {
-            return
-        }
-
-        let frame = attributes.frame
-        let anchorContentPoint = CGPoint(
-            x: frame.minX + frame.width * pinchAnchorUnitPoint.x,
-            y: frame.minY + frame.height * pinchAnchorUnitPoint.y
-        )
-        let proposedOffset = CGPoint(
-            x: anchorContentPoint.x - visiblePoint.x,
-            y: anchorContentPoint.y - visiblePoint.y
-        )
-        collectionView.contentOffset = clampedContentOffset(proposedOffset)
-    }
-
-    private func clampedContentOffset(_ offset: CGPoint) -> CGPoint {
-        let minimumX = -collectionView.contentInset.left
-        let minimumY = -collectionView.contentInset.top
-        let maximumX = max(minimumX, collectionView.contentSize.width - collectionView.bounds.width + collectionView.contentInset.right)
-        let maximumY = max(minimumY, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)
-
-        return CGPoint(
-            x: min(max(offset.x, minimumX), maximumX),
-            y: min(max(offset.y, minimumY), maximumY)
-        )
-    }
-
     private func restorePersistedRouteBookModeIfNeeded() {
         guard !isRouteBookModeActive,
               let activeWorkoutID = RouteBookMode.activeWorkoutID,
@@ -1472,16 +1470,7 @@ class ViewController: UIViewController {
 
         routeBookWorkout = workout
         isRouteBookModeActive = true
-        routeBookMapContainerView.isHidden = false
-        routeBookLocateButton.isHidden = false
-        collectionView.isHidden = true
-        emptyDataSourceView.isHidden = true
-        headerView.backgroundColor = .clear
-        headerBlurView.isHidden = false
-        view.bringSubviewToFront(headerView)
-        routeBookScaleView.isHidden = false
-        view.bringSubviewToFront(routeBookScaleView)
-        view.bringSubviewToFront(routeBookLocateButton)
+        applyRouteBookInterfaceState()
 
         drawRouteBookRoute(coordinates)
         requestRouteBookLocationAuthorizationIfNeeded()
@@ -1689,15 +1678,43 @@ class ViewController: UIViewController {
         routeBookPolyline = nil
 
         routeBookMapContainerView.isHidden = true
-        routeBookScaleView.isHidden = true
-        routeBookLocateButton.isHidden = true
-        collectionView.isHidden = false
-        headerView.backgroundColor = .white
-        headerBlurView.isHidden = true
-        view.bringSubviewToFront(headerView)
+        applyRouteBookInterfaceState()
         updateHeaderReadAuthorizationState()
         updateEmptyDataSourceVisibility()
         updateFullScreenInsets(force: true)
+    }
+
+    private func applyRouteBookInterfaceState() {
+        guard isViewLoaded, collectionView != nil else {
+            return
+        }
+
+        routeBookMapContainerView.isHidden = !isRouteBookModeActive
+        routeBookLocateButton.isHidden = !isRouteBookModeActive
+        setRouteBookScaleViewVisible(isRouteBookModeActive)
+        routeGridView.isHidden = isRouteBookModeActive
+        collectionView.isHidden = isRouteBookModeActive
+        headerView.backgroundColor = isRouteBookModeActive ? .clear : .white
+        headerBlurView.isHidden = !isRouteBookModeActive
+
+        if isRouteBookModeActive {
+            emptyDataSourceView.isHidden = true
+            view.bringSubviewToFront(headerView)
+            view.bringSubviewToFront(routeBookScaleView)
+            view.bringSubviewToFront(routeBookLocateButton)
+        } else {
+            view.bringSubviewToFront(headerView)
+            updateEmptyDataSourceVisibility()
+        }
+
+        updateRouteCollectionBadgeVisibility()
+    }
+
+    private func setRouteBookScaleViewVisible(_ isVisible: Bool) {
+        routeBookScaleView.layer.removeAllAnimations()
+        routeBookScaleView.scaleVisibility = isVisible ? .visible : .hidden
+        routeBookScaleView.isHidden = !isVisible
+        routeBookScaleView.alpha = isVisible ? 1 : 0
     }
 }
 

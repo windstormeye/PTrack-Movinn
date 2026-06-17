@@ -12,6 +12,12 @@ import UIKit
 final class RouteReplayAnnotationView: MKAnnotationView {
     static let reuseIdentifier = "RouteReplayAnnotationView"
 
+    private enum Constants {
+        static let defaultCenterOffset = CGPoint(x: 0, y: -18)
+        static let pinCenterOffset = CGPoint(x: 0, y: -40)
+        static let pinEmoji = "📍"
+    }
+
     private let statusContainerView = UIView()
     private let statusLabel = UILabel()
     private let emojiLabel = UILabel()
@@ -29,12 +35,13 @@ final class RouteReplayAnnotationView: MKAnnotationView {
     func configure(emoji: String, statusText: String, isFacingLeft: Bool) {
         emojiLabel.text = emoji
         statusLabel.text = statusText
-        emojiLabel.transform = isFacingLeft ? .identity : CGAffineTransform(scaleX: -1, y: 1)
+        centerOffset = emoji == Constants.pinEmoji ? Constants.pinCenterOffset : Constants.defaultCenterOffset
+        emojiLabel.transform = emoji == Constants.pinEmoji || isFacingLeft ? .identity : CGAffineTransform(scaleX: -1, y: 1)
     }
 
     private func configureBaseView() {
         bounds = CGRect(x: 0, y: 0, width: 150, height: 80)
-        centerOffset = CGPoint(x: 0, y: -18)
+        centerOffset = Constants.defaultCenterOffset
         collisionMode = .circle
         displayPriority = .required
         zPriority = .max

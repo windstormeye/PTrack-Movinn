@@ -14,7 +14,7 @@ final class AppMapToneTileOverlay: MKTileOverlay {
         format.scale = 1
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format)
         let image = renderer.image { context in
-            UIColor(red: 246 / 255, green: 249 / 255, blue: 248 / 255, alpha: 0.44).setFill()
+            AppMapStyle.appDefaultToneOverlayColor.setFill()
             context.fill(CGRect(x: 0, y: 0, width: 256, height: 256))
         }
 

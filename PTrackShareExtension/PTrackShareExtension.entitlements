@@ -6,7 +6,5 @@
 	<array>
 		<string>group.studio.pj.app.PTrack</string>
 	</array>
-	<key>com.apple.developer.healthkit</key>
-	<true/>
 </dict>
 </plist>

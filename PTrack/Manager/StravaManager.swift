@@ -1074,34 +1074,6 @@ private extension TrackedWorkout {
     }
 }
 
-private extension RouteCoordinate {
-    init(
-        latitude: Double,
-        longitude: Double,
-        timestamp: Date,
-        horizontalAccuracyMeters: Double?,
-        altitudeMeters: Double?,
-        verticalAccuracyMeters: Double?,
-        speedMetersPerSecond: Double?,
-        speedAccuracyMetersPerSecond: Double?,
-        courseDegrees: Double?,
-        courseAccuracyDegrees: Double?,
-        floorLevel: Int?
-    ) {
-        self.latitude = latitude
-        self.longitude = longitude
-        self.timestamp = timestamp
-        self.horizontalAccuracyMeters = horizontalAccuracyMeters
-        self.altitudeMeters = altitudeMeters
-        self.verticalAccuracyMeters = verticalAccuracyMeters
-        self.speedMetersPerSecond = speedMetersPerSecond
-        self.speedAccuracyMetersPerSecond = speedAccuracyMetersPerSecond
-        self.courseDegrees = courseDegrees
-        self.courseAccuracyDegrees = courseAccuracyDegrees
-        self.floorLevel = floorLevel
-    }
-}
-
 private extension TrackedWorkoutSourceRevision {
     init(stravaActivityID: Int64) {
         sourceName = "Strava"

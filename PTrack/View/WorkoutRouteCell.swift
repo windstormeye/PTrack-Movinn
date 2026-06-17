@@ -115,8 +115,8 @@ final class WorkoutRouteCell: UICollectionViewCell {
     }
 
     private func updateBackgroundVisibility(showsMap: Bool) {
-        contentView.backgroundColor = showsMap ? .secondarySystemBackground : .clear
-        imageView.backgroundColor = showsMap ? .tertiarySystemBackground : .clear
+        contentView.backgroundColor = .clear
+        imageView.backgroundColor = .clear
         imageView.isHidden = !showsMap
         pathView.isHidden = showsMap
         backgroundColor = .clear
@@ -126,12 +126,12 @@ final class WorkoutRouteCell: UICollectionViewCell {
         backgroundColor = .clear
         clipsToBounds = false
         layer.masksToBounds = false
-        contentView.backgroundColor = .secondarySystemBackground
+        contentView.backgroundColor = .clear
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
         imageView.contentMode = .scaleAspectFill
-        imageView.backgroundColor = .tertiarySystemBackground
+        imageView.backgroundColor = .clear
         pathView.isHidden = true
 
         newBadgeLabel.translatesAutoresizingMaskIntoConstraints = true

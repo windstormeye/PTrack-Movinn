@@ -21,6 +21,32 @@ struct RouteCoordinate: Codable {
     let courseAccuracyDegrees: Double?
     let floorLevel: Int?
 
+    nonisolated init(
+        latitude: Double,
+        longitude: Double,
+        timestamp: Date,
+        horizontalAccuracyMeters: Double? = nil,
+        altitudeMeters: Double? = nil,
+        verticalAccuracyMeters: Double? = nil,
+        speedMetersPerSecond: Double? = nil,
+        speedAccuracyMetersPerSecond: Double? = nil,
+        courseDegrees: Double? = nil,
+        courseAccuracyDegrees: Double? = nil,
+        floorLevel: Int? = nil
+    ) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.timestamp = timestamp
+        self.horizontalAccuracyMeters = horizontalAccuracyMeters
+        self.altitudeMeters = altitudeMeters
+        self.verticalAccuracyMeters = verticalAccuracyMeters
+        self.speedMetersPerSecond = speedMetersPerSecond
+        self.speedAccuracyMetersPerSecond = speedAccuracyMetersPerSecond
+        self.courseDegrees = courseDegrees
+        self.courseAccuracyDegrees = courseAccuracyDegrees
+        self.floorLevel = floorLevel
+    }
+
     nonisolated init(location: CLLocation) {
         latitude = location.coordinate.latitude
         longitude = location.coordinate.longitude

@@ -11,16 +11,35 @@ import SnapKit
 import UIKit
 
 final class WorkoutRouteDetailViewController: UIViewController {
+    enum PresentationMode {
+        case workout
+        case routeCollection
+    }
+
     private enum PanelDetent: CaseIterable {
         case minimum
         case medium
     }
 
+    private struct PreparedRoute {
+        let coordinates: [CLLocationCoordinate2D]
+        let routeCoordinates: [RouteCoordinate]
+        let replayDistances: [CLLocationDistance]
+        let replayAltitudes: [Double?]
+        let elevationSamples: [RouteElevationSample]
+        let totalDistanceMeters: CLLocationDistance
+    }
+
     let workout: TrackedWorkout
+    private let presentationMode: PresentationMode
     private let mediaStore = RouteMediaStore()
     private let mapContainerView = AppMapContainerView()
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
+    private let routePreparationQueue = DispatchQueue(label: "studio.pj.PTrack.route-detail-prepare", qos: .userInitiated)
+    private let routeLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
+    private let routeLoadingIndicator = UIActivityIndicatorView(style: .medium)
+    private let routeLoadingLabel = UILabel()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let panelShadowView = UIView()
@@ -60,6 +79,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
     private var resolvedNavigationTitle: String?
     private var lastObservedPhotoAuthorizationState: PhotoLibraryAuthorizationState?
+    private var hasStartedRouteLoading = false
 
     private let minimumPanelHeight: CGFloat = 68
     private let mediumPanelHeight: CGFloat = 200
@@ -81,8 +101,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return calories
     }
 
-    init(workout: TrackedWorkout) {
+    init(workout: TrackedWorkout, presentationMode: PresentationMode = .workout) {
         self.workout = workout
+        self.presentationMode = presentationMode
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -104,10 +125,16 @@ final class WorkoutRouteDetailViewController: UIViewController {
         registerLanguageObserver()
         configureMapView()
         configureNavigationBackgroundView()
+        configureRouteLoadingView()
         configurePanelView()
-        drawRoute()
-        loadRouteLocationTitle()
-        loadRouteMedia()
+        startRouteLoadingIfNeeded()
+        if presentationMode == .routeCollection {
+            resolvedNavigationTitle = workout.title
+            updateNavigationLocationTitle(workout.title)
+        } else {
+            loadRouteLocationTitle()
+            loadRouteMedia()
+        }
     }
 
     deinit {
@@ -122,7 +149,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         configureDefaultNavigationBar()
-        refreshMoreMenuForPhotoAuthorizationState()
+        if presentationMode == .workout {
+            refreshMoreMenuForPhotoAuthorizationState()
+        } else {
+            navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -157,20 +188,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
             updateNavigationLocationTitle(AppLocalization.text(.queryingLocation))
         }
 
-        titleLabel.text = workout.title
-        dataSourceLabel.text = workout.routeDataSourceTitle
-        distanceLabel.text = panelDistanceText()
-        durationLabel.text = workout.durationText
+        updatePanelText()
         let measuredDistance = replayDistances.last ?? workout.distanceMeters
         let totalDistance = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
         replayRulerView.configure(
             totalDistanceText: replayTotalDistanceText(totalMeters: totalDistance),
-            elevationSamples: elevationSamples()
+            elevationSamples: routeElevationSamples()
         )
 
         if let caloriesKilocalories = panelCaloriesKilocalories {
             calorieRiceView.configure(caloriesKilocalories: caloriesKilocalories)
         }
+        routeLoadingLabel.text = AppLocalization.text(.routeLoading)
     }
 
     private func makeMoreBarButtonItem() -> UIBarButtonItem {
@@ -218,13 +247,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
         }
 
-        let navigationMenu = UIMenu(
-            title: AppLocalization.text(.navigation),
-            image: UIImage(systemName: "location.north.line"),
-            children: [openStartAction, openEndAction, routeBookAction]
-        )
+        var menuChildren: [UIMenuElement] = [
+            openStartAction,
+            openEndAction,
+            routeBookAction
+        ]
+        guard presentationMode == .workout else {
+            return UIMenu(
+                title: "",
+                children: menuChildren
+            )
+        }
 
-        var menuChildren: [UIMenuElement] = [navigationMenu]
         if PhotoLibraryAuthorizationManager.authorizationState == .needsAttention {
             menuChildren.append(photoMatchingAction)
         }
@@ -241,6 +275,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: Bool = true) {
+        guard presentationMode == .workout else {
+            navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
+            return
+        }
+
         let currentState = PhotoLibraryAuthorizationManager.authorizationState
         navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
 
@@ -461,6 +500,66 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
+    private func configureRouteLoadingView() {
+        routeLoadingView.isHidden = true
+        routeLoadingView.alpha = 0
+        routeLoadingView.layer.cornerRadius = 16
+        routeLoadingView.layer.cornerCurve = .continuous
+        routeLoadingView.layer.masksToBounds = true
+        routeLoadingView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+
+        routeLoadingIndicator.hidesWhenStopped = true
+
+        routeLoadingLabel.text = AppLocalization.text(.routeLoading)
+        routeLoadingLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        routeLoadingLabel.textColor = UIColor.black.withAlphaComponent(0.72)
+        routeLoadingLabel.textAlignment = .center
+
+        view.addSubview(routeLoadingView)
+        routeLoadingView.contentView.addSubview(routeLoadingIndicator)
+        routeLoadingView.contentView.addSubview(routeLoadingLabel)
+
+        routeLoadingView.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.centerY.equalTo(view.safeAreaLayoutGuide.snp.centerY).offset(-46)
+            make.width.greaterThanOrEqualTo(132)
+            make.height.equalTo(72)
+        }
+
+        routeLoadingIndicator.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.top.equalToSuperview().offset(13)
+        }
+
+        routeLoadingLabel.snp.makeConstraints { make in
+            make.top.equalTo(routeLoadingIndicator.snp.bottom).offset(7)
+            make.leading.trailing.equalToSuperview().inset(14)
+        }
+    }
+
+    private func setRouteLoadingVisible(_ isVisible: Bool) {
+        routeLoadingView.layer.removeAllAnimations()
+
+        if isVisible {
+            routeLoadingView.isHidden = false
+            routeLoadingIndicator.startAnimating()
+            UIView.animate(withDuration: 0.18) {
+                self.routeLoadingView.alpha = 1
+            }
+        } else {
+            UIView.animate(
+                withDuration: 0.18,
+                animations: {
+                    self.routeLoadingView.alpha = 0
+                },
+                completion: { _ in
+                    self.routeLoadingIndicator.stopAnimating()
+                    self.routeLoadingView.isHidden = true
+                }
+            )
+        }
+    }
+
     private func updateNavigationBackgroundMask() {
         navigationBackgroundMask.frame = navigationBackgroundView.bounds
         navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
@@ -578,14 +677,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
         iconView.image = UIImage(systemName: workout.symbolName)
         iconView.tintColor = UIColor.black.withAlphaComponent(0.9)
         iconView.contentMode = .scaleAspectFit
+        iconView.isHidden = presentationMode == .routeCollection
 
-        titleLabel.text = workout.title
+        updatePanelText()
         titleLabel.font = .preferredFont(forTextStyle: .headline)
         titleLabel.textColor = UIColor.black.withAlphaComponent(0.92)
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
 
-        dataSourceLabel.text = workout.routeDataSourceTitle
         dataSourceLabel.font = .systemFont(ofSize: 11, weight: .semibold)
         dataSourceLabel.textColor = UIColor.secondaryLabel
         dataSourceLabel.numberOfLines = 1
@@ -605,7 +704,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
         metricsStackView.alignment = .trailing
         metricsStackView.spacing = 2
 
-        distanceLabel.text = panelDistanceText()
         distanceLabel.font = distanceFont
         distanceLabel.textColor = UIColor.black.withAlphaComponent(0.92)
         distanceLabel.textAlignment = .right
@@ -613,7 +711,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
         distanceLabel.minimumScaleFactor = 0.78
         distanceLabel.numberOfLines = 1
 
-        durationLabel.text = workout.durationText
         durationLabel.font = durationFont
         durationLabel.textColor = UIColor.secondaryLabel
         durationLabel.textAlignment = .right
@@ -674,11 +771,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
             primaryContentTopConstraint = make.top.equalTo(handleTouchView.snp.bottom)
                 .offset(primaryContentTopOffset(for: panelHeight(for: .minimum)))
                 .constraint
-            make.size.equalTo(primaryContentSize)
+            make.size.equalTo(presentationMode == .routeCollection ? 0 : primaryContentSize)
         }
 
         titleStackView.snp.makeConstraints { make in
-            make.leading.equalTo(iconView.snp.trailing).offset(10)
+            make.leading.equalTo(iconView.snp.trailing).offset(presentationMode == .routeCollection ? 0 : 10)
             make.centerY.equalTo(iconView)
             make.trailing.lessThanOrEqualTo(metricsStackView.snp.leading).offset(-12)
         }
@@ -713,22 +810,83 @@ final class WorkoutRouteDetailViewController: UIViewController {
         ).cgPath
     }
 
-    private func drawRoute() {
-        let coordinates = workout.displayCoordinates
-        guard coordinates.count > 1 else {
+    private func startRouteLoadingIfNeeded() {
+        guard !hasStartedRouteLoading else {
             return
         }
 
-        configureReplayRoute(with: coordinates, routeCoordinates: workout.coordinates)
+        hasStartedRouteLoading = true
+        setRouteLoadingVisible(true)
 
+        let workout = workout
+        let maximumElevationSampleCount = self.maximumElevationSampleCount
+        routePreparationQueue.async { [weak self] in
+            let preparedRoute = Self.prepareRoute(
+                for: workout,
+                maximumElevationSampleCount: maximumElevationSampleCount
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                guard let preparedRoute else {
+                    self.setRouteLoadingVisible(false)
+                    return
+                }
+
+                self.applyPreparedRoute(preparedRoute)
+            }
+        }
+    }
+
+    private static func prepareRoute(
+        for workout: TrackedWorkout,
+        maximumElevationSampleCount: Int
+    ) -> PreparedRoute? {
+        let routeCoordinates = workout.coordinates
+        let coordinates = CoordinateTransformer.displayCoordinates(for: routeCoordinates.map(\.coordinate))
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        let replayDistances = cumulativeDistances(for: coordinates)
+        let replayAltitudes = routeCoordinates.map(\.altitudeMeters)
+        let measuredDistance = replayDistances.last ?? workout.distanceMeters
+        let totalDistanceMeters = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
+        let elevationSamples = routeElevationSamples(
+            distances: replayDistances,
+            altitudes: replayAltitudes,
+            maximumCount: maximumElevationSampleCount
+        )
+
+        return PreparedRoute(
+            coordinates: coordinates,
+            routeCoordinates: routeCoordinates,
+            replayDistances: replayDistances,
+            replayAltitudes: replayAltitudes,
+            elevationSamples: elevationSamples,
+            totalDistanceMeters: totalDistanceMeters
+        )
+    }
+
+    private func applyPreparedRoute(_ preparedRoute: PreparedRoute) {
+        configureReplayRoute(with: preparedRoute)
+
+        let coordinates = preparedRoute.coordinates
         let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
         routePolyline = polyline
+        hasFittedRoute = false
         mapView.addOverlay(polyline, level: .aboveLabels)
 
         mapView.addAnnotations([
             RouteEndpointAnnotation(coordinate: coordinates[0], kind: .start),
             RouteEndpointAnnotation(coordinate: coordinates[coordinates.count - 1], kind: .end)
         ])
+
+        setRouteLoadingVisible(false)
+        fitRouteIfNeeded()
     }
 
     private func fitRouteIfNeeded() {
@@ -742,11 +900,15 @@ final class WorkoutRouteDetailViewController: UIViewController {
             edgePadding: UIEdgeInsets(
                 top: 96,
                 left: 32,
-                bottom: panelHeight(for: .medium) + 28 + mapBottomExtension,
+                bottom: routeFitBottomPadding,
                 right: 32
             ),
             animated: false
         )
+    }
+
+    private var routeFitBottomPadding: CGFloat {
+        panelHeight(for: .medium) + 28 + mapBottomExtension
     }
 
     private func loadRouteMedia() {
@@ -818,8 +980,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func primaryContentTopOffset(for height: CGFloat) -> CGFloat {
-        let minimumPrimaryContentTop = (minimumPanelHeight - primaryContentSize) / 2
         let progress = min(max(panelDetailProgress(for: height), 0), 1)
+
+        if presentationMode == .routeCollection {
+            let minimumPrimaryContentCenterY = minimumPanelHeight / 2
+            let expandedPrimaryContentCenterY = expandedPrimaryContentTop + primaryContentSize / 2
+            let centerY = minimumPrimaryContentCenterY
+                + (expandedPrimaryContentCenterY - minimumPrimaryContentCenterY) * progress
+            return centerY - panelHandleTouchHeight
+        }
+
+        let minimumPrimaryContentTop = (minimumPanelHeight - primaryContentSize) / 2
         let top = minimumPrimaryContentTop + (expandedPrimaryContentTop - minimumPrimaryContentTop) * progress
         return top - panelHandleTouchHeight
     }
@@ -923,24 +1094,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
-    private func configureReplayRoute(
-        with coordinates: [CLLocationCoordinate2D],
-        routeCoordinates: [RouteCoordinate]
-    ) {
-        replayCoordinates = coordinates
-        replayDistances = cumulativeDistances(for: coordinates)
-        replayAltitudes = routeCoordinates.map(\.altitudeMeters)
+    private func configureReplayRoute(with preparedRoute: PreparedRoute) {
+        replayCoordinates = preparedRoute.coordinates
+        replayDistances = preparedRoute.replayDistances
+        replayAltitudes = preparedRoute.replayAltitudes
 
-        let measuredDistance = replayDistances.last ?? workout.distanceMeters
-        let totalDistance = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
         replayRulerView.configure(
-            totalDistanceText: replayTotalDistanceText(totalMeters: totalDistance),
-            elevationSamples: elevationSamples()
+            totalDistanceText: replayTotalDistanceText(totalMeters: preparedRoute.totalDistanceMeters),
+            elevationSamples: preparedRoute.elevationSamples
         )
-
     }
 
-    private func cumulativeDistances(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationDistance] {
+    private static func cumulativeDistances(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationDistance] {
         guard let firstCoordinate = coordinates.first else {
             return []
         }
@@ -1042,22 +1207,34 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return longitudeDelta < 0
     }
 
-    private func elevationSamples() -> [RouteElevationSample] {
-        guard replayDistances.count == replayAltitudes.count else {
+    private func routeElevationSamples() -> [RouteElevationSample] {
+        Self.routeElevationSamples(
+            distances: replayDistances,
+            altitudes: replayAltitudes,
+            maximumCount: maximumElevationSampleCount
+        )
+    }
+
+    private static func routeElevationSamples(
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        maximumCount: Int
+    ) -> [RouteElevationSample] {
+        guard distances.count == altitudes.count else {
             return []
         }
 
-        let samples = replayAltitudes.enumerated().compactMap { index, altitude -> RouteElevationSample? in
+        let samples = altitudes.enumerated().compactMap { index, altitude -> RouteElevationSample? in
             guard let altitude else {
                 return nil
             }
-            return RouteElevationSample(distanceMeters: replayDistances[index], altitudeMeters: altitude)
+            return RouteElevationSample(distanceMeters: distances[index], altitudeMeters: altitude)
         }
 
-        return downsampleElevationSamples(samples, maximumCount: maximumElevationSampleCount)
+        return downsampleElevationSamples(samples, maximumCount: maximumCount)
     }
 
-    private func downsampleElevationSamples(
+    private static func downsampleElevationSamples(
         _ samples: [RouteElevationSample],
         maximumCount: Int
     ) -> [RouteElevationSample] {
@@ -1072,6 +1249,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private var replayEmoji: String {
+        if presentationMode == .routeCollection {
+            return "📍"
+        }
+
         switch workout.activityType {
         case .cycling:
             return "🚴"
@@ -1095,14 +1276,33 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return String(format: "%.2fkm", kilometers)
     }
 
-    private func panelDistanceText() -> String {
+    private func updatePanelText() {
+        titleLabel.text = workout.title
+        dataSourceLabel.text = workout.routeDataSourceTitle
+
+        distanceLabel.text = panelDistanceText()
+        distanceLabel.isHidden = distanceLabel.text == nil
+
+        durationLabel.text = panelDurationText()
+        durationLabel.isHidden = durationLabel.text == nil
+    }
+
+    private func panelDistanceText() -> String? {
         if workout.distanceMeters >= 1000 {
             return String(format: "%.2f km", workout.distanceMeters / 1000)
         } else if workout.distanceMeters > 0 {
             return AppLocalization.format(.distanceMetersFormat, workout.distanceMeters)
         } else {
-            return AppLocalization.text(.unknownDistance)
+            return nil
         }
+    }
+
+    private func panelDurationText() -> String? {
+        guard let durationSeconds = workout.durationSeconds, durationSeconds > 0 else {
+            return nil
+        }
+
+        return workout.durationText
     }
 
     private func replayStatusText(
