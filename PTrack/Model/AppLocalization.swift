@@ -45,9 +45,11 @@ enum AppTextKey: String {
     case healthAuthorizationProgress
     case healthDataReadAuthorized
     case healthDataUnavailable
+    case appleHealthDataSourceSubtitle
     case hiking
     case mapStyle
     case more
+    case movinnLocalDataPrivacyStatement
     case newActivity
     case ok
     case openStart
@@ -81,6 +83,7 @@ enum AppTextKey: String {
     case sportTypeSummary
     case strava
     case stravaAuthorizationAlreadyGrantedMessage
+    case stravaDataSourceSubtitle
     case stravaReauthorizationRequired
     case stillOpen
     case systemPhotos
@@ -172,9 +175,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "正在请求 Apple 健康体能训练、路线和运动指标读取权限...",
             .healthDataReadAuthorized: "已授权读取数据",
             .healthDataUnavailable: "当前设备不支持健康数据。",
+            .appleHealthDataSourceSubtitle: "读取 Apple 健康中记录的数据。",
             .hiking: "徒步",
             .mapStyle: "地图样式",
             .more: "更多",
+            .movinnLocalDataPrivacyStatement: "Movinn 只读取你的数据做可视化展示，我们绝不上传用户数据，且均在本地完成所有计算",
             .newActivity: "新活动！",
             .ok: "好",
             .openStart: "去起点",
@@ -208,6 +213,7 @@ enum AppLocalization {
             .sportTypeSummary: "运动类型汇总",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 已拿到授权，可以读取你的运动数据。",
+            .stravaDataSourceSubtitle: "读取 Strava 中记录的数据。",
             .stravaReauthorizationRequired: "Strava 授权已失效，请进入“更多”页面点击 Strava 重新登录。",
             .stillOpen: "仍要打开",
             .systemPhotos: "系统相册",
@@ -253,9 +259,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "Appleヘルスケアのワークアウト、ルート、運動指標の読み取り権限を要求しています...",
             .healthDataReadAuthorized: "データ読み取りは許可されています",
             .healthDataUnavailable: "このデバイスはヘルスケアデータに対応していません。",
+            .appleHealthDataSourceSubtitle: "Appleヘルスケアに記録されたデータを読み取ります。",
             .hiking: "ハイキング",
             .mapStyle: "地図スタイル",
             .more: "その他",
+            .movinnLocalDataPrivacyStatement: "Movinn は可視化表示のためだけにあなたのデータを読み取ります。ユーザーデータをアップロードすることはなく、すべての計算はローカルで完了します",
             .newActivity: "新規",
             .ok: "OK",
             .openStart: "スタートへ",
@@ -289,6 +297,7 @@ enum AppLocalization {
             .sportTypeSummary: "種目別サマリー",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava は認証済みで、ワークアウトデータを読み取れます。",
+            .stravaDataSourceSubtitle: "Strava に記録されたデータを読み取ります。",
             .stravaReauthorizationRequired: "Strava の認証が無効になりました。「その他」画面で Strava をタップして再ログインしてください。",
             .stillOpen: "それでも開く",
             .systemPhotos: "写真",
@@ -334,9 +343,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "Apple 건강의 운동, 경로, 운동 지표 읽기 권한을 요청하는 중...",
             .healthDataReadAuthorized: "데이터 읽기 권한이 허용되었습니다",
             .healthDataUnavailable: "이 기기는 건강 데이터를 지원하지 않습니다.",
+            .appleHealthDataSourceSubtitle: "Apple 건강에 기록된 데이터를 읽습니다.",
             .hiking: "하이킹",
             .mapStyle: "지도 스타일",
             .more: "더보기",
+            .movinnLocalDataPrivacyStatement: "Movinn은 시각화 표시를 위해서만 데이터를 읽습니다. 사용자 데이터를 절대 업로드하지 않으며 모든 계산은 로컬에서 완료됩니다",
             .newActivity: "새 활동!",
             .ok: "확인",
             .openStart: "시작점으로",
@@ -370,6 +381,7 @@ enum AppLocalization {
             .sportTypeSummary: "운동 유형 요약",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 권한을 이미 받았으며 운동 데이터를 읽을 수 있습니다.",
+            .stravaDataSourceSubtitle: "Strava에 기록된 데이터를 읽습니다.",
             .stravaReauthorizationRequired: "Strava 인증이 만료되었습니다. 더보기 화면에서 Strava를 눌러 다시 로그인하세요.",
             .stillOpen: "그래도 열기",
             .systemPhotos: "사진",
@@ -415,9 +427,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "Requesting Apple Health workout, route, and metric read permissions...",
             .healthDataReadAuthorized: "Data read access is authorized",
             .healthDataUnavailable: "Health data is not available on this device.",
+            .appleHealthDataSourceSubtitle: "Read data recorded in Apple Health.",
             .hiking: "Hiking",
             .mapStyle: "Map Style",
             .more: "More",
+            .movinnLocalDataPrivacyStatement: "Movinn only reads your data for visualization. We never upload user data, and all processing is completed locally.",
             .newActivity: "New!",
             .ok: "OK",
             .openStart: "Go to Start",
@@ -451,6 +465,7 @@ enum AppLocalization {
             .sportTypeSummary: "Sport Type Summary",
             .strava: "Strava",
             .stravaAuthorizationAlreadyGrantedMessage: "Strava is already authorized to read your activity data.",
+            .stravaDataSourceSubtitle: "Read data recorded in Strava.",
             .stravaReauthorizationRequired: "Strava authorization has expired. Open More and tap Strava to sign in again.",
             .stillOpen: "Open Anyway",
             .systemPhotos: "Photos",

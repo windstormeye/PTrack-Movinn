@@ -5,6 +5,7 @@
 //  Created by pjhubs on 2026/6/12.
 //
 
+import AuthenticationServices
 import SnapKit
 import HealthKit
 import UIKit
@@ -39,6 +40,7 @@ class ViewController: UIViewController {
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let moreButton = UIButton(type: .system)
+    private let emptyDataSourceView = HomeDataSourceEmptyView()
     var columnCount: CGFloat = 3
     private var pinchStartColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
@@ -74,6 +76,7 @@ class ViewController: UIViewController {
         configureNavigationItem()
         configureCollectionView()
         configureHeaderView()
+        configureEmptyDataSourceView()
         configureLoadingIndicator()
         registerLanguageObserver()
         registerStravaImportObserver()
@@ -164,8 +167,8 @@ class ViewController: UIViewController {
         buttonConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         moreButton.configuration = buttonConfiguration
         moreButton.tintColor = .label
-        moreButton.menu = makeHeaderMoreMenu()
-        moreButton.showsMenuAsPrimaryAction = true
+        moreButton.addTarget(self, action: #selector(handleHeaderMoreButtonTap), for: .touchUpInside)
+        updateHeaderMoreButtonMode()
 
         view.addSubview(headerView)
         headerView.addSubview(titleLabel)
@@ -235,18 +238,77 @@ class ViewController: UIViewController {
         return UIMenu(children: [sportsCareerAction, heatmapAction, moreAction])
     }
 
+    private func updateHeaderMoreButtonMode() {
+        if hasReadableDataSourceAuthorization {
+            moreButton.menu = makeHeaderMoreMenu()
+            moreButton.showsMenuAsPrimaryAction = true
+        } else {
+            moreButton.menu = nil
+            moreButton.showsMenuAsPrimaryAction = false
+        }
+    }
+
+    @objc private func handleHeaderMoreButtonTap() {
+        guard !hasReadableDataSourceAuthorization else {
+            return
+        }
+
+        showMoreSettings()
+    }
+
     private func configureLoadingIndicator() {
         loadingIndicator.hidesWhenStopped = true
+        updateHeaderReadAuthorizationState()
+    }
+
+    private func configureEmptyDataSourceView() {
+        emptyDataSourceView.onAppleHealthTap = { [weak self] in
+            self?.handleEmptyAppleHealthSelection()
+        }
+        emptyDataSourceView.onStravaTap = { [weak self] in
+            self?.handleEmptyStravaSelection()
+        }
+        emptyDataSourceView.isHidden = true
+
+        view.addSubview(emptyDataSourceView)
+
+        emptyDataSourceView.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.width.equalToSuperview().offset(-48).priority(.high)
+            make.width.lessThanOrEqualTo(360)
+            make.centerY.equalTo(view.safeAreaLayoutGuide.snp.centerY).offset(42)
+            make.top.greaterThanOrEqualTo(headerView.snp.bottom).offset(36)
+        }
+
+        updateEmptyDataSourceVisibility()
     }
 
     private func beginLoadingOperation() {
         activeLoadingOperationCount += 1
-        loadingIndicator.startAnimating()
+        updateHeaderReadAuthorizationState()
+        updateEmptyDataSourceVisibility()
     }
 
     private func endLoadingOperation() {
         activeLoadingOperationCount = max(activeLoadingOperationCount - 1, 0)
-        if activeLoadingOperationCount == 0 {
+        updateHeaderReadAuthorizationState()
+        updateEmptyDataSourceVisibility()
+    }
+
+    private var hasReadableDataSourceAuthorization: Bool {
+        store.authorizationState == .authorized || StravaManager.shared.hasStoredAuthorization
+    }
+
+    private func updateHeaderReadAuthorizationState() {
+        totalDistanceLabel.isHidden = !hasReadableDataSourceAuthorization
+        updateLoadingIndicatorVisibility()
+        updateHeaderMoreButtonMode()
+    }
+
+    private func updateLoadingIndicatorVisibility() {
+        if activeLoadingOperationCount > 0, hasReadableDataSourceAuthorization {
+            loadingIndicator.startAnimating()
+        } else {
             loadingIndicator.stopAnimating()
         }
     }
@@ -276,7 +338,13 @@ class ViewController: UIViewController {
     }
 
     func synchronizeDataSourcesForAppOpen() {
-        loadHealthWorkouts()
+        updateHeaderReadAuthorizationState()
+
+        if store.authorizationState == .authorized {
+            loadAuthorizedHealthWorkouts()
+        } else {
+            print("PTrack HealthKit: skipped import, no stored authorization")
+        }
         loadAuthorizedStravaWorkouts()
     }
 
@@ -317,6 +385,12 @@ class ViewController: UIViewController {
         let distanceText = AppLocalization.format(.totalDistanceFormat, Int(totalKilometers.rounded()))
         let activityCountText = AppLocalization.format(.totalActivityCountFormat, workouts.count)
         totalDistanceLabel.text = "\(prefixText) \(distanceText)/\(activityCountText)"
+        updateHeaderReadAuthorizationState()
+        updateEmptyDataSourceVisibility()
+    }
+
+    private func updateEmptyDataSourceVisibility() {
+        emptyDataSourceView.isHidden = !workouts.isEmpty || hasReadableDataSourceAuthorization
     }
 
     private func registerLanguageObserver() {
@@ -330,7 +404,8 @@ class ViewController: UIViewController {
 
     @objc private func handleLanguageDidChange() {
         updateTotalDistanceText()
-        moreButton.menu = makeHeaderMoreMenu()
+        emptyDataSourceView.updateLocalizedText()
+        updateHeaderMoreButtonMode()
         collectionView.reloadData()
     }
 
@@ -418,25 +493,35 @@ class ViewController: UIViewController {
         prewarmInitialRouteSources()
     }
 
-    private func loadHealthWorkouts() {
+    private func loadAuthorizedHealthWorkouts() {
         guard !isHealthSyncInProgress else {
             return
         }
 
         isHealthSyncInProgress = true
         beginLoadingOperation()
+        loadIncrementalHealthWorkouts()
+    }
+
+    private func requestHealthAuthorizationAndLoadWorkouts() {
+        guard !isHealthSyncInProgress else {
+            return
+        }
+
+        isHealthSyncInProgress = true
         store.requestAuthorization { [weak self] authorizationResult in
             guard let self else { return }
             switch authorizationResult {
             case .success:
                 Task { @MainActor in
+                    self.beginLoadingOperation()
                     self.loadIncrementalHealthWorkouts()
                 }
             case .failure(let error):
                 print("PTrack HealthKit: authorization failed: \(error)")
                 Task { @MainActor in
                     self.isHealthSyncInProgress = false
-                    self.endLoadingOperation()
+                    self.updateHeaderReadAuthorizationState()
                 }
             }
         }
@@ -445,6 +530,7 @@ class ViewController: UIViewController {
     private func loadAuthorizedStravaWorkouts() {
         guard StravaManager.shared.hasStoredAuthorization else {
             print("PTrack Strava: skipped import, no stored authorization")
+            updateHeaderReadAuthorizationState()
             return
         }
 
@@ -516,6 +602,7 @@ class ViewController: UIViewController {
                 print("PTrack Strava: import failed: \(error)")
                 self.isStravaSyncInProgress = false
                 self.endLoadingOperation()
+                self.updateHeaderReadAuthorizationState()
                 if StravaManager.requiresReauthorization(error) {
                     self.presentSimpleAlert(
                         title: AppLocalization.text(.strava),
@@ -866,6 +953,7 @@ class ViewController: UIViewController {
     private func handleLoadResult(_ result: Result<Int, Error>) {
         isHealthSyncInProgress = false
         endLoadingOperation()
+        updateHeaderReadAuthorizationState()
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
@@ -903,6 +991,44 @@ class ViewController: UIViewController {
             )
         }
         navigationController?.pushViewController(moreSettingsViewController, animated: true)
+    }
+
+    private func handleEmptyAppleHealthSelection() {
+        requestHealthAuthorizationAndLoadWorkouts()
+    }
+
+    private func handleEmptyStravaSelection() {
+        guard !isStravaSyncInProgress else {
+            return
+        }
+
+        let excludedActivityIDs = Set(workouts.compactMap(\.stravaActivityID))
+        if StravaManager.shared.hasStoredAuthorization {
+            loadStravaWorkouts(
+                excludingStravaActivityIDs: excludedActivityIDs,
+                presentsErrors: true
+            )
+            return
+        }
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                _ = try await StravaManager.shared.authorize(presentationContextProvider: self)
+                self.loadStravaWorkouts(
+                    excludingStravaActivityIDs: excludedActivityIDs,
+                    presentsErrors: true
+                )
+            } catch {
+                guard (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin else {
+                    return
+                }
+                self.presentSimpleAlert(title: AppLocalization.text(.strava), message: error.localizedDescription)
+            }
+        }
     }
 
     private func presentSimpleAlert(title: String, message: String?) {
@@ -1080,6 +1206,194 @@ class ViewController: UIViewController {
             x: min(max(offset.x, minimumX), maximumX),
             y: min(max(offset.y, minimumY), maximumY)
         )
+    }
+}
+
+extension ViewController: ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        if let window = view.window {
+            return window
+        }
+
+        let windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+
+        return ASPresentationAnchor(windowScene: windowScene!)
+    }
+}
+
+private final class HomeDataSourceEmptyView: UIView {
+    var onAppleHealthTap: (() -> Void)?
+    var onStravaTap: (() -> Void)?
+
+    private let stackView = UIStackView()
+    private let appleHealthCard = HomeDataSourceCardView(style: .appleHealth)
+    private let stravaCard = HomeDataSourceCardView(style: .strava)
+    private let privacyLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+        updateLocalizedText()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+        updateLocalizedText()
+    }
+
+    func updateLocalizedText() {
+        appleHealthCard.configure(
+            title: AppLocalization.text(.appleHealth),
+            subtitle: AppLocalization.text(.appleHealthDataSourceSubtitle)
+        )
+        stravaCard.configure(
+            title: AppLocalization.text(.strava),
+            subtitle: AppLocalization.text(.stravaDataSourceSubtitle)
+        )
+        privacyLabel.text = AppLocalization.text(.movinnLocalDataPrivacyStatement)
+    }
+
+    private func configureViews() {
+        stackView.axis = .vertical
+        stackView.alignment = .fill
+        stackView.spacing = 12
+
+        privacyLabel.textColor = .secondaryLabel
+        privacyLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        privacyLabel.numberOfLines = 0
+        privacyLabel.textAlignment = .center
+
+        appleHealthCard.addAction(UIAction { [weak self] _ in
+            self?.onAppleHealthTap?()
+        }, for: .touchUpInside)
+        stravaCard.addAction(UIAction { [weak self] _ in
+            self?.onStravaTap?()
+        }, for: .touchUpInside)
+
+        addSubview(stackView)
+        stackView.addArrangedSubview(appleHealthCard)
+        stackView.addArrangedSubview(stravaCard)
+        stackView.setCustomSpacing(16, after: stravaCard)
+        stackView.addArrangedSubview(privacyLabel)
+
+        stackView.snp.makeConstraints { make in
+            make.top.bottom.equalToSuperview()
+            make.leading.trailing.equalToSuperview()
+        }
+
+        appleHealthCard.snp.makeConstraints { make in
+            make.height.equalTo(76)
+        }
+        stravaCard.snp.makeConstraints { make in
+            make.height.equalTo(76)
+        }
+    }
+}
+
+private final class HomeDataSourceCardView: UIControl {
+    enum Style {
+        case appleHealth
+        case strava
+    }
+
+    private let style: Style
+    private let iconView = UIImageView()
+    private let brandImageView = UIImageView()
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private let textStackView = UIStackView()
+
+    init(style: Style) {
+        self.style = style
+        super.init(frame: .zero)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        style = .appleHealth
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    override var isHighlighted: Bool {
+        didSet {
+            UIView.animate(withDuration: 0.14) {
+                self.alpha = self.isHighlighted ? 0.72 : 1
+                self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.985, y: 0.985) : .identity
+            }
+        }
+    }
+
+    func configure(title: String, subtitle: String) {
+        titleLabel.text = title
+        subtitleLabel.text = subtitle
+    }
+
+    private func configureViews() {
+        layer.cornerRadius = 12
+        layer.masksToBounds = true
+        backgroundColor = style == .strava ? AppColors.stravaOrange : UIColor(white: 0.945, alpha: 1)
+
+        iconView.contentMode = .scaleAspectFit
+        iconView.image = UIImage(named: "apple_health")?.withRenderingMode(.alwaysOriginal)
+        iconView.isHidden = style != .appleHealth
+
+        brandImageView.contentMode = .scaleAspectFit
+        brandImageView.image = UIImage(named: "strava")?.withRenderingMode(.alwaysTemplate)
+        brandImageView.tintColor = .white
+        brandImageView.isHidden = style != .strava
+
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.textColor = style == .strava ? .white : .black
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.78
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.isHidden = style == .strava
+
+        subtitleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        subtitleLabel.textColor = style == .strava ? UIColor.white.withAlphaComponent(0.88) : .secondaryLabel
+        subtitleLabel.numberOfLines = 2
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+
+        textStackView.axis = .vertical
+        textStackView.alignment = .leading
+        textStackView.spacing = 4
+        textStackView.isUserInteractionEnabled = false
+
+        addSubview(iconView)
+        addSubview(brandImageView)
+        addSubview(textStackView)
+        textStackView.addArrangedSubview(titleLabel)
+        textStackView.addArrangedSubview(subtitleLabel)
+
+        iconView.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(18)
+            make.centerY.equalToSuperview()
+            make.size.equalTo(34)
+        }
+
+        brandImageView.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(18)
+            make.centerY.equalToSuperview().offset(-8)
+            make.width.equalTo(104)
+            make.height.equalTo(22)
+        }
+
+        textStackView.snp.makeConstraints { make in
+            switch style {
+            case .appleHealth:
+                make.leading.equalTo(iconView.snp.trailing).offset(14)
+                make.centerY.equalToSuperview()
+                make.trailing.equalToSuperview().inset(18)
+            case .strava:
+                make.leading.equalTo(brandImageView)
+                make.trailing.equalToSuperview().inset(18)
+                make.top.equalTo(brandImageView.snp.bottom).offset(8)
+            }
+        }
     }
 }
 

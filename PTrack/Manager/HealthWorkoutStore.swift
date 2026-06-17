@@ -164,8 +164,6 @@ final class HealthWorkoutStore {
     ]
 
     func requestAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
-        markAuthorizationRequested()
-
         guard HKHealthStore.isHealthDataAvailable() else {
             markAuthorizationNeedsAttention()
             completion(.failure(HealthWorkoutStoreError.healthDataUnavailable))
@@ -179,7 +177,7 @@ final class HealthWorkoutStore {
         healthStore.requestAuthorization(toShare: nil, read: readTypes) { success, error in
             print("PTrack HealthKit: authorization request completed, success: \(success), error: \(String(describing: error))")
             if let error {
-                self.markAuthorizationNeedsAttention()
+                self.updateAuthorizationState(for: error)
                 completion(.failure(error))
             } else if success {
                 self.markAuthorizationAuthorized()
@@ -223,9 +221,7 @@ final class HealthWorkoutStore {
             guard let self else { return }
             if let error {
                 print("PTrack HealthKit: workout query failed: \(error)")
-                if Self.isAuthorizationError(error) {
-                    self.markAuthorizationNeedsAttention()
-                }
+                self.updateAuthorizationState(for: error)
                 completion(.failure(error))
                 return
             }
@@ -244,12 +240,13 @@ final class HealthWorkoutStore {
         healthStore.execute(query)
     }
 
-    private func markAuthorizationRequested() {
-        defaults.set(true, forKey: DefaultsKey.authorizationRequested)
-    }
-
     private func markAuthorizationAuthorized() {
         defaults.set(true, forKey: DefaultsKey.authorizationRequested)
+        defaults.set(false, forKey: DefaultsKey.authorizationNeedsAttention)
+    }
+
+    private func markAuthorizationNotDetermined() {
+        defaults.set(false, forKey: DefaultsKey.authorizationRequested)
         defaults.set(false, forKey: DefaultsKey.authorizationNeedsAttention)
     }
 
@@ -258,12 +255,19 @@ final class HealthWorkoutStore {
         defaults.set(true, forKey: DefaultsKey.authorizationNeedsAttention)
     }
 
-    private static func isAuthorizationError(_ error: Error) -> Bool {
+    private func updateAuthorizationState(for error: Error) {
         guard let healthKitError = error as? HKError else {
-            return false
+            return
         }
 
-        return healthKitError.code == .errorAuthorizationDenied
+        switch healthKitError.code {
+        case .errorAuthorizationNotDetermined:
+            markAuthorizationNotDetermined()
+        case .errorAuthorizationDenied:
+            markAuthorizationNeedsAttention()
+        default:
+            break
+        }
     }
 
     private func loadRoutes(
@@ -347,6 +351,7 @@ final class HealthWorkoutStore {
             guard let self else { return }
             if let error {
                 print("PTrack HealthKit: route sample query failed: \(error)")
+                self.updateAuthorizationState(for: error)
                 completion(.failure(error))
                 return
             }
@@ -396,6 +401,7 @@ final class HealthWorkoutStore {
 
                 if let error {
                     print("PTrack HealthKit: workout route query failed: \(error)")
+                    self.updateAuthorizationState(for: error)
                     lock.lock()
                     if firstError == nil {
                         firstError = error
