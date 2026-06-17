@@ -40,6 +40,7 @@ enum AppTextKey: String {
     case dayBeforeYesterday
     case developerWebsite
     case distanceMetersFormat
+    case exit
     case healthAuthorizationDenied
     case healthAuthorizationFailed
     case healthAuthorizationProgress
@@ -54,6 +55,8 @@ enum AppTextKey: String {
     case movinnLocalDataPrivacyStatement
     case newActivity
     case ok
+    case navigation
+    case openEnd
     case openStart
     case openSettings
     case other
@@ -64,6 +67,11 @@ enum AppTextKey: String {
     case photoLibraryReadAuthorized
     case photoMatching
     case queryingLocation
+    case routeBook
+    case routeBookExit
+    case routeBookExitMessage
+    case routeBookLocationPermissionRequiredMessage
+    case routeBookLocationPermissionRequiredTitle
     case routeHeatmap
     case running
     case satellite
@@ -107,6 +115,8 @@ enum AppTextKey: String {
     case walking
     case walkingHiking
     case workoutStart
+    case workoutEnd
+    case endNotFound
     case startNotFound
     case yesterday
     case burnedCaloriesFormat
@@ -173,6 +183,7 @@ enum AppLocalization {
             .dayBeforeYesterday: "前天",
             .developerWebsite: "开发者网站",
             .distanceMetersFormat: "%.0f 米",
+            .exit: "退出",
             .healthAuthorizationDenied: "未获得健康数据读取权限。",
             .healthAuthorizationFailed: "健康授权失败",
             .healthAuthorizationProgress: "正在请求 Apple 健康体能训练、路线和运动指标读取权限...",
@@ -187,6 +198,8 @@ enum AppLocalization {
             .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
             .newActivity: "新活动！",
             .ok: "好",
+            .navigation: "导航",
+            .openEnd: "去终点",
             .openStart: "去起点",
             .openSettings: "打开设置",
             .other: "其他",
@@ -197,6 +210,11 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "已授权读取相册",
             .photoMatching: "照片匹配",
             .queryingLocation: "位置查询中",
+            .routeBook: "路书",
+            .routeBookExit: "退出路书模式？",
+            .routeBookExitMessage: "退出后将回到运动列表。",
+            .routeBookLocationPermissionRequiredMessage: "请在系统设置中允许 Movinn 使用位置，这样才能在路书模式下显示你的位置。",
+            .routeBookLocationPermissionRequiredTitle: "需要位置权限",
             .routeHeatmap: "轨迹热图",
             .running: "跑步",
             .satellite: "卫星",
@@ -240,6 +258,8 @@ enum AppLocalization {
             .walking: "行走",
             .walkingHiking: "行走/徒步",
             .workoutStart: "运动起点",
+            .workoutEnd: "运动终点",
+            .endNotFound: "未找到终点",
             .startNotFound: "未找到起点",
             .yesterday: "昨天",
             .burnedCaloriesFormat: "消耗 %.0f 大卡",
@@ -260,6 +280,7 @@ enum AppLocalization {
             .dayBeforeYesterday: "一昨日",
             .developerWebsite: "開発者サイト",
             .distanceMetersFormat: "%.0f m",
+            .exit: "終了",
             .healthAuthorizationDenied: "ヘルスケアデータの読み取り権限がありません。",
             .healthAuthorizationFailed: "ヘルスケア認証に失敗しました",
             .healthAuthorizationProgress: "Appleヘルスケアのワークアウト、ルート、運動指標の読み取り権限を要求しています...",
@@ -274,6 +295,8 @@ enum AppLocalization {
             .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
             .newActivity: "新規",
             .ok: "OK",
+            .navigation: "ナビゲーション",
+            .openEnd: "ゴールへ",
             .openStart: "スタートへ",
             .openSettings: "設定を開く",
             .other: "その他",
@@ -284,6 +307,11 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "写真の読み取りは許可されています",
             .photoMatching: "写真照合",
             .queryingLocation: "位置を検索中",
+            .routeBook: "ルートブック",
+            .routeBookExit: "ルートブックモードを終了しますか？",
+            .routeBookExitMessage: "終了するとワークアウト一覧に戻ります。",
+            .routeBookLocationPermissionRequiredMessage: "ルートブックモードで現在地を表示するには、システム設定で Movinn の位置情報利用を許可してください。",
+            .routeBookLocationPermissionRequiredTitle: "位置情報の許可が必要です",
             .routeHeatmap: "軌跡ヒートマップ",
             .running: "ランニング",
             .satellite: "衛星",
@@ -327,6 +355,8 @@ enum AppLocalization {
             .walking: "ウォーキング",
             .walkingHiking: "ウォーキング/ハイキング",
             .workoutStart: "ワークアウト開始地点",
+            .workoutEnd: "ワークアウト終了地点",
+            .endNotFound: "ゴール地点が見つかりません",
             .startNotFound: "スタート地点が見つかりません",
             .yesterday: "昨日",
             .burnedCaloriesFormat: "%.0f kcal 消費",
@@ -347,6 +377,7 @@ enum AppLocalization {
             .dayBeforeYesterday: "그저께",
             .developerWebsite: "개발자 웹사이트",
             .distanceMetersFormat: "%.0f m",
+            .exit: "종료",
             .healthAuthorizationDenied: "건강 데이터 읽기 권한이 없습니다.",
             .healthAuthorizationFailed: "건강 권한 요청 실패",
             .healthAuthorizationProgress: "Apple 건강의 운동, 경로, 운동 지표 읽기 권한을 요청하는 중...",
@@ -361,6 +392,8 @@ enum AppLocalization {
             .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
             .newActivity: "새 활동!",
             .ok: "확인",
+            .navigation: "내비게이션",
+            .openEnd: "도착점으로",
             .openStart: "시작점으로",
             .openSettings: "설정 열기",
             .other: "기타",
@@ -371,6 +404,11 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "사진 읽기 권한이 허용되었습니다",
             .photoMatching: "사진 매칭",
             .queryingLocation: "위치 조회 중",
+            .routeBook: "루트북",
+            .routeBookExit: "루트북 모드를 종료할까요?",
+            .routeBookExitMessage: "종료하면 운동 목록으로 돌아갑니다.",
+            .routeBookLocationPermissionRequiredMessage: "루트북 모드에서 현재 위치를 표시하려면 시스템 설정에서 Movinn의 위치 사용을 허용해 주세요.",
+            .routeBookLocationPermissionRequiredTitle: "위치 권한 필요",
             .routeHeatmap: "경로 히트맵",
             .running: "달리기",
             .satellite: "위성",
@@ -414,6 +452,8 @@ enum AppLocalization {
             .walking: "걷기",
             .walkingHiking: "걷기/하이킹",
             .workoutStart: "운동 시작점",
+            .workoutEnd: "운동 종료점",
+            .endNotFound: "종료점을 찾을 수 없음",
             .startNotFound: "시작점을 찾을 수 없음",
             .yesterday: "어제",
             .burnedCaloriesFormat: "%.0f kcal 소비",
@@ -434,6 +474,7 @@ enum AppLocalization {
             .dayBeforeYesterday: "The Day Before Yesterday",
             .developerWebsite: "Developer Website",
             .distanceMetersFormat: "%.0f m",
+            .exit: "Exit",
             .healthAuthorizationDenied: "Health data read permission has not been granted.",
             .healthAuthorizationFailed: "Health authorization failed",
             .healthAuthorizationProgress: "Requesting Apple Health workout, route, and metric read permissions...",
@@ -448,6 +489,8 @@ enum AppLocalization {
             .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
             .newActivity: "New!",
             .ok: "OK",
+            .navigation: "Navigation",
+            .openEnd: "Go to End",
             .openStart: "Go to Start",
             .openSettings: "Open Settings",
             .other: "Other",
@@ -458,6 +501,11 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "Photo access is authorized",
             .photoMatching: "Photo Matching",
             .queryingLocation: "Locating",
+            .routeBook: "Route Book",
+            .routeBookExit: "Exit Route Book Mode?",
+            .routeBookExitMessage: "You will return to the workout list.",
+            .routeBookLocationPermissionRequiredMessage: "Allow Movinn to use location in system Settings so your position can be shown in Route Book mode.",
+            .routeBookLocationPermissionRequiredTitle: "Location Permission Required",
             .routeHeatmap: "Route Heatmap",
             .running: "Running",
             .satellite: "Satellite",
@@ -501,6 +549,8 @@ enum AppLocalization {
             .walking: "Walking",
             .walkingHiking: "Walking/Hiking",
             .workoutStart: "Workout Start",
+            .workoutEnd: "Workout End",
+            .endNotFound: "End not found",
             .startNotFound: "Start not found",
             .yesterday: "Yesterday",
             .burnedCaloriesFormat: "Burned %.0f kcal",

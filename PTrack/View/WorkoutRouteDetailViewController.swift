@@ -185,7 +185,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
             title: AppLocalization.text(.openStart),
             image: UIImage(systemName: "location")
         ) { [weak self] _ in
-            self?.openStartInMaps()
+            self?.openEndpointInMaps(kind: .start)
+        }
+
+        let openEndAction = UIAction(
+            title: AppLocalization.text(.openEnd),
+            image: UIImage(systemName: "mappin.and.ellipse")
+        ) { [weak self] _ in
+            self?.openEndpointInMaps(kind: .end)
+        }
+
+        let routeBookAction = UIAction(
+            title: AppLocalization.text(.routeBook),
+            image: UIImage(systemName: "map")
+        ) { [weak self] _ in
+            self?.startRouteBookMode()
         }
 
         let photoMatchingAction = UIAction(
@@ -204,7 +218,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
         }
 
-        var menuChildren: [UIMenuElement] = [openStartAction]
+        let navigationMenu = UIMenu(
+            title: AppLocalization.text(.navigation),
+            image: UIImage(systemName: "location.north.line"),
+            children: [openStartAction, openEndAction, routeBookAction]
+        )
+
+        var menuChildren: [UIMenuElement] = [navigationMenu]
         if PhotoLibraryAuthorizationManager.authorizationState == .needsAttention {
             menuChildren.append(photoMatchingAction)
         }
@@ -459,18 +479,51 @@ final class WorkoutRouteDetailViewController: UIViewController {
         navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
     }
 
-    private func openStartInMaps() {
-        guard let startCoordinate = workout.displayCoordinates.first ?? workout.coordinates.first?.coordinate else {
-            showAlert(title: AppLocalization.text(.startNotFound))
+    private enum RouteEndpoint {
+        case start
+        case end
+
+        var notFoundTextKey: AppTextKey {
+            switch self {
+            case .start:
+                return .startNotFound
+            case .end:
+                return .endNotFound
+            }
+        }
+
+        var titleTextKey: AppTextKey {
+            switch self {
+            case .start:
+                return .workoutStart
+            case .end:
+                return .workoutEnd
+            }
+        }
+    }
+
+    private func openEndpointInMaps(kind: RouteEndpoint) {
+        let coordinates = workout.displayCoordinates
+        let fallbackCoordinates = workout.coordinates.map(\.coordinate)
+        let coordinate: CLLocationCoordinate2D?
+        switch kind {
+        case .start:
+            coordinate = coordinates.first ?? fallbackCoordinates.first
+        case .end:
+            coordinate = coordinates.last ?? fallbackCoordinates.last
+        }
+
+        guard let coordinate else {
+            showAlert(title: AppLocalization.text(kind.notFoundTextKey))
             return
         }
 
-        let startLocation = CLLocation(latitude: startCoordinate.latitude, longitude: startCoordinate.longitude)
-        let mapItem = MKMapItem(location: startLocation, address: nil)
-        mapItem.name = AppLocalization.text(.workoutStart)
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let mapItem = MKMapItem(location: location, address: nil)
+        mapItem.name = AppLocalization.text(kind.titleTextKey)
 
         let launchOptions: [String: Any] = [
-            MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: startCoordinate),
+            MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate),
             MKLaunchOptionsMapSpanKey: NSValue(
                 mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
             )
@@ -479,6 +532,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
         guard mapItem.openInMaps(launchOptions: launchOptions) else {
             showAlert(title: AppLocalization.text(.systemMapsNotFound))
             return
+        }
+    }
+
+    private func startRouteBookMode() {
+        let selectedWorkout = workout
+        navigationController?.popToRootViewController(animated: true)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: RouteBookMode.didSelectWorkoutNotification,
+                object: self,
+                userInfo: [RouteBookMode.workoutUserInfoKey: selectedWorkout]
+            )
         }
     }
 

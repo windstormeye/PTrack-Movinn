@@ -6,6 +6,8 @@
 //
 
 import AuthenticationServices
+import CoreLocation
+import MapKit
 import SnapKit
 import HealthKit
 import UIKit
@@ -35,12 +37,26 @@ class ViewController: UIViewController {
     private var isPullRefreshArmedInCurrentDrag = false
     private var collectionView: UICollectionView!
     private let gridLayout = WorkoutGridLayout()
+    private let routeBookMapContainerView = AppMapContainerView()
+    private var routeBookMapView: MKMapView { routeBookMapContainerView.mapView }
+    private let routeBookMapToneOverlay = AppMapStyle.makeToneOverlay()
+    private let routeBookLocationManager = CLLocationManager()
+    private lazy var routeBookScaleView: MKScaleView = {
+        let scaleView = MKScaleView(mapView: routeBookMapView)
+        scaleView.legendAlignment = .leading
+        scaleView.scaleVisibility = .visible
+        scaleView.isHidden = true
+        return scaleView
+    }()
     private let headerView = UIView()
+    private let headerBlurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
+    private let headerBlurMask = CAGradientLayer()
     private let titleLabel = UILabel()
     private let titleAccentLabel = UILabel()
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let moreButton = UIButton(type: .system)
+    private let routeBookLocateButton = UIButton(type: .system)
     private let emptyDataSourceView = HomeDataSourceEmptyView()
     var columnCount: CGFloat = 3
     private var pinchStartColumnCount: CGFloat = 3
@@ -64,6 +80,13 @@ class ViewController: UIViewController {
     private var columnSnapTargetCount: CGFloat = 3
     private var columnSnapVisibleAnchorPoint = CGPoint.zero
     private let columnSnapDuration: CFTimeInterval = 0.28
+    private var isRouteBookModeActive = false
+    private var routeBookWorkout: TrackedWorkout?
+    private var routeBookPolyline: MKPolyline?
+    private var shouldCenterRouteBookOnNextLocation = false
+    private var routeBookLastLocation: CLLocation?
+    private var routeBookLastHeadingDegrees: CLLocationDirection?
+    private var routeBookHeadingDisplayDegrees: CLLocationDirection?
 
     deinit {
         columnSnapDisplayLink?.invalidate()
@@ -76,11 +99,13 @@ class ViewController: UIViewController {
         super.viewDidLoad()
         configureNavigationItem()
         configureCollectionView()
+        configureRouteBookMapView()
         configureHeaderView()
         configureEmptyDataSourceView()
         configureLoadingIndicator()
         registerLanguageObserver()
         registerStravaImportObserver()
+        registerRouteBookObserver()
         store.progressHandler = { message in
             print("PTrack HealthKit: \(message)")
         }
@@ -89,6 +114,7 @@ class ViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateHeaderBlurMask()
         updateFullScreenInsets()
     }
 
@@ -138,9 +164,73 @@ class ViewController: UIViewController {
         }
     }
 
+    private func configureRouteBookMapView() {
+        routeBookMapContainerView.isHidden = true
+        routeBookMapView.delegate = self
+        routeBookMapView.showsCompass = false
+        routeBookMapView.showsScale = false
+        routeBookMapView.showsUserLocation = false
+        routeBookMapView.isRotateEnabled = false
+        routeBookMapView.userTrackingMode = .none
+        resetRouteBookMapHeading(animated: false)
+        routeBookLocationManager.delegate = self
+        routeBookLocationManager.desiredAccuracy = kCLLocationAccuracyBest
+        routeBookLocationManager.headingFilter = 5
+
+        AppMapStyle.apply(.appDefault, to: routeBookMapView)
+        AppMapStyle.setToneOverlay(routeBookMapToneOverlay, visible: true, on: routeBookMapView)
+
+        view.addSubview(routeBookMapContainerView)
+        view.sendSubviewToBack(routeBookMapContainerView)
+
+        routeBookMapContainerView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        configureRouteBookLocateButton()
+    }
+
+    private func configureRouteBookLocateButton() {
+        var configuration = UIButton.Configuration.filled()
+        configuration.image = UIImage(
+            systemName: "location.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        )
+        configuration.baseForegroundColor = .label
+        configuration.baseBackgroundColor = .white.withAlphaComponent(0.92)
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+
+        routeBookLocateButton.configuration = configuration
+        routeBookLocateButton.isHidden = true
+        routeBookLocateButton.layer.shadowColor = UIColor.black.cgColor
+        routeBookLocateButton.layer.shadowOpacity = 0.14
+        routeBookLocateButton.layer.shadowRadius = 12
+        routeBookLocateButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+        routeBookLocateButton.addTarget(self, action: #selector(handleRouteBookLocateButtonTap), for: .touchUpInside)
+
+        view.addSubview(routeBookLocateButton)
+
+        routeBookLocateButton.snp.makeConstraints { make in
+            make.trailing.equalTo(view.safeAreaLayoutGuide.snp.trailing).inset(18)
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(30)
+            make.size.equalTo(48)
+        }
+    }
+
     private func configureHeaderView() {
         headerView.isUserInteractionEnabled = true
         headerView.backgroundColor = .white
+
+        headerBlurView.isHidden = true
+        headerBlurView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
+        headerBlurMask.colors = [
+            UIColor.white.cgColor,
+            UIColor.white.withAlphaComponent(0.78).cgColor,
+            UIColor.white.withAlphaComponent(0).cgColor
+        ]
+        headerBlurMask.locations = [0, 0.58, 1]
+        headerBlurView.layer.mask = headerBlurMask
 
         let titleFont = UIFont.systemFont(ofSize: 40, weight: .bold)
         titleLabel.text = "Movin"
@@ -172,6 +262,7 @@ class ViewController: UIViewController {
         updateHeaderMoreButtonMode()
 
         view.addSubview(headerView)
+        headerView.addSubview(headerBlurView)
         headerView.addSubview(titleLabel)
         headerView.addSubview(titleAccentLabel)
         headerView.addSubview(totalDistanceLabel)
@@ -181,6 +272,10 @@ class ViewController: UIViewController {
         headerView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
             make.height.equalTo(122)
+        }
+
+        headerBlurView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
         }
 
         titleLabel.snp.makeConstraints { make in
@@ -212,6 +307,22 @@ class ViewController: UIViewController {
         }
 
         updateTotalDistanceText()
+        configureRouteBookScaleView()
+    }
+
+    private func updateHeaderBlurMask() {
+        headerBlurMask.frame = headerBlurView.bounds
+    }
+
+    private func configureRouteBookScaleView() {
+        view.addSubview(routeBookScaleView)
+
+        routeBookScaleView.snp.makeConstraints { make in
+            make.leading.equalTo(view.safeAreaLayoutGuide.snp.leading).offset(16)
+            make.top.equalTo(headerView.snp.bottom).offset(8)
+            make.width.equalTo(130)
+            make.height.equalTo(28)
+        }
     }
 
     private func makeHeaderMoreMenu() -> UIMenu {
@@ -240,6 +351,26 @@ class ViewController: UIViewController {
     }
 
     private func updateHeaderMoreButtonMode() {
+        var buttonConfiguration = moreButton.configuration ?? .plain()
+        buttonConfiguration.image = UIImage(
+            systemName: isRouteBookModeActive ? "xmark" : "ellipsis",
+            withConfiguration: UIImage.SymbolConfiguration(
+                pointSize: isRouteBookModeActive ? 14 : 18,
+                weight: isRouteBookModeActive ? .regular : .semibold
+            )
+        )
+        buttonConfiguration.contentInsets = isRouteBookModeActive
+            ? NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+            : NSDirectionalEdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
+        moreButton.configuration = buttonConfiguration
+        moreButton.tintColor = .label
+
+        if isRouteBookModeActive {
+            moreButton.menu = nil
+            moreButton.showsMenuAsPrimaryAction = false
+            return
+        }
+
         if hasReadableDataSourceAuthorization {
             moreButton.menu = makeHeaderMoreMenu()
             moreButton.showsMenuAsPrimaryAction = true
@@ -250,6 +381,11 @@ class ViewController: UIViewController {
     }
 
     @objc private func handleHeaderMoreButtonTap() {
+        if isRouteBookModeActive {
+            presentRouteBookExitAlert()
+            return
+        }
+
         guard !hasReadableDataSourceAuthorization else {
             return
         }
@@ -301,13 +437,13 @@ class ViewController: UIViewController {
     }
 
     private func updateHeaderReadAuthorizationState() {
-        totalDistanceLabel.isHidden = !hasReadableDataSourceAuthorization
+        totalDistanceLabel.isHidden = isRouteBookModeActive || !hasReadableDataSourceAuthorization
         updateLoadingIndicatorVisibility()
         updateHeaderMoreButtonMode()
     }
 
     private func updateLoadingIndicatorVisibility() {
-        if activeLoadingOperationCount > 0, hasReadableDataSourceAuthorization {
+        if activeLoadingOperationCount > 0, hasReadableDataSourceAuthorization, !isRouteBookModeActive {
             loadingIndicator.startAnimating()
         } else {
             loadingIndicator.stopAnimating()
@@ -392,7 +528,7 @@ class ViewController: UIViewController {
 
     private func updateEmptyDataSourceVisibility() {
         emptyDataSourceView.updateAuthorizationState(appleHealth: store.authorizationState)
-        emptyDataSourceView.isHidden = !workouts.isEmpty || hasReadableDataSourceAuthorization
+        emptyDataSourceView.isHidden = isRouteBookModeActive || !workouts.isEmpty || hasReadableDataSourceAuthorization
     }
 
     private func registerLanguageObserver() {
@@ -418,6 +554,23 @@ class ViewController: UIViewController {
             name: StravaManager.trackedWorkoutsDidImportNotification,
             object: nil
         )
+    }
+
+    private func registerRouteBookObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteBookWorkoutDidSelect(_:)),
+            name: RouteBookMode.didSelectWorkoutNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleRouteBookWorkoutDidSelect(_ notification: Notification) {
+        guard let workout = notification.userInfo?[RouteBookMode.workoutUserInfoKey] as? TrackedWorkout else {
+            return
+        }
+
+        enterRouteBookMode(with: workout)
     }
 
     @objc private func handleStravaTrackedWorkoutsDidImport(_ notification: Notification) {
@@ -483,6 +636,7 @@ class ViewController: UIViewController {
         UIView.performWithoutAnimation {
             collectionView.reloadData()
         }
+        restorePersistedRouteBookModeIfNeeded()
     }
 
     private func applyCachedWorkouts(_ cachedWorkouts: [TrackedWorkout]) {
@@ -493,6 +647,7 @@ class ViewController: UIViewController {
         updateTotalDistanceText()
         collectionView.reloadData()
         prewarmInitialRouteSources()
+        restorePersistedRouteBookModeIfNeeded()
     }
 
     private func loadAuthorizedHealthWorkouts() {
@@ -833,6 +988,7 @@ class ViewController: UIViewController {
             collectionView.reloadData()
         }
         scheduleCacheSave()
+        restorePersistedRouteBookModeIfNeeded()
         return true
     }
 
@@ -1292,6 +1448,257 @@ class ViewController: UIViewController {
             y: min(max(offset.y, minimumY), maximumY)
         )
     }
+
+    private func restorePersistedRouteBookModeIfNeeded() {
+        guard !isRouteBookModeActive,
+              let activeWorkoutID = RouteBookMode.activeWorkoutID,
+              let workout = workouts.first(where: { $0.id == activeWorkoutID }) else {
+            return
+        }
+
+        enterRouteBookMode(with: workout, persists: false)
+    }
+
+    private func enterRouteBookMode(with workout: TrackedWorkout, persists: Bool = true) {
+        let coordinates = workout.displayCoordinates
+        guard coordinates.count > 1 else {
+            presentSimpleAlert(title: AppLocalization.text(.routeBook), message: AppLocalization.text(.unknownLocation))
+            return
+        }
+
+        if persists {
+            RouteBookMode.activate(workoutID: workout.id)
+        }
+
+        routeBookWorkout = workout
+        isRouteBookModeActive = true
+        routeBookMapContainerView.isHidden = false
+        routeBookLocateButton.isHidden = false
+        collectionView.isHidden = true
+        emptyDataSourceView.isHidden = true
+        headerView.backgroundColor = .clear
+        headerBlurView.isHidden = false
+        view.bringSubviewToFront(headerView)
+        routeBookScaleView.isHidden = false
+        view.bringSubviewToFront(routeBookScaleView)
+        view.bringSubviewToFront(routeBookLocateButton)
+
+        drawRouteBookRoute(coordinates)
+        requestRouteBookLocationAuthorizationIfNeeded()
+        updateRouteBookLocateButtonState()
+        updateHeaderReadAuthorizationState()
+    }
+
+    private func drawRouteBookRoute(_ coordinates: [CLLocationCoordinate2D]) {
+        if let routeBookPolyline {
+            routeBookMapView.removeOverlay(routeBookPolyline)
+        }
+
+        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
+        routeBookPolyline = polyline
+        routeBookMapView.addOverlay(polyline, level: .aboveLabels)
+        resetRouteBookMapHeading(animated: false)
+        routeBookMapView.setVisibleMapRect(
+            polyline.boundingMapRect,
+            edgePadding: UIEdgeInsets(
+                top: 150,
+                left: 44,
+                bottom: 72 + AppMapContainerView.defaultBottomLogoAvoidanceOffset,
+                right: 44
+            ),
+            animated: false
+        )
+    }
+
+    private func requestRouteBookLocationAuthorizationIfNeeded() {
+        switch routeBookLocationManager.authorizationStatus {
+        case .notDetermined:
+            routeBookLocationManager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            routeBookMapView.showsUserLocation = true
+            requestTemporaryPreciseLocationIfNeeded()
+            startRouteBookLocationAndHeadingUpdates()
+        case .denied, .restricted:
+            routeBookMapView.showsUserLocation = false
+            stopRouteBookLocationAndHeadingUpdates()
+            break
+        @unknown default:
+            break
+        }
+
+        updateRouteBookLocateButtonState()
+    }
+
+    private func requestTemporaryPreciseLocationIfNeeded() {
+        guard routeBookLocationManager.accuracyAuthorization == .reducedAccuracy else {
+            return
+        }
+
+        routeBookLocationManager.requestTemporaryFullAccuracyAuthorization(
+            withPurposeKey: "RouteBookNavigation"
+        )
+    }
+
+    @objc private func handleRouteBookLocateButtonTap() {
+        switch routeBookLocationManager.authorizationStatus {
+        case .notDetermined:
+            shouldCenterRouteBookOnNextLocation = true
+            routeBookLocationManager.requestWhenInUseAuthorization()
+        case .authorizedAlways, .authorizedWhenInUse:
+            routeBookMapView.showsUserLocation = true
+            requestTemporaryPreciseLocationIfNeeded()
+            startRouteBookLocationAndHeadingUpdates()
+            if !centerRouteBookMapOnUser(animated: true) {
+                shouldCenterRouteBookOnNextLocation = true
+                routeBookLocationManager.requestLocation()
+            }
+        case .denied, .restricted:
+            presentRouteBookLocationSettingsAlert()
+        @unknown default:
+            break
+        }
+
+        updateRouteBookLocateButtonState()
+    }
+
+    private func updateRouteBookLocateButtonState() {
+        let isAuthorized: Bool
+        switch routeBookLocationManager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            isAuthorized = true
+        case .notDetermined, .denied, .restricted:
+            isAuthorized = false
+        @unknown default:
+            isAuthorized = false
+        }
+
+        var configuration = routeBookLocateButton.configuration ?? .filled()
+        configuration.image = UIImage(
+            systemName: isAuthorized ? "location.fill" : "location.slash.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        )
+        routeBookLocateButton.configuration = configuration
+    }
+
+    @discardableResult
+    private func centerRouteBookMapOnUser(animated: Bool) -> Bool {
+        let location = routeBookLastLocation ?? routeBookMapView.userLocation.location ?? routeBookLocationManager.location
+        guard let coordinate = location?.coordinate,
+              CLLocationCoordinate2DIsValid(coordinate) else {
+            return false
+        }
+
+        routeBookMapView.setRegion(
+            MKCoordinateRegion(
+                center: coordinate,
+                latitudinalMeters: 800,
+                longitudinalMeters: 800
+            ),
+            animated: animated
+        )
+        resetRouteBookMapHeading(animated: animated)
+        return true
+    }
+
+    private func resetRouteBookMapHeading(animated: Bool) {
+        guard routeBookMapView.camera.heading != 0 else {
+            return
+        }
+
+        let camera = routeBookMapView.camera
+        camera.heading = 0
+        routeBookMapView.setCamera(camera, animated: animated)
+    }
+
+    private func startRouteBookLocationAndHeadingUpdates() {
+        routeBookLocationManager.startUpdatingLocation()
+        if CLLocationManager.headingAvailable() {
+            routeBookLocationManager.startUpdatingHeading()
+        }
+        updateRouteBookUserLocationHeadingView()
+    }
+
+    private func stopRouteBookLocationAndHeadingUpdates() {
+        routeBookLocationManager.stopUpdatingLocation()
+        if CLLocationManager.headingAvailable() {
+            routeBookLocationManager.stopUpdatingHeading()
+        }
+    }
+
+    private func updateRouteBookUserLocationHeadingView() {
+        (routeBookMapView.view(for: routeBookMapView.userLocation) as? RouteBookUserLocationAnnotationView)?
+            .configure(headingDegrees: routeBookLastHeadingDegrees)
+    }
+
+    private func presentRouteBookLocationSettingsAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.routeBookLocationPermissionRequiredTitle),
+            message: AppLocalization.text(.routeBookLocationPermissionRequiredMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.openSettings),
+            style: .default
+        ) { _ in
+            guard let url = URL(string: UIApplication.openSettingsURLString) else {
+                return
+            }
+
+            UIApplication.shared.open(url)
+        })
+        present(alertController, animated: true)
+    }
+
+    private func presentRouteBookExitAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.routeBookExit),
+            message: AppLocalization.text(.routeBookExitMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.exit),
+            style: .destructive
+        ) { [weak self] _ in
+            self?.exitRouteBookMode()
+        })
+        present(alertController, animated: true)
+    }
+
+    private func exitRouteBookMode() {
+        isRouteBookModeActive = false
+        routeBookWorkout = nil
+        RouteBookMode.clearActiveWorkout()
+        shouldCenterRouteBookOnNextLocation = false
+        routeBookLastLocation = nil
+        routeBookLastHeadingDegrees = nil
+        routeBookHeadingDisplayDegrees = nil
+        stopRouteBookLocationAndHeadingUpdates()
+        routeBookMapView.setUserTrackingMode(.none, animated: false)
+        routeBookMapView.showsUserLocation = false
+        if let routeBookPolyline {
+            routeBookMapView.removeOverlay(routeBookPolyline)
+        }
+        routeBookPolyline = nil
+
+        routeBookMapContainerView.isHidden = true
+        routeBookScaleView.isHidden = true
+        routeBookLocateButton.isHidden = true
+        collectionView.isHidden = false
+        headerView.backgroundColor = .white
+        headerBlurView.isHidden = true
+        view.bringSubviewToFront(headerView)
+        updateHeaderReadAuthorizationState()
+        updateEmptyDataSourceVisibility()
+        updateFullScreenInsets(force: true)
+    }
 }
 
 extension ViewController: ASWebAuthenticationPresentationContextProviding {
@@ -1305,6 +1712,314 @@ extension ViewController: ASWebAuthenticationPresentationContextProviding {
             .first
 
         return ASPresentationAnchor(windowScene: windowScene!)
+    }
+}
+
+extension ViewController: MKMapViewDelegate {
+    func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        guard mapView === routeBookMapView,
+              annotation is MKUserLocation else {
+            return nil
+        }
+
+        let annotationView = mapView.dequeueReusableAnnotationView(
+            withIdentifier: RouteBookUserLocationAnnotationView.reuseIdentifier
+        ) as? RouteBookUserLocationAnnotationView ?? RouteBookUserLocationAnnotationView(
+            annotation: annotation,
+            reuseIdentifier: RouteBookUserLocationAnnotationView.reuseIdentifier
+        )
+        annotationView.annotation = annotation
+        annotationView.configure(headingDegrees: routeBookLastHeadingDegrees)
+        return annotationView
+    }
+
+    func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+        if let renderer = AppMapStyle.renderer(for: overlay) {
+            return renderer
+        }
+
+        guard let polyline = overlay as? MKPolyline else {
+            return MKOverlayRenderer(overlay: overlay)
+        }
+
+        let renderer = MKPolylineRenderer(polyline: polyline)
+        renderer.strokeColor = UIColor.black.withAlphaComponent(0.34)
+        renderer.lineWidth = 3
+        renderer.lineJoin = .round
+        renderer.lineCap = .round
+        return renderer
+    }
+
+    func mapView(_ mapView: MKMapView, didUpdate userLocation: MKUserLocation) {
+        guard mapView === routeBookMapView,
+              isRouteBookModeActive else {
+            return
+        }
+
+        if let location = userLocation.location {
+            routeBookLastLocation = location
+            updateRouteBookUserLocationHeadingView()
+        }
+
+        if shouldCenterRouteBookOnNextLocation {
+            shouldCenterRouteBookOnNextLocation = !centerRouteBookMapOnUser(animated: true)
+        }
+    }
+}
+
+extension ViewController: CLLocationManagerDelegate {
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard manager === routeBookLocationManager, isRouteBookModeActive else {
+            return
+        }
+
+        switch manager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            requestTemporaryPreciseLocationIfNeeded()
+            routeBookMapView.showsUserLocation = true
+            startRouteBookLocationAndHeadingUpdates()
+            if shouldCenterRouteBookOnNextLocation {
+                shouldCenterRouteBookOnNextLocation = !centerRouteBookMapOnUser(animated: true)
+                if shouldCenterRouteBookOnNextLocation {
+                    manager.requestLocation()
+                }
+            }
+        case .denied, .restricted:
+            shouldCenterRouteBookOnNextLocation = false
+            routeBookMapView.showsUserLocation = false
+            stopRouteBookLocationAndHeadingUpdates()
+        case .notDetermined:
+            break
+        @unknown default:
+            break
+        }
+
+        updateRouteBookLocateButtonState()
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard manager === routeBookLocationManager,
+              isRouteBookModeActive else {
+            return
+        }
+
+        if let location = locations.last {
+            routeBookLastLocation = location
+            updateRouteBookUserLocationHeadingView()
+        }
+
+        if shouldCenterRouteBookOnNextLocation {
+            shouldCenterRouteBookOnNextLocation = !centerRouteBookMapOnUser(animated: true)
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        guard manager === routeBookLocationManager,
+              isRouteBookModeActive else {
+            return
+        }
+
+        guard newHeading.headingAccuracy >= 0 else {
+            return
+        }
+
+        let heading = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+        guard heading >= 0 else {
+            return
+        }
+
+        routeBookLastHeadingDegrees = smoothedRouteBookHeading(from: heading)
+        updateRouteBookUserLocationHeadingView()
+    }
+
+    private func smoothedRouteBookHeading(from heading: CLLocationDirection) -> CLLocationDirection {
+        let normalizedHeading = Self.normalizedHeading(heading)
+        guard let currentHeading = routeBookHeadingDisplayDegrees else {
+            routeBookHeadingDisplayDegrees = normalizedHeading
+            return normalizedHeading
+        }
+
+        let delta = Self.shortestHeadingDelta(from: currentHeading, to: normalizedHeading)
+        if abs(delta) < 1.4 {
+            return currentHeading
+        }
+
+        let smoothedHeading = Self.normalizedHeading(currentHeading + delta * 0.32)
+        routeBookHeadingDisplayDegrees = smoothedHeading
+        return smoothedHeading
+    }
+
+    private static func normalizedHeading(_ heading: CLLocationDirection) -> CLLocationDirection {
+        var normalizedHeading = heading.truncatingRemainder(dividingBy: 360)
+        if normalizedHeading < 0 {
+            normalizedHeading += 360
+        }
+        return normalizedHeading
+    }
+
+    private static func shortestHeadingDelta(
+        from startHeading: CLLocationDirection,
+        to endHeading: CLLocationDirection
+    ) -> CLLocationDirection {
+        var delta = normalizedHeading(endHeading) - normalizedHeading(startHeading)
+        if delta > 180 {
+            delta -= 360
+        } else if delta < -180 {
+            delta += 360
+        }
+        return delta
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        guard manager === routeBookLocationManager else {
+            return
+        }
+
+        shouldCenterRouteBookOnNextLocation = false
+        print("PTrack RouteBook: location update failed: \(error)")
+    }
+}
+
+private final class RouteBookUserLocationAnnotationView: MKAnnotationView {
+    static let reuseIdentifier = "RouteBookUserLocationAnnotationView"
+
+    private enum Metrics {
+        static let size: CGFloat = 50
+        static let markerSize: CGFloat = 44
+    }
+
+    private let markerView = RouteBookUserLocationMarkerView()
+    private var headingDegrees: CLLocationDirection?
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        configureView()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureView()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutMarkerView()
+        applyHeadingTransform()
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        configure(headingDegrees: nil)
+    }
+
+    func configure(headingDegrees: CLLocationDirection?) {
+        self.headingDegrees = headingDegrees
+        markerView.showsHeading = headingDegrees != nil
+        applyHeadingTransform()
+    }
+
+    private func configureView() {
+        frame = CGRect(x: 0, y: 0, width: Metrics.size, height: Metrics.size)
+        bounds = CGRect(x: 0, y: 0, width: Metrics.size, height: Metrics.size)
+        centerOffset = .zero
+        canShowCallout = false
+        isUserInteractionEnabled = false
+        displayPriority = .required
+        collisionMode = .none
+        layer.masksToBounds = false
+
+        markerView.backgroundColor = .clear
+        markerView.isUserInteractionEnabled = false
+        markerView.layer.shadowColor = UIColor.black.cgColor
+        markerView.layer.shadowOpacity = 0.16
+        markerView.layer.shadowRadius = 4
+        markerView.layer.shadowOffset = .zero
+
+        addSubview(markerView)
+        layoutMarkerView()
+    }
+
+    private func layoutMarkerView() {
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        markerView.bounds = CGRect(x: 0, y: 0, width: Metrics.markerSize, height: Metrics.markerSize)
+        markerView.center = center
+    }
+
+    private func applyHeadingTransform() {
+        if let headingDegrees {
+            markerView.transform = CGAffineTransform(rotationAngle: CGFloat(headingDegrees * .pi / 180))
+        } else {
+            markerView.transform = .identity
+        }
+    }
+}
+
+private final class RouteBookUserLocationMarkerView: UIView {
+    var showsHeading = false {
+        didSet {
+            guard oldValue != showsHeading else {
+                return
+            }
+
+            setNeedsDisplay()
+        }
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else {
+            return
+        }
+
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let blue = UIColor.systemBlue
+        let outline = UIColor.white
+
+        if showsHeading {
+            drawHeadingArrow(center: center, fillColor: blue, outlineColor: outline)
+        }
+
+        let outerRadius: CGFloat = 10
+        let innerRadius: CGFloat = 7
+        context.saveGState()
+        outline.setFill()
+        UIBezierPath(
+            ovalIn: CGRect(
+                x: center.x - outerRadius,
+                y: center.y - outerRadius,
+                width: outerRadius * 2,
+                height: outerRadius * 2
+            )
+        ).fill()
+        blue.setFill()
+        UIBezierPath(
+            ovalIn: CGRect(
+                x: center.x - innerRadius,
+                y: center.y - innerRadius,
+                width: innerRadius * 2,
+                height: innerRadius * 2
+            )
+        ).fill()
+        context.restoreGState()
+    }
+
+    private func drawHeadingArrow(center: CGPoint, fillColor: UIColor, outlineColor: UIColor) {
+        let outlinePath = UIBezierPath()
+        outlinePath.move(to: CGPoint(x: center.x, y: center.y - 21))
+        outlinePath.addLine(to: CGPoint(x: center.x + 8.5, y: center.y - 12))
+        outlinePath.addLine(to: CGPoint(x: center.x - 8.5, y: center.y - 12))
+        outlinePath.close()
+
+        outlineColor.setFill()
+        outlinePath.fill()
+
+        let arrowPath = UIBezierPath()
+        arrowPath.move(to: CGPoint(x: center.x, y: center.y - 17.5))
+        arrowPath.addLine(to: CGPoint(x: center.x + 5.5, y: center.y - 11.8))
+        arrowPath.addLine(to: CGPoint(x: center.x - 5.5, y: center.y - 11.8))
+        arrowPath.close()
+
+        fillColor.setFill()
+        arrowPath.fill()
     }
 }
 
