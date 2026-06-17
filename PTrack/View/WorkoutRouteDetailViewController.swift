@@ -59,6 +59,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var routePolyline: MKPolyline?
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
     private var resolvedNavigationTitle: String?
+    private var lastObservedPhotoAuthorizationState: PhotoLibraryAuthorizationState?
 
     private let minimumPanelHeight: CGFloat = 68
     private let mediumPanelHeight: CGFloat = 200
@@ -121,6 +122,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         configureDefaultNavigationBar()
+        refreshMoreMenuForPhotoAuthorizationState()
     }
 
     override func viewDidLayoutSubviews() {
@@ -186,6 +188,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
             self?.openStartInMaps()
         }
 
+        let photoMatchingAction = UIAction(
+            title: AppLocalization.text(.photoMatching),
+            image: UIImage(systemName: "photo.on.rectangle")
+        ) { [weak self] _ in
+            self?.presentPhotoLibrarySettingsAlert()
+        }
+
         let mapStyleActions = AppMapDisplayStyle.menuCases.map { style in
             UIAction(
                 title: style.title,
@@ -195,13 +204,55 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
         }
 
+        var menuChildren: [UIMenuElement] = [openStartAction]
+        if PhotoLibraryAuthorizationManager.authorizationState == .needsAttention {
+            menuChildren.append(photoMatchingAction)
+        }
+        menuChildren.append(UIMenu(
+            title: AppLocalization.text(.mapStyle),
+            image: UIImage(systemName: "map"),
+            children: mapStyleActions
+        ))
+
         return UIMenu(
             title: "",
-            children: [
-                openStartAction,
-                UIMenu(title: AppLocalization.text(.mapStyle), image: UIImage(systemName: "map"), children: mapStyleActions)
-            ]
+            children: menuChildren
         )
+    }
+
+    private func refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: Bool = true) {
+        let currentState = PhotoLibraryAuthorizationManager.authorizationState
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
+
+        if reloadMediaIfAuthorizationJustGranted,
+           lastObservedPhotoAuthorizationState != .authorized,
+           currentState == .authorized,
+           routeMediaItems.isEmpty {
+            loadRouteMedia()
+        }
+        lastObservedPhotoAuthorizationState = currentState
+    }
+
+    private func presentPhotoLibrarySettingsAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.photoLibraryFullAccessRequiredTitle),
+            message: AppLocalization.text(.photoLibraryFullAccessRequiredMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.openSettings),
+            style: .default
+        ) { _ in
+            guard let url = URL(string: UIApplication.openSettingsURLString) else {
+                return
+            }
+            UIApplication.shared.open(url)
+        })
+        present(alertController, animated: true)
     }
 
     private func makeNavigationTitleView() -> UIView {
@@ -645,9 +696,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
                     self.routeMediaItems = mediaItems
                     let annotations = mediaItems.map(RouteMediaAnnotation.init)
                     self.mapView.addAnnotations(annotations)
+                    self.refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: false)
                 }
             case .failure(let error):
                 print("PTrack Photos: failed to load route media: \(error)")
+                self.refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: false)
             }
         }
     }

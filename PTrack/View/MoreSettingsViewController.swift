@@ -79,18 +79,9 @@ final class MoreSettingsViewController: UIViewController {
 
     private enum ConnectionIndicatorState: Equatable {
         case connected
-        case needsAttention
-        case warning
 
         var color: UIColor {
-            switch self {
-            case .connected:
-                return AppColors.movinnGreen
-            case .needsAttention:
-                return .systemOrange
-            case .warning:
-                return .systemYellow
-            }
+            AppColors.movinnGreen
         }
     }
 
@@ -237,7 +228,7 @@ final class MoreSettingsViewController: UIViewController {
             case .authorized:
                 return .connected
             case .needsAttention:
-                return .needsAttention
+                return nil
             }
         case .strava:
             switch StravaManager.shared.authorizationState {
@@ -246,7 +237,7 @@ final class MoreSettingsViewController: UIViewController {
             case .authorized:
                 return .connected
             case .needsReauthorization:
-                return .needsAttention
+                return nil
             }
         case .systemPhotos:
             switch PhotoLibraryAuthorizationManager.authorizationState {
@@ -255,7 +246,7 @@ final class MoreSettingsViewController: UIViewController {
             case .authorized:
                 return .connected
             case .needsAttention:
-                return .warning
+                return nil
             }
         case .appLanguage, .developerWebsite:
             return nil
@@ -296,9 +287,15 @@ final class MoreSettingsViewController: UIViewController {
     }
 
     private func requestHealthAuthorization() {
-        if connectionIndicatorState(for: .appleHealth) == .connected {
+        switch healthWorkoutStore.authorizationState {
+        case .authorized:
             Toast.show(AppLocalization.text(.healthDataReadAuthorized), in: view)
             return
+        case .needsAttention:
+            presentHealthAuthorizationSettingsAlert()
+            return
+        case .notDetermined:
+            break
         }
 
         healthWorkoutStore.requestAuthorization { [weak self] result in
@@ -313,6 +310,28 @@ final class MoreSettingsViewController: UIViewController {
                 self.collectionView.reloadData()
             }
         }
+    }
+
+    private func presentHealthAuthorizationSettingsAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.healthAuthorizationSettingsRequiredTitle),
+            message: AppLocalization.text(.healthAuthorizationSettingsRequiredMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.openSettings),
+            style: .default
+        ) { _ in
+            guard let url = URL(string: UIApplication.openSettingsURLString) else {
+                return
+            }
+            UIApplication.shared.open(url)
+        })
+        present(alertController, animated: true)
     }
 
     private func handleStravaSelection() {

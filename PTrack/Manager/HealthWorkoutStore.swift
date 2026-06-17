@@ -250,7 +250,7 @@ final class HealthWorkoutStore {
         defaults.set(false, forKey: DefaultsKey.authorizationNeedsAttention)
     }
 
-    private func markAuthorizationNeedsAttention() {
+    func markAuthorizationNeedsAttention() {
         defaults.set(true, forKey: DefaultsKey.authorizationRequested)
         defaults.set(true, forKey: DefaultsKey.authorizationNeedsAttention)
     }

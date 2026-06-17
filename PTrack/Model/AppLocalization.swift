@@ -43,6 +43,8 @@ enum AppTextKey: String {
     case healthAuthorizationDenied
     case healthAuthorizationFailed
     case healthAuthorizationProgress
+    case healthAuthorizationSettingsRequiredMessage
+    case healthAuthorizationSettingsRequiredTitle
     case healthDataReadAuthorized
     case healthDataUnavailable
     case appleHealthDataSourceSubtitle
@@ -60,6 +62,7 @@ enum AppTextKey: String {
     case photoLibraryFullAccessRequiredMessage
     case photoLibraryFullAccessRequiredTitle
     case photoLibraryReadAuthorized
+    case photoMatching
     case queryingLocation
     case routeHeatmap
     case running
@@ -173,13 +176,15 @@ enum AppLocalization {
             .healthAuthorizationDenied: "未获得健康数据读取权限。",
             .healthAuthorizationFailed: "健康授权失败",
             .healthAuthorizationProgress: "正在请求 Apple 健康体能训练、路线和运动指标读取权限...",
+            .healthAuthorizationSettingsRequiredMessage: "请在系统设置或健康 App 中为 Movinn 打开体能训练、路线和运动指标读取权限。",
+            .healthAuthorizationSettingsRequiredTitle: "需要 Apple 健康权限",
             .healthDataReadAuthorized: "已授权读取数据",
             .healthDataUnavailable: "当前设备不支持健康数据。",
             .appleHealthDataSourceSubtitle: "读取 Apple 健康中记录的数据。",
             .hiking: "徒步",
             .mapStyle: "地图样式",
             .more: "更多",
-            .movinnLocalDataPrivacyStatement: "Movinn 只读取你的数据做可视化展示，我们绝不上传用户数据，且均在本地完成所有计算",
+            .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
             .newActivity: "新活动！",
             .ok: "好",
             .openStart: "去起点",
@@ -190,6 +195,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "只有完整访问权限才能为轨迹匹配照片。请在系统设置中把照片权限改为“完全访问”。",
             .photoLibraryFullAccessRequiredTitle: "需要完整相册权限",
             .photoLibraryReadAuthorized: "已授权读取相册",
+            .photoMatching: "照片匹配",
             .queryingLocation: "位置查询中",
             .routeHeatmap: "轨迹热图",
             .running: "跑步",
@@ -257,13 +263,15 @@ enum AppLocalization {
             .healthAuthorizationDenied: "ヘルスケアデータの読み取り権限がありません。",
             .healthAuthorizationFailed: "ヘルスケア認証に失敗しました",
             .healthAuthorizationProgress: "Appleヘルスケアのワークアウト、ルート、運動指標の読み取り権限を要求しています...",
+            .healthAuthorizationSettingsRequiredMessage: "システム設定またはヘルスケア App で、Movinn のワークアウト、ルート、運動指標の読み取り権限を有効にしてください。",
+            .healthAuthorizationSettingsRequiredTitle: "Appleヘルスケアの権限が必要です",
             .healthDataReadAuthorized: "データ読み取りは許可されています",
             .healthDataUnavailable: "このデバイスはヘルスケアデータに対応していません。",
             .appleHealthDataSourceSubtitle: "Appleヘルスケアに記録されたデータを読み取ります。",
             .hiking: "ハイキング",
             .mapStyle: "地図スタイル",
             .more: "その他",
-            .movinnLocalDataPrivacyStatement: "Movinn は可視化表示のためだけにあなたのデータを読み取ります。ユーザーデータをアップロードすることはなく、すべての計算はローカルで完了します",
+            .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
             .newActivity: "新規",
             .ok: "OK",
             .openStart: "スタートへ",
@@ -274,6 +282,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "ルートに写真を照合するには、写真へのフルアクセスが必要です。システム設定で写真の権限を「フルアクセス」に変更してください。",
             .photoLibraryFullAccessRequiredTitle: "写真へのフルアクセスが必要です",
             .photoLibraryReadAuthorized: "写真の読み取りは許可されています",
+            .photoMatching: "写真照合",
             .queryingLocation: "位置を検索中",
             .routeHeatmap: "軌跡ヒートマップ",
             .running: "ランニング",
@@ -341,13 +350,15 @@ enum AppLocalization {
             .healthAuthorizationDenied: "건강 데이터 읽기 권한이 없습니다.",
             .healthAuthorizationFailed: "건강 권한 요청 실패",
             .healthAuthorizationProgress: "Apple 건강의 운동, 경로, 운동 지표 읽기 권한을 요청하는 중...",
+            .healthAuthorizationSettingsRequiredMessage: "시스템 설정 또는 건강 앱에서 Movinn의 운동, 경로, 운동 지표 읽기 권한을 켜 주세요.",
+            .healthAuthorizationSettingsRequiredTitle: "Apple 건강 권한 필요",
             .healthDataReadAuthorized: "데이터 읽기 권한이 허용되었습니다",
             .healthDataUnavailable: "이 기기는 건강 데이터를 지원하지 않습니다.",
             .appleHealthDataSourceSubtitle: "Apple 건강에 기록된 데이터를 읽습니다.",
             .hiking: "하이킹",
             .mapStyle: "지도 스타일",
             .more: "더보기",
-            .movinnLocalDataPrivacyStatement: "Movinn은 시각화 표시를 위해서만 데이터를 읽습니다. 사용자 데이터를 절대 업로드하지 않으며 모든 계산은 로컬에서 완료됩니다",
+            .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
             .newActivity: "새 활동!",
             .ok: "확인",
             .openStart: "시작점으로",
@@ -358,6 +369,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "경로와 사진을 매칭하려면 사진 전체 접근 권한이 필요합니다. 시스템 설정에서 사진 권한을 전체 접근으로 변경해 주세요.",
             .photoLibraryFullAccessRequiredTitle: "사진 전체 접근 권한 필요",
             .photoLibraryReadAuthorized: "사진 읽기 권한이 허용되었습니다",
+            .photoMatching: "사진 매칭",
             .queryingLocation: "위치 조회 중",
             .routeHeatmap: "경로 히트맵",
             .running: "달리기",
@@ -425,13 +437,15 @@ enum AppLocalization {
             .healthAuthorizationDenied: "Health data read permission has not been granted.",
             .healthAuthorizationFailed: "Health authorization failed",
             .healthAuthorizationProgress: "Requesting Apple Health workout, route, and metric read permissions...",
+            .healthAuthorizationSettingsRequiredMessage: "Enable workout, route, and metric read permissions for Movinn in system Settings or the Health app.",
+            .healthAuthorizationSettingsRequiredTitle: "Apple Health Permission Required",
             .healthDataReadAuthorized: "Data read access is authorized",
             .healthDataUnavailable: "Health data is not available on this device.",
             .appleHealthDataSourceSubtitle: "Read data recorded in Apple Health.",
             .hiking: "Hiking",
             .mapStyle: "Map Style",
             .more: "More",
-            .movinnLocalDataPrivacyStatement: "Movinn only reads your data for visualization. We never upload user data, and all processing is completed locally.",
+            .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
             .newActivity: "New!",
             .ok: "OK",
             .openStart: "Go to Start",
@@ -442,6 +456,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "Full Photos access is required to match photos to routes. Change Photos permission to Full Access in system settings.",
             .photoLibraryFullAccessRequiredTitle: "Full Photos Access Required",
             .photoLibraryReadAuthorized: "Photo access is authorized",
+            .photoMatching: "Photo Matching",
             .queryingLocation: "Locating",
             .routeHeatmap: "Route Heatmap",
             .running: "Running",

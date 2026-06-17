@@ -31,6 +31,7 @@ class ViewController: UIViewController {
     private var isCacheLoadInProgress = false
     private var isHealthSyncInProgress = false
     private var isStravaSyncInProgress = false
+    private var isHealthAuthorizationRequestedFromEmptyState = false
     private var isPullRefreshArmedInCurrentDrag = false
     private var collectionView: UICollectionView!
     private let gridLayout = WorkoutGridLayout()
@@ -276,7 +277,7 @@ class ViewController: UIViewController {
             make.centerX.equalToSuperview()
             make.width.equalToSuperview().offset(-48).priority(.high)
             make.width.lessThanOrEqualTo(360)
-            make.centerY.equalTo(view.safeAreaLayoutGuide.snp.centerY).offset(42)
+            make.centerY.equalTo(view.safeAreaLayoutGuide.snp.centerY).offset(-18)
             make.top.greaterThanOrEqualTo(headerView.snp.bottom).offset(36)
         }
 
@@ -390,6 +391,7 @@ class ViewController: UIViewController {
     }
 
     private func updateEmptyDataSourceVisibility() {
+        emptyDataSourceView.updateAuthorizationState(appleHealth: store.authorizationState)
         emptyDataSourceView.isHidden = !workouts.isEmpty || hasReadableDataSourceAuthorization
     }
 
@@ -521,7 +523,10 @@ class ViewController: UIViewController {
                 print("PTrack HealthKit: authorization failed: \(error)")
                 Task { @MainActor in
                     self.isHealthSyncInProgress = false
+                    self.isHealthAuthorizationRequestedFromEmptyState = false
                     self.updateHeaderReadAuthorizationState()
+                    self.updateEmptyDataSourceVisibility()
+                    self.presentHealthAuthorizationError(error)
                 }
             }
         }
@@ -951,20 +956,42 @@ class ViewController: UIViewController {
     }
 
     private func handleLoadResult(_ result: Result<Int, Error>) {
+        let wasRequestedFromEmptyState = isHealthAuthorizationRequestedFromEmptyState
+        isHealthAuthorizationRequestedFromEmptyState = false
         isHealthSyncInProgress = false
-        endLoadingOperation()
-        updateHeaderReadAuthorizationState()
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
             print("PTrack HealthKit: route query completed, loaded routes: \(count)")
+            if shouldTreatEmptyHealthImportAsNeedsAttention(
+                loadedCount: count,
+                wasRequestedFromEmptyState: wasRequestedFromEmptyState
+            ) {
+                store.markAuthorizationNeedsAttention()
+            }
             newWorkoutBadgeStore.markInitialSyncCompleted()
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")
         }
+        endLoadingOperation()
+        updateHeaderReadAuthorizationState()
         if didFlushPendingWorkouts {
             scheduleCacheSave(delay: 0)
         }
+    }
+
+    private func shouldTreatEmptyHealthImportAsNeedsAttention(
+        loadedCount: Int,
+        wasRequestedFromEmptyState: Bool
+    ) -> Bool {
+        guard loadedCount == 0,
+              workouts.isEmpty,
+              pendingWorkouts.isEmpty,
+              !StravaManager.shared.hasStoredAuthorization else {
+            return false
+        }
+
+        return wasRequestedFromEmptyState || store.authorizationState == .authorized
     }
 
     private func showHeatmap() {
@@ -994,6 +1021,22 @@ class ViewController: UIViewController {
     }
 
     private func handleEmptyAppleHealthSelection() {
+        switch store.authorizationState {
+        case .authorized:
+            Toast.show(AppLocalization.text(.healthDataReadAuthorized), in: view)
+            return
+        case .needsAttention:
+            presentHealthAuthorizationSettingsAlert()
+            return
+        case .notDetermined:
+            break
+        }
+
+        guard !isHealthSyncInProgress else {
+            return
+        }
+
+        isHealthAuthorizationRequestedFromEmptyState = true
         requestHealthAuthorizationAndLoadWorkouts()
     }
 
@@ -1035,6 +1078,48 @@ class ViewController: UIViewController {
         let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
         present(alertController, animated: true)
+    }
+
+    private func presentHealthAuthorizationSettingsAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.healthAuthorizationSettingsRequiredTitle),
+            message: AppLocalization.text(.healthAuthorizationSettingsRequiredMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.openSettings),
+            style: .default
+        ) { _ in
+            guard let url = URL(string: UIApplication.openSettingsURLString) else {
+                return
+            }
+            UIApplication.shared.open(url)
+        })
+        present(alertController, animated: true)
+    }
+
+    private func presentHealthAuthorizationError(_ error: Error) {
+        presentSimpleAlert(
+            title: AppLocalization.text(.healthAuthorizationFailed),
+            message: localizedHealthErrorMessage(for: error)
+        )
+    }
+
+    private func localizedHealthErrorMessage(for error: Error) -> String {
+        guard let storeError = error as? HealthWorkoutStoreError else {
+            return error.localizedDescription
+        }
+
+        switch storeError {
+        case .healthDataUnavailable:
+            return AppLocalization.text(.healthDataUnavailable)
+        case .authorizationDenied:
+            return AppLocalization.text(.healthAuthorizationDenied)
+        }
     }
 
     @objc private func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
@@ -1253,7 +1338,37 @@ private final class HomeDataSourceEmptyView: UIView {
             title: AppLocalization.text(.strava),
             subtitle: AppLocalization.text(.stravaDataSourceSubtitle)
         )
-        privacyLabel.text = AppLocalization.text(.movinnLocalDataPrivacyStatement)
+        privacyLabel.attributedText = privacyStatementAttributedText(
+            AppLocalization.text(.movinnLocalDataPrivacyStatement)
+        )
+    }
+
+    func updateAuthorizationState(appleHealth state: HealthWorkoutStore.AuthorizationState) {
+        switch state {
+        case .authorized:
+            appleHealthCard.setStatusIndicatorColor(AppColors.movinnGreen)
+        case .notDetermined, .needsAttention:
+            appleHealthCard.setStatusIndicatorColor(nil)
+        }
+    }
+
+    private func privacyStatementAttributedText(_ text: String) -> NSAttributedString {
+        let font = privacyLabel.font ?? .systemFont(ofSize: 12, weight: .medium)
+        let bulletPrefixWidth = "- ".size(withAttributes: [.font: font]).width
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.firstLineHeadIndent = 0
+        paragraphStyle.headIndent = ceil(bulletPrefixWidth)
+        paragraphStyle.paragraphSpacing = 3
+        paragraphStyle.lineBreakMode = .byWordWrapping
+
+        return NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: privacyLabel.textColor ?? UIColor.secondaryLabel,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
     }
 
     private func configureViews() {
@@ -1264,7 +1379,7 @@ private final class HomeDataSourceEmptyView: UIView {
         privacyLabel.textColor = .secondaryLabel
         privacyLabel.font = .systemFont(ofSize: 12, weight: .medium)
         privacyLabel.numberOfLines = 0
-        privacyLabel.textAlignment = .center
+        privacyLabel.textAlignment = .left
 
         appleHealthCard.addAction(UIAction { [weak self] _ in
             self?.onAppleHealthTap?()
@@ -1305,6 +1420,7 @@ private final class HomeDataSourceCardView: UIControl {
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let textStackView = UIStackView()
+    private let statusIndicatorView = UIView()
 
     init(style: Style) {
         self.style = style
@@ -1330,6 +1446,11 @@ private final class HomeDataSourceCardView: UIControl {
     func configure(title: String, subtitle: String) {
         titleLabel.text = title
         subtitleLabel.text = subtitle
+    }
+
+    func setStatusIndicatorColor(_ color: UIColor?) {
+        statusIndicatorView.backgroundColor = color
+        statusIndicatorView.isHidden = color == nil
     }
 
     private func configureViews() {
@@ -1358,6 +1479,12 @@ private final class HomeDataSourceCardView: UIControl {
         subtitleLabel.numberOfLines = 2
         subtitleLabel.lineBreakMode = .byTruncatingTail
 
+        statusIndicatorView.isHidden = true
+        statusIndicatorView.layer.cornerRadius = 4
+        statusIndicatorView.layer.masksToBounds = true
+        statusIndicatorView.layer.borderWidth = 1
+        statusIndicatorView.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+
         textStackView.axis = .vertical
         textStackView.alignment = .leading
         textStackView.spacing = 4
@@ -1366,6 +1493,7 @@ private final class HomeDataSourceCardView: UIControl {
         addSubview(iconView)
         addSubview(brandImageView)
         addSubview(textStackView)
+        addSubview(statusIndicatorView)
         textStackView.addArrangedSubview(titleLabel)
         textStackView.addArrangedSubview(subtitleLabel)
 
@@ -1393,6 +1521,11 @@ private final class HomeDataSourceCardView: UIControl {
                 make.trailing.equalToSuperview().inset(18)
                 make.top.equalTo(brandImageView.snp.bottom).offset(8)
             }
+        }
+
+        statusIndicatorView.snp.makeConstraints { make in
+            make.top.trailing.equalToSuperview().inset(8)
+            make.size.equalTo(8)
         }
     }
 }
