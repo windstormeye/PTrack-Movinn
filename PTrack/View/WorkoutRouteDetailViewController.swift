@@ -654,6 +654,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func configurePanelView() {
         let caloriesKilocalories = panelCaloriesKilocalories
+        let isRouteCollectionPanel = presentationMode == .routeCollection
 
         panelShadowView.backgroundColor = .clear
         panelShadowView.layer.cornerRadius = 32
@@ -677,7 +678,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         iconView.image = UIImage(systemName: workout.symbolName)
         iconView.tintColor = UIColor.black.withAlphaComponent(0.9)
         iconView.contentMode = .scaleAspectFit
-        iconView.isHidden = presentationMode == .routeCollection
+        iconView.isHidden = isRouteCollectionPanel
+        titleStackView.isHidden = isRouteCollectionPanel
 
         updatePanelText()
         titleLabel.font = .preferredFont(forTextStyle: .headline)
@@ -700,9 +702,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
             weight: .semibold
         )
 
-        metricsStackView.axis = .vertical
-        metricsStackView.alignment = .trailing
-        metricsStackView.spacing = 2
+        metricsStackView.axis = isRouteCollectionPanel ? .horizontal : .vertical
+        metricsStackView.alignment = isRouteCollectionPanel ? .center : .trailing
+        metricsStackView.distribution = .fill
+        metricsStackView.spacing = isRouteCollectionPanel ? 12 : 2
 
         distanceLabel.font = distanceFont
         distanceLabel.textColor = UIColor.black.withAlphaComponent(0.92)
@@ -741,8 +744,19 @@ final class WorkoutRouteDetailViewController: UIViewController {
         panelView.contentView.addSubview(detailStackView)
         titleStackView.addArrangedSubview(titleLabel)
         titleStackView.addArrangedSubview(dataSourceLabel)
-        metricsStackView.addArrangedSubview(distanceLabel)
-        metricsStackView.addArrangedSubview(durationLabel)
+        if isRouteCollectionPanel {
+            let metricsSpacerView = UIView()
+            metricsSpacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            metricsSpacerView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            distanceLabel.setContentHuggingPriority(.required, for: .horizontal)
+            durationLabel.setContentHuggingPriority(.required, for: .horizontal)
+            metricsStackView.addArrangedSubview(distanceLabel)
+            metricsStackView.addArrangedSubview(metricsSpacerView)
+            metricsStackView.addArrangedSubview(durationLabel)
+        } else {
+            metricsStackView.addArrangedSubview(distanceLabel)
+            metricsStackView.addArrangedSubview(durationLabel)
+        }
 
         panelView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview().inset(10)
@@ -775,12 +789,19 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         titleStackView.snp.makeConstraints { make in
-            make.leading.equalTo(iconView.snp.trailing).offset(presentationMode == .routeCollection ? 0 : 10)
+            make.leading.equalTo(iconView.snp.trailing).offset(isRouteCollectionPanel ? 0 : 10)
             make.centerY.equalTo(iconView)
-            make.trailing.lessThanOrEqualTo(metricsStackView.snp.leading).offset(-12)
+            if isRouteCollectionPanel {
+                make.trailing.lessThanOrEqualToSuperview().inset(18)
+            } else {
+                make.trailing.lessThanOrEqualTo(metricsStackView.snp.leading).offset(-12)
+            }
         }
 
         metricsStackView.snp.makeConstraints { make in
+            if isRouteCollectionPanel {
+                make.leading.equalToSuperview().offset(18)
+            }
             make.trailing.equalToSuperview().inset(18)
             make.centerY.equalTo(iconView)
         }

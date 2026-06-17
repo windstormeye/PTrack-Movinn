@@ -66,6 +66,21 @@ final class RouteCollectionStore {
         }
     }
 
+    @discardableResult
+    func delete(_ workout: TrackedWorkout) -> [TrackedWorkout] {
+        var routes = load()
+        let originalCount = routes.count
+        routes.removeAll { $0.id == workout.id }
+
+        guard routes.count != originalCount else {
+            return routes
+        }
+
+        save(routes)
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: routes)
+        return routes
+    }
+
     private func sorted(_ routes: [TrackedWorkout]) -> [TrackedWorkout] {
         routes.sorted { $0.startDate > $1.startDate }
     }
@@ -82,15 +97,50 @@ enum SharedRouteImportInbox {
     static let openRouteCollectionNotification = Notification.Name("studio.pj.PTrack.openRouteCollection")
 
     private static let unseenRouteKey = "studio.pj.PTrack.routeCollection.hasUnseenSharedRoute"
+    private static let newRouteIDsKey = "studio.pj.PTrack.routeCollection.newRouteIDs"
+    private static let routeCollectionOpenRequestKey = "studio.pj.PTrack.routeCollection.openRequestPending"
     private static let pendingDirectoryName = "PendingRoutes"
 
     static var hasUnseenRoute: Bool {
         sharedDefaults.bool(forKey: unseenRouteKey)
     }
 
-    static func markNewRouteAvailable() {
+    static var hasNewRouteBadges: Bool {
+        !newRouteIDs.isEmpty
+    }
+
+    static var hasPendingRouteCollectionOpenRequest: Bool {
+        sharedDefaults.bool(forKey: routeCollectionOpenRequestKey)
+    }
+
+    static func hasNewRouteBadge(for workout: TrackedWorkout) -> Bool {
+        newRouteIDs.contains(workout.id)
+    }
+
+    static func markNewRouteAvailable(for routes: [TrackedWorkout] = []) {
+        if !routes.isEmpty {
+            var ids = newRouteIDs
+            ids.formUnion(routes.map(\.id))
+            setNewRouteIDs(ids)
+        }
+
         sharedDefaults.set(true, forKey: unseenRouteKey)
         NotificationCenter.default.post(name: pendingRoutesDidChangeNotification, object: nil)
+    }
+
+    static func requestRouteCollectionOpen() {
+        sharedDefaults.set(true, forKey: routeCollectionOpenRequestKey)
+        NotificationCenter.default.post(name: openRouteCollectionNotification, object: nil)
+    }
+
+    @discardableResult
+    static func consumeRouteCollectionOpenRequest() -> Bool {
+        guard hasPendingRouteCollectionOpenRequest else {
+            return false
+        }
+
+        sharedDefaults.set(false, forKey: routeCollectionOpenRequestKey)
+        return true
     }
 
     static func markRoutePromptSeen() {
@@ -99,6 +149,28 @@ enum SharedRouteImportInbox {
         }
 
         sharedDefaults.set(false, forKey: unseenRouteKey)
+        NotificationCenter.default.post(name: pendingRoutesDidChangeNotification, object: nil)
+    }
+
+    static func clearNewRouteBadge(for workout: TrackedWorkout) {
+        var ids = newRouteIDs
+        guard ids.remove(workout.id) != nil else {
+            return
+        }
+
+        setNewRouteIDs(ids)
+        NotificationCenter.default.post(name: pendingRoutesDidChangeNotification, object: nil)
+    }
+
+    static func clearRouteImportIndicators() {
+        let hadUnseenRoute = hasUnseenRoute
+        let hadNewRouteBadges = hasNewRouteBadges
+        guard hadUnseenRoute || hadNewRouteBadges else {
+            return
+        }
+
+        sharedDefaults.set(false, forKey: unseenRouteKey)
+        setNewRouteIDs([])
         NotificationCenter.default.post(name: pendingRoutesDidChangeNotification, object: nil)
     }
 
@@ -141,7 +213,7 @@ enum SharedRouteImportInbox {
         }
 
         store.append(importedRoutes)
-        markNewRouteAvailable()
+        markNewRouteAvailable(for: importedRoutes)
         return importedRoutes
     }
 
@@ -175,6 +247,14 @@ enum SharedRouteImportInbox {
 
     private static var sharedDefaults: UserDefaults {
         UserDefaults(suiteName: appGroupIdentifier) ?? .standard
+    }
+
+    private static var newRouteIDs: Set<String> {
+        Set(sharedDefaults.stringArray(forKey: newRouteIDsKey) ?? [])
+    }
+
+    private static func setNewRouteIDs(_ ids: Set<String>) {
+        sharedDefaults.set(Array(ids).sorted(), forKey: newRouteIDsKey)
     }
 }
 

@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/6/17.
 //
 
+import MapKit
 import SnapKit
 import UIKit
 import UniformTypeIdentifiers
@@ -97,6 +98,9 @@ final class RouteCollectionViewController: UIViewController {
         routeGridView.onSelectRoute = { [weak self] workout, _, _ in
             self?.showRouteDetail(workout)
         }
+        routeGridView.contextMenuConfigurationProvider = { [weak self] workout, _ in
+            self?.makeRouteContextMenuConfiguration(for: workout)
+        }
 
         collectionView = routeGridView.collectionView
         collectionView.contentInset = UIEdgeInsets(
@@ -168,6 +172,12 @@ final class RouteCollectionViewController: UIViewController {
             name: RouteCollectionStore.didChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePendingSharedRoutesDidChange),
+            name: SharedRouteImportInbox.pendingRoutesDidChangeNotification,
+            object: nil
+        )
     }
 
     @objc private func handleLanguageDidChange() {
@@ -178,6 +188,10 @@ final class RouteCollectionViewController: UIViewController {
         reloadRoutes(importsPendingSharedRoutes: false)
     }
 
+    @objc private func handlePendingSharedRoutesDidChange() {
+        reloadRoutes(importsPendingSharedRoutes: true)
+    }
+
     private func updateLocalizedText() {
         title = AppLocalization.text(.routeCollection)
         emptyLabel.text = AppLocalization.text(.routeCollectionEmptyMessage)
@@ -186,7 +200,10 @@ final class RouteCollectionViewController: UIViewController {
 
     private func reloadRoutes(importsPendingSharedRoutes: Bool) {
         if importsPendingSharedRoutes {
-            SharedRouteImportInbox.importPendingRoutes(store: store)
+            let importedRoutes = SharedRouteImportInbox.importPendingRoutes(store: store)
+            if !importedRoutes.isEmpty {
+                SharedRouteImportInbox.markRoutePromptSeen()
+            }
         }
         routes = store.load()
         collectionView?.reloadData()
@@ -217,7 +234,7 @@ final class RouteCollectionViewController: UIViewController {
         return WorkoutRouteGridItem.route(
             routes[routeIndex],
             showsMap: false,
-            showsNewBadge: false
+            showsNewBadge: SharedRouteImportInbox.hasNewRouteBadge(for: routes[routeIndex])
         )
     }
 
@@ -227,6 +244,124 @@ final class RouteCollectionViewController: UIViewController {
             presentationMode: .routeCollection
         )
         navigationController?.pushViewController(detailViewController, animated: true)
+    }
+
+    private func makeRouteContextMenuConfiguration(for workout: TrackedWorkout) -> UIContextMenuConfiguration {
+        UIContextMenuConfiguration(identifier: workout.id as NSString, previewProvider: nil) { [weak self] _ in
+            guard let self else {
+                return UIMenu(children: [])
+            }
+
+            let openStartAction = UIAction(
+                title: AppLocalization.text(.openStart),
+                image: UIImage(systemName: "location")
+            ) { [weak self] _ in
+                self?.openEndpointInMaps(for: workout, kind: .start)
+            }
+
+            let openEndAction = UIAction(
+                title: AppLocalization.text(.openEnd),
+                image: UIImage(systemName: "mappin.and.ellipse")
+            ) { [weak self] _ in
+                self?.openEndpointInMaps(for: workout, kind: .end)
+            }
+
+            let routeBookAction = UIAction(
+                title: AppLocalization.text(.routeBook),
+                image: UIImage(systemName: "map")
+            ) { [weak self] _ in
+                self?.startRouteBookMode(with: workout)
+            }
+
+            let deleteAction = UIAction(
+                title: AppLocalization.text(.delete),
+                image: UIImage(systemName: "trash"),
+                attributes: .destructive
+            ) { [weak self] _ in
+                self?.presentDeleteConfirmation(for: workout)
+            }
+
+            return UIMenu(children: [
+                openStartAction,
+                openEndAction,
+                routeBookAction,
+                deleteAction
+            ])
+        }
+    }
+
+    private func openEndpointInMaps(for workout: TrackedWorkout, kind: RouteEndpointKind) {
+        guard let coordinate = endpointCoordinate(for: workout, kind: kind) else {
+            presentSimpleAlert(title: AppLocalization.text(kind == .start ? .startNotFound : .endNotFound))
+            return
+        }
+
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let mapItem = MKMapItem(location: location, address: nil)
+        mapItem.name = AppLocalization.text(kind == .start ? .workoutStart : .workoutEnd)
+
+        let launchOptions: [String: Any] = [
+            MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate),
+            MKLaunchOptionsMapSpanKey: NSValue(
+                mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            )
+        ]
+
+        guard mapItem.openInMaps(launchOptions: launchOptions) else {
+            presentSimpleAlert(title: AppLocalization.text(.systemMapsNotFound))
+            return
+        }
+    }
+
+    private func endpointCoordinate(for workout: TrackedWorkout, kind: RouteEndpointKind) -> CLLocationCoordinate2D? {
+        let coordinates = workout.displayCoordinates
+        let fallbackCoordinates = workout.coordinates.map(\.coordinate)
+        switch kind {
+        case .start:
+            return coordinates.first ?? fallbackCoordinates.first
+        case .end:
+            return coordinates.last ?? fallbackCoordinates.last
+        }
+    }
+
+    private func startRouteBookMode(with workout: TrackedWorkout) {
+        navigationController?.popToRootViewController(animated: true)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: RouteBookMode.didSelectWorkoutNotification,
+                object: self,
+                userInfo: [RouteBookMode.workoutUserInfoKey: workout]
+            )
+        }
+    }
+
+    private func presentDeleteConfirmation(for workout: TrackedWorkout) {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.deleteRoute),
+            message: AppLocalization.text(.deleteRouteMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(title: AppLocalization.text(.cancel), style: .cancel))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.delete),
+            style: .destructive
+        ) { [weak self] _ in
+            self?.deleteRoute(workout)
+        })
+        present(alertController, animated: true)
+    }
+
+    private func deleteRoute(_ workout: TrackedWorkout) {
+        SharedRouteImportInbox.clearNewRouteBadge(for: workout)
+        routes = store.delete(workout)
+        collectionView.reloadData()
+        updateEmptyState()
+    }
+
+    private func presentSimpleAlert(title: String) {
+        let alertController = UIAlertController(title: title, message: nil, preferredStyle: .alert)
+        alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
+        present(alertController, animated: true)
     }
 
     @objc private func presentGPXPicker() {

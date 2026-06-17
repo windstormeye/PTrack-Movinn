@@ -38,6 +38,9 @@ enum AppTextKey: String {
     case dark
     case dataIntegration
     case dayBeforeYesterday
+    case delete
+    case deleteRoute
+    case deleteRouteMessage
     case developerWebsite
     case distanceMetersFormat
     case exit
@@ -189,6 +192,9 @@ enum AppLocalization {
             .dark: "暗色",
             .dataIntegration: "数据接入",
             .dayBeforeYesterday: "前天",
+            .delete: "删除",
+            .deleteRoute: "删除路线？",
+            .deleteRouteMessage: "删除后无法恢复。",
             .developerWebsite: "开发者网站",
             .distanceMetersFormat: "%.0f 米",
             .exit: "退出",
@@ -294,6 +300,9 @@ enum AppLocalization {
             .dark: "ダーク",
             .dataIntegration: "データ連携",
             .dayBeforeYesterday: "一昨日",
+            .delete: "削除",
+            .deleteRoute: "ルートを削除しますか？",
+            .deleteRouteMessage: "削除すると元に戻せません。",
             .developerWebsite: "開発者サイト",
             .distanceMetersFormat: "%.0f m",
             .exit: "終了",
@@ -399,6 +408,9 @@ enum AppLocalization {
             .dark: "어두운",
             .dataIntegration: "데이터 연동",
             .dayBeforeYesterday: "그저께",
+            .delete: "삭제",
+            .deleteRoute: "경로를 삭제할까요?",
+            .deleteRouteMessage: "삭제하면 되돌릴 수 없습니다.",
             .developerWebsite: "개발자 웹사이트",
             .distanceMetersFormat: "%.0f m",
             .exit: "종료",
@@ -504,6 +516,9 @@ enum AppLocalization {
             .dark: "Dark",
             .dataIntegration: "Data Connections",
             .dayBeforeYesterday: "The Day Before Yesterday",
+            .delete: "Delete",
+            .deleteRoute: "Delete Route?",
+            .deleteRouteMessage: "This cannot be undone.",
             .developerWebsite: "Developer Website",
             .distanceMetersFormat: "%.0f m",
             .exit: "Exit",

@@ -71,7 +71,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
         currentWorkout = workout
         currentShowsMap = showsMap
         updateBackgroundVisibility(showsMap: showsMap)
-        newBadgeLabel.text = AppLocalization.text(.newActivity)
+        newBadgeLabel.text = AppLocalization.text(workout.isRouteCollectionSource ? .newRoute : .newActivity)
         setShowsNewBadge(showsNewBadge)
 
         guard showsMap else {

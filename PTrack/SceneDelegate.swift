@@ -36,8 +36,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
-        // Called when the scene has moved from an inactive state to an active state.
-        // Use this method to restart any tasks that were paused (or not yet started) when the scene was inactive.
+        notifyPendingSharedRoutesDidChangeIfNeeded()
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
@@ -46,7 +45,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
-        // App-open data refresh is intentionally limited to cold launch and manual pull refresh.
+        notifyPendingSharedRoutesDidChangeIfNeeded()
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -63,9 +62,22 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 }
 
 private extension SceneDelegate {
+    func notifyPendingSharedRoutesDidChangeIfNeeded() {
+        guard SharedRouteImportInbox.hasUnseenRoute || !SharedRouteImportInbox.pendingGPXFileURLs().isEmpty else {
+            return
+        }
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: SharedRouteImportInbox.pendingRoutesDidChangeNotification,
+                object: nil
+            )
+        }
+    }
+
     func handleURLContexts(_ urlContexts: Set<UIOpenURLContext>) {
         let shouldOpenRouteCollection = urlContexts.contains { context in
-            context.url.host == "pj.studio" && context.url.path == "/routes/import"
+            isRouteCollectionImportURL(context.url)
         }
 
         DispatchQueue.main.async {
@@ -75,11 +87,20 @@ private extension SceneDelegate {
             )
 
             if shouldOpenRouteCollection {
-                NotificationCenter.default.post(
-                    name: SharedRouteImportInbox.openRouteCollectionNotification,
-                    object: nil
-                )
+                SharedRouteImportInbox.requestRouteCollectionOpen()
             }
         }
+    }
+
+    func isRouteCollectionImportURL(_ url: URL) -> Bool {
+        guard url.scheme == "ptrack" else {
+            return false
+        }
+
+        if url.host == "pj.studio" && url.path == "/routes/import" {
+            return true
+        }
+
+        return url.host == "routes" && url.path == "/import"
     }
 }

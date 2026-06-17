@@ -38,6 +38,7 @@ final class WorkoutRouteGridView: UIView {
     var onEndDragging: ((UIScrollView, Bool) -> Void)?
     var onEndDecelerating: ((UIScrollView) -> Void)?
     var onColumnSnapFinished: (() -> Void)?
+    var contextMenuConfigurationProvider: ((TrackedWorkout, IndexPath) -> UIContextMenuConfiguration?)?
 
     var columnCount: CGFloat {
         gridLayout.columns
@@ -206,6 +207,19 @@ extension WorkoutRouteGridView: UICollectionViewDelegate {
         }
 
         onSelectRoute?(workout, indexPath, collectionView.cellForItem(at: indexPath) as? WorkoutRouteCell)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        contextMenuConfigurationForItemAt indexPath: IndexPath,
+        point: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let item = item(at: indexPath),
+              case .route(let workout, _, _) = item.content else {
+            return nil
+        }
+
+        return contextMenuConfigurationProvider?(workout, indexPath)
     }
 }
 

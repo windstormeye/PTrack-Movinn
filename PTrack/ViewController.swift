@@ -78,6 +78,7 @@ class ViewController: UIViewController {
     private var routeBookLastLocation: CLLocation?
     private var routeBookLastHeadingDegrees: CLLocationDirection?
     private var routeBookHeadingDisplayDegrees: CLLocationDirection?
+    private var shouldClearRouteImportIndicatorsOnNextHomeAppear = false
 
     deinit {
         pendingFlushWorkItem?.cancel()
@@ -113,6 +114,7 @@ class ViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: animated)
+        clearRouteImportIndicatorsIfNeededOnHomeAppear()
         applyRouteBookInterfaceState()
         updateFullScreenInsets(force: true)
     }
@@ -120,8 +122,10 @@ class ViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         updateFullScreenInsets(force: true)
+        openRouteCollectionIfRequested()
         DispatchQueue.main.async { [weak self] in
             self?.updateFullScreenInsets(force: true)
+            self?.openRouteCollectionIfRequested()
         }
     }
 
@@ -160,6 +164,9 @@ class ViewController: UIViewController {
         }
         routeGridView.onSelectRoute = { [weak self] workout, indexPath, cell in
             self?.showWorkoutDetail(workout, indexPath: indexPath, cell: cell)
+        }
+        routeGridView.contextMenuConfigurationProvider = { [weak self] workout, _ in
+            self?.makeWorkoutContextMenuConfiguration(for: workout)
         }
         routeGridView.onScroll = { [weak self] scrollView in
             self?.updatePullRefreshTracking(for: scrollView)
@@ -461,29 +468,6 @@ class ViewController: UIViewController {
         }
 
         moreButton.menu = makeHeaderMoreMenu()
-        guard SharedRouteImportInbox.hasUnseenRoute else {
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            self?.markRoutePromptSeenWhenMenuDismissed()
-        }
-    }
-
-    private func markRoutePromptSeenWhenMenuDismissed() {
-        guard SharedRouteImportInbox.hasUnseenRoute else {
-            return
-        }
-
-        guard !moreButton.isHeld else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                self?.markRoutePromptSeenWhenMenuDismissed()
-            }
-            return
-        }
-
-        SharedRouteImportInbox.markRoutePromptSeen()
-        updateHeaderMoreButtonMode()
     }
 
     private func configureLoadingIndicator() {
@@ -681,10 +665,7 @@ class ViewController: UIViewController {
     @objc private func handleRouteCollectionOpenRequest() {
         importPendingSharedRoutesIfNeeded()
         updateHeaderMoreButtonMode()
-
-        DispatchQueue.main.async { [weak self] in
-            self?.openRouteCollectionFromDeepLink()
-        }
+        openRouteCollectionIfRequested()
     }
 
     private func importPendingSharedRoutesIfNeeded() {
@@ -713,6 +694,32 @@ class ViewController: UIViewController {
         }
 
         showRouteCollection()
+    }
+
+    private func openRouteCollectionIfRequested() {
+        guard SharedRouteImportInbox.hasPendingRouteCollectionOpenRequest,
+              isViewLoaded,
+              navigationController?.view.window != nil else {
+            return
+        }
+
+        SharedRouteImportInbox.consumeRouteCollectionOpenRequest()
+        importPendingSharedRoutesIfNeeded()
+        updateHeaderMoreButtonMode()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.openRouteCollectionFromDeepLink()
+        }
+    }
+
+    private func clearRouteImportIndicatorsIfNeededOnHomeAppear() {
+        guard shouldClearRouteImportIndicatorsOnNextHomeAppear else {
+            return
+        }
+
+        shouldClearRouteImportIndicatorsOnNextHomeAppear = false
+        SharedRouteImportInbox.clearRouteImportIndicators()
+        updateHeaderMoreButtonMode()
     }
 
     @objc private func handleRouteBookWorkoutDidSelect(_ notification: Notification) {
@@ -1324,7 +1331,80 @@ class ViewController: UIViewController {
         navigationController?.pushViewController(detailViewController, animated: true)
     }
 
+    private func makeWorkoutContextMenuConfiguration(for workout: TrackedWorkout) -> UIContextMenuConfiguration {
+        UIContextMenuConfiguration(identifier: workout.id as NSString, previewProvider: nil) { [weak self] _ in
+            guard let self else {
+                return UIMenu(children: [])
+            }
+
+            let openStartAction = UIAction(
+                title: AppLocalization.text(.openStart),
+                image: UIImage(systemName: "location")
+            ) { [weak self] _ in
+                self?.openEndpointInMaps(for: workout, kind: .start)
+            }
+
+            let openEndAction = UIAction(
+                title: AppLocalization.text(.openEnd),
+                image: UIImage(systemName: "mappin.and.ellipse")
+            ) { [weak self] _ in
+                self?.openEndpointInMaps(for: workout, kind: .end)
+            }
+
+            let routeBookAction = UIAction(
+                title: AppLocalization.text(.routeBook),
+                image: UIImage(systemName: "map")
+            ) { [weak self] _ in
+                self?.enterRouteBookMode(with: workout)
+            }
+
+            return UIMenu(children: [
+                openStartAction,
+                openEndAction,
+                routeBookAction
+            ])
+        }
+    }
+
+    private func openEndpointInMaps(for workout: TrackedWorkout, kind: RouteEndpointKind) {
+        guard let coordinate = endpointCoordinate(for: workout, kind: kind) else {
+            presentSimpleAlert(
+                title: AppLocalization.text(kind == .start ? .startNotFound : .endNotFound),
+                message: nil
+            )
+            return
+        }
+
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let mapItem = MKMapItem(location: location, address: nil)
+        mapItem.name = AppLocalization.text(kind == .start ? .workoutStart : .workoutEnd)
+
+        let launchOptions: [String: Any] = [
+            MKLaunchOptionsMapCenterKey: NSValue(mkCoordinate: coordinate),
+            MKLaunchOptionsMapSpanKey: NSValue(
+                mkCoordinateSpan: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            )
+        ]
+
+        guard mapItem.openInMaps(launchOptions: launchOptions) else {
+            presentSimpleAlert(title: AppLocalization.text(.systemMapsNotFound), message: nil)
+            return
+        }
+    }
+
+    private func endpointCoordinate(for workout: TrackedWorkout, kind: RouteEndpointKind) -> CLLocationCoordinate2D? {
+        let coordinates = workout.displayCoordinates
+        let fallbackCoordinates = workout.coordinates.map(\.coordinate)
+        switch kind {
+        case .start:
+            return coordinates.first ?? fallbackCoordinates.first
+        case .end:
+            return coordinates.last ?? fallbackCoordinates.last
+        }
+    }
+
     private func showRouteCollection() {
+        shouldClearRouteImportIndicatorsOnNextHomeAppear = true
         SharedRouteImportInbox.markRoutePromptSeen()
         updateHeaderMoreButtonMode()
         let routeCollectionViewController = RouteCollectionViewController()
