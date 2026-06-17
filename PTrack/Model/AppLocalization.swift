@@ -51,9 +51,13 @@ enum AppTextKey: String {
     case newActivity
     case ok
     case openStart
+    case openSettings
     case other
     case outdoorSwimming
     case outdoorWorkout
+    case photoLibraryFullAccessRequiredMessage
+    case photoLibraryFullAccessRequiredTitle
+    case photoLibraryReadAuthorized
     case queryingLocation
     case routeHeatmap
     case running
@@ -79,6 +83,7 @@ enum AppTextKey: String {
     case stravaAuthorizationAlreadyGrantedMessage
     case stravaReauthorizationRequired
     case stillOpen
+    case systemPhotos
     case systemMapsNotFound
     case totalActivityCountFormat
     case totalDistanceFormat
@@ -173,9 +178,13 @@ enum AppLocalization {
             .newActivity: "新活动！",
             .ok: "好",
             .openStart: "去起点",
+            .openSettings: "打开设置",
             .other: "其他",
             .outdoorSwimming: "户外游泳",
             .outdoorWorkout: "户外运动",
+            .photoLibraryFullAccessRequiredMessage: "只有完整访问权限才能为轨迹匹配照片。请在系统设置中把照片权限改为“完全访问”。",
+            .photoLibraryFullAccessRequiredTitle: "需要完整相册权限",
+            .photoLibraryReadAuthorized: "已授权读取相册",
             .queryingLocation: "位置查询中",
             .routeHeatmap: "轨迹热图",
             .running: "跑步",
@@ -201,6 +210,7 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 已拿到授权，可以读取你的运动数据。",
             .stravaReauthorizationRequired: "Strava 授权已失效，请进入“更多”页面点击 Strava 重新登录。",
             .stillOpen: "仍要打开",
+            .systemPhotos: "系统相册",
             .systemMapsNotFound: "未找到系统地图",
             .totalActivityCountFormat: "%d 次",
             .totalDistanceFormat: "%dkm",
@@ -249,9 +259,13 @@ enum AppLocalization {
             .newActivity: "新規",
             .ok: "OK",
             .openStart: "スタートへ",
+            .openSettings: "設定を開く",
             .other: "その他",
             .outdoorSwimming: "屋外スイミング",
             .outdoorWorkout: "屋外ワークアウト",
+            .photoLibraryFullAccessRequiredMessage: "ルートに写真を照合するには、写真へのフルアクセスが必要です。システム設定で写真の権限を「フルアクセス」に変更してください。",
+            .photoLibraryFullAccessRequiredTitle: "写真へのフルアクセスが必要です",
+            .photoLibraryReadAuthorized: "写真の読み取りは許可されています",
             .queryingLocation: "位置を検索中",
             .routeHeatmap: "軌跡ヒートマップ",
             .running: "ランニング",
@@ -277,6 +291,7 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava は認証済みで、ワークアウトデータを読み取れます。",
             .stravaReauthorizationRequired: "Strava の認証が無効になりました。「その他」画面で Strava をタップして再ログインしてください。",
             .stillOpen: "それでも開く",
+            .systemPhotos: "写真",
             .systemMapsNotFound: "システムマップが見つかりません",
             .totalActivityCountFormat: "%d回",
             .totalDistanceFormat: "%dkm",
@@ -325,9 +340,13 @@ enum AppLocalization {
             .newActivity: "새 활동!",
             .ok: "확인",
             .openStart: "시작점으로",
+            .openSettings: "설정 열기",
             .other: "기타",
             .outdoorSwimming: "야외 수영",
             .outdoorWorkout: "야외 운동",
+            .photoLibraryFullAccessRequiredMessage: "경로와 사진을 매칭하려면 사진 전체 접근 권한이 필요합니다. 시스템 설정에서 사진 권한을 전체 접근으로 변경해 주세요.",
+            .photoLibraryFullAccessRequiredTitle: "사진 전체 접근 권한 필요",
+            .photoLibraryReadAuthorized: "사진 읽기 권한이 허용되었습니다",
             .queryingLocation: "위치 조회 중",
             .routeHeatmap: "경로 히트맵",
             .running: "달리기",
@@ -353,6 +372,7 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 권한을 이미 받았으며 운동 데이터를 읽을 수 있습니다.",
             .stravaReauthorizationRequired: "Strava 인증이 만료되었습니다. 더보기 화면에서 Strava를 눌러 다시 로그인하세요.",
             .stillOpen: "그래도 열기",
+            .systemPhotos: "사진",
             .systemMapsNotFound: "시스템 지도를 찾을 수 없음",
             .totalActivityCountFormat: "%d회",
             .totalDistanceFormat: "%dkm",
@@ -401,9 +421,13 @@ enum AppLocalization {
             .newActivity: "New!",
             .ok: "OK",
             .openStart: "Go to Start",
+            .openSettings: "Open Settings",
             .other: "Other",
             .outdoorSwimming: "Outdoor Swimming",
             .outdoorWorkout: "Outdoor Workout",
+            .photoLibraryFullAccessRequiredMessage: "Full Photos access is required to match photos to routes. Change Photos permission to Full Access in system settings.",
+            .photoLibraryFullAccessRequiredTitle: "Full Photos Access Required",
+            .photoLibraryReadAuthorized: "Photo access is authorized",
             .queryingLocation: "Locating",
             .routeHeatmap: "Route Heatmap",
             .running: "Running",
@@ -429,6 +453,7 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava is already authorized to read your activity data.",
             .stravaReauthorizationRequired: "Strava authorization has expired. Open More and tap Strava to sign in again.",
             .stillOpen: "Open Anyway",
+            .systemPhotos: "Photos",
             .systemMapsNotFound: "System Maps not found",
             .totalActivityCountFormat: "%d times",
             .totalDistanceFormat: "%dkm",

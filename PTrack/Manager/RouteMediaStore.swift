@@ -54,21 +54,19 @@ final class RouteMediaStore {
     }
 
     private func requestAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
-        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-
-        switch status {
-        case .authorized, .limited:
+        switch PhotoLibraryAuthorizationManager.authorizationState {
+        case .authorized:
             completion(.success(()))
         case .notDetermined:
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
-                switch newStatus {
-                case .authorized, .limited:
+            PhotoLibraryAuthorizationManager.requestFullAccess { authorizationState in
+                switch authorizationState {
+                case .authorized:
                     completion(.success(()))
-                default:
+                case .notDetermined, .needsAttention:
                     completion(.failure(RouteMediaStoreError.authorizationDenied))
                 }
             }
-        default:
+        case .needsAttention:
             completion(.failure(RouteMediaStoreError.authorizationDenied))
         }
     }
@@ -240,5 +238,41 @@ final class RouteMediaStore {
         let dx = point.x - projectedX
         let dy = point.y - projectedY
         return dx * dx + dy * dy
+    }
+}
+
+enum PhotoLibraryAuthorizationState {
+    case notDetermined
+    case authorized
+    case needsAttention
+}
+
+enum PhotoLibraryAuthorizationManager {
+    static var authorizationState: PhotoLibraryAuthorizationState {
+        switch PHPhotoLibrary.authorizationStatus(for: .readWrite) {
+        case .notDetermined:
+            return .notDetermined
+        case .authorized:
+            return .authorized
+        case .limited, .denied, .restricted:
+            return .needsAttention
+        @unknown default:
+            return .needsAttention
+        }
+    }
+
+    static func requestFullAccess(completion: @escaping (PhotoLibraryAuthorizationState) -> Void) {
+        switch authorizationState {
+        case .authorized, .needsAttention:
+            DispatchQueue.main.async {
+                completion(authorizationState)
+            }
+        case .notDetermined:
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { _ in
+                DispatchQueue.main.async {
+                    completion(authorizationState)
+                }
+            }
+        }
     }
 }

@@ -32,7 +32,7 @@ final class MoreSettingsViewController: UIViewController {
             case .uiSettings:
                 return [.appLanguage]
             case .dataIntegration:
-                return [.appleHealth, .strava]
+                return [.appleHealth, .strava, .systemPhotos]
             case .other:
                 return [.developerWebsite]
             }
@@ -43,6 +43,7 @@ final class MoreSettingsViewController: UIViewController {
         case appLanguage
         case appleHealth
         case strava
+        case systemPhotos
         case developerWebsite
 
         var titleKey: AppTextKey {
@@ -53,6 +54,8 @@ final class MoreSettingsViewController: UIViewController {
                 return .appleHealth
             case .strava:
                 return .strava
+            case .systemPhotos:
+                return .systemPhotos
             case .developerWebsite:
                 return .developerWebsite
             }
@@ -66,6 +69,8 @@ final class MoreSettingsViewController: UIViewController {
                 return "heart.fill"
             case .strava:
                 return "figure.run"
+            case .systemPhotos:
+                return "photo.on.rectangle"
             case .developerWebsite:
                 return "safari"
             }
@@ -75,6 +80,7 @@ final class MoreSettingsViewController: UIViewController {
     private enum ConnectionIndicatorState: Equatable {
         case connected
         case needsAttention
+        case warning
 
         var color: UIColor {
             switch self {
@@ -82,6 +88,8 @@ final class MoreSettingsViewController: UIViewController {
                 return AppColors.movinnGreen
             case .needsAttention:
                 return .systemOrange
+            case .warning:
+                return .systemYellow
             }
         }
     }
@@ -240,6 +248,15 @@ final class MoreSettingsViewController: UIViewController {
             case .needsReauthorization:
                 return .needsAttention
             }
+        case .systemPhotos:
+            switch PhotoLibraryAuthorizationManager.authorizationState {
+            case .notDetermined:
+                return nil
+            case .authorized:
+                return .connected
+            case .needsAttention:
+                return .warning
+            }
         case .appLanguage, .developerWebsite:
             return nil
         }
@@ -305,6 +322,41 @@ final class MoreSettingsViewController: UIViewController {
         }
 
         openStravaAuthorization()
+    }
+
+    private func handlePhotoLibrarySelection() {
+        switch PhotoLibraryAuthorizationManager.authorizationState {
+        case .authorized:
+            Toast.show(AppLocalization.text(.photoLibraryReadAuthorized), in: view)
+        case .notDetermined:
+            PhotoLibraryAuthorizationManager.requestFullAccess { [weak self] _ in
+                self?.collectionView.reloadData()
+            }
+        case .needsAttention:
+            presentPhotoLibrarySettingsAlert()
+        }
+    }
+
+    private func presentPhotoLibrarySettingsAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.photoLibraryFullAccessRequiredTitle),
+            message: AppLocalization.text(.photoLibraryFullAccessRequiredMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.openSettings),
+            style: .default
+        ) { _ in
+            guard let url = URL(string: UIApplication.openSettingsURLString) else {
+                return
+            }
+            UIApplication.shared.open(url)
+        })
+        present(alertController, animated: true)
     }
 
     private func presentStravaAlreadyAuthorizedAlert() {
@@ -445,6 +497,12 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
                 imageTintColor: .white,
                 indicatorColor: indicatorColor
             )
+        case .systemPhotos:
+            cell.configureAssetIcon(
+                image: UIImage(named: "apple_photos")?.withRenderingMode(.alwaysOriginal),
+                title: AppLocalization.text(item.titleKey),
+                indicatorColor: indicatorColor
+            )
         case .appLanguage, .developerWebsite:
             cell.configureSystemIcon(
                 iconName: item.iconName,
@@ -486,6 +544,8 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
             requestHealthAuthorization()
         case .strava:
             handleStravaSelection()
+        case .systemPhotos:
+            handlePhotoLibrarySelection()
         case .developerWebsite:
             openDeveloperWebsite()
         }
