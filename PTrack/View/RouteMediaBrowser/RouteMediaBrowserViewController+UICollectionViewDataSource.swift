@@ -22,6 +22,7 @@ extension RouteMediaBrowserViewController: UICollectionViewDataSource {
         )
 
         if let cell = cell as? RouteMediaBrowserCell {
+            cell.delegate = self
             cell.configure(with: mediaItems[indexPath.item])
         }
 

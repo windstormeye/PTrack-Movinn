@@ -104,4 +104,18 @@ final class RouteMediaBrowserViewController: UIViewController {
 
         title = "\(index + 1) / \(mediaItems.count)"
     }
+
+    func closeBrowser() {
+        if let navigationController, navigationController.viewControllers.first !== self {
+            navigationController.popViewController(animated: true)
+        } else {
+            dismiss(animated: true)
+        }
+    }
+}
+
+extension RouteMediaBrowserViewController: RouteMediaBrowserCellDelegate {
+    func routeMediaBrowserCellDidRequestDismiss(_ cell: RouteMediaBrowserCell) {
+        closeBrowser()
+    }
 }
