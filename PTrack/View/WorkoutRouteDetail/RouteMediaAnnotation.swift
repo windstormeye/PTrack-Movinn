@@ -7,7 +7,7 @@
 
 import MapKit
 
-final class RouteMediaAnnotation: NSObject, MKAnnotation {
+nonisolated final class RouteMediaAnnotation: NSObject, MKAnnotation {
     let mediaItem: RouteMediaItem
     let coordinate: CLLocationCoordinate2D
 

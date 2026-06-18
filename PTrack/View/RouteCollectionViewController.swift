@@ -318,6 +318,10 @@ final class RouteCollectionViewController: UIViewController {
     }
 
     private func showRouteDetail(_ workout: TrackedWorkout) {
+        if SharedRouteImportInbox.hasNewRouteBadge(for: workout) {
+            SharedRouteImportInbox.clearNewRouteBadge(for: workout)
+        }
+
         let detailViewController = WorkoutRouteDetailViewController(
             workout: workout,
             presentationMode: .routeCollection
@@ -375,8 +379,7 @@ final class RouteCollectionViewController: UIViewController {
             return
         }
 
-        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let mapItem = MKMapItem(location: location, address: nil)
+        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
         mapItem.name = AppLocalization.text(kind == .start ? .workoutStart : .workoutEnd)
 
         let launchOptions: [String: Any] = [

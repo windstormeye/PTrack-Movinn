@@ -50,7 +50,7 @@ final class RouteMediaStore {
     }
 
     private static func cacheKey(for workout: TrackedWorkout) -> NSString {
-        "\(workout.id)-gcj\(CoordinateTransformer.version)" as NSString
+        "\(workout.id)-detail\(workout.routeDetailCoordinates.count)-gcj\(CoordinateTransformer.version)" as NSString
     }
 
     private func requestAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
@@ -163,7 +163,7 @@ final class RouteMediaStore {
     }
 
     private func routeMapPoints(for workout: TrackedWorkout) -> [MKMapPoint] {
-        let sourceCoordinates = workout.coordinates
+        let sourceCoordinates = workout.routeDetailCoordinates
         guard sourceCoordinates.count > 1 else {
             return []
         }

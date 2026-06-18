@@ -1395,8 +1395,7 @@ class ViewController: UIViewController {
             return
         }
 
-        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let mapItem = MKMapItem(location: location, address: nil)
+        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
         mapItem.name = AppLocalization.text(kind == .start ? .workoutStart : .workoutEnd)
 
         let launchOptions: [String: Any] = [

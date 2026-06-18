@@ -18,7 +18,7 @@ struct CoordinateRegionResult: Equatable {
     let isChina: Bool
     let isMainlandChina: Bool
 
-    var title: String? {
+    nonisolated var title: String? {
         [
             districtName,
             cityName,

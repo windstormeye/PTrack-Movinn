@@ -49,7 +49,7 @@ enum GPXRouteParser {
     }
 }
 
-private final class GPXRouteParserDelegate: NSObject, XMLParserDelegate {
+private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDelegate {
     private struct MutablePoint {
         let latitude: Double
         let longitude: Double

@@ -978,6 +978,10 @@ private extension TrackedWorkout {
         )
         self.quantityMetrics = quantityMetrics.isEmpty ? nil : quantityMetrics
         coordinates = sampledCoordinates
+        fullCoordinates = Self.fullCoordinatesIfSampled(
+            rawCoordinates: rawCoordinates,
+            sampledCoordinates: sampledCoordinates
+        )
     }
 
     private static func stravaMetadata(

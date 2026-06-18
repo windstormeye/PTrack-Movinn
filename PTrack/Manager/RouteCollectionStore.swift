@@ -118,7 +118,15 @@ final class RouteCollectionStore {
     }
 
     private func sorted(_ routes: [TrackedWorkout]) -> [TrackedWorkout] {
-        routes.sorted { $0.startDate > $1.startDate }
+        routes.sorted {
+            let lhsDate = $0.routeCollectionImportedAt ?? $0.startDate
+            let rhsDate = $1.routeCollectionImportedAt ?? $1.startDate
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
+            }
+
+            return $0.startDate > $1.startDate
+        }
     }
 
     private func deduplicated(_ routes: [TrackedWorkout]) -> [TrackedWorkout] {
@@ -450,6 +458,10 @@ extension TrackedWorkout {
         )
         quantityMetrics = nil
         coordinates = sampledCoordinates
+        fullCoordinates = Self.fullCoordinatesIfSampled(
+            rawCoordinates: rawCoordinates,
+            sampledCoordinates: sampledCoordinates
+        )
     }
 
     var isRouteCollectionSource: Bool {
@@ -459,6 +471,10 @@ extension TrackedWorkout {
 
     var routeCollectionTitle: String? {
         metadata?["routeCollection.title"]?.stringValue?.nilIfBlank
+    }
+
+    var routeCollectionImportedAt: Date? {
+        metadata?["routeCollection.importedAt"]?.dateValue
     }
 
     private nonisolated static func routeCollectionMetadata(

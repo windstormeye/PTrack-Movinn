@@ -87,6 +87,7 @@ struct TrackedWorkout: Codable {
     let routeSummary: TrackedRouteSummary?
     let quantityMetrics: [TrackedWorkoutQuantityMetric]?
     let coordinates: [RouteCoordinate]
+    let fullCoordinates: [RouteCoordinate]?
 
     nonisolated init(
         workout: HKWorkout,
@@ -113,12 +114,17 @@ struct TrackedWorkout: Codable {
         self.routeSegments = routeSegments.isEmpty ? nil : routeSegments
         self.quantityMetrics = quantityMetrics.isEmpty ? nil : quantityMetrics
 
-        let sampledCoordinates = RouteSampler.downsample(locations.map(RouteCoordinate.init), limit: 1_200)
+        let rawCoordinates = locations.map(RouteCoordinate.init)
+        let sampledCoordinates = RouteSampler.downsample(rawCoordinates, limit: 1_200)
         routeSummary = TrackedRouteSummary(
             locations: locations,
             sampledCoordinateCount: sampledCoordinates.count
         )
         coordinates = sampledCoordinates
+        fullCoordinates = Self.fullCoordinatesIfSampled(
+            rawCoordinates: rawCoordinates,
+            sampledCoordinates: sampledCoordinates
+        )
     }
 
     var activityType: HKWorkoutActivityType {
@@ -273,6 +279,25 @@ struct TrackedWorkout: Codable {
 
     var displayCoordinates: [CLLocationCoordinate2D] {
         CoordinateTransformer.displayCoordinates(for: coordinates.map(\.coordinate))
+    }
+
+    var routeDetailCoordinates: [RouteCoordinate] {
+        guard let fullCoordinates, !fullCoordinates.isEmpty else {
+            return coordinates
+        }
+
+        return fullCoordinates
+    }
+
+    var routeDetailDisplayCoordinates: [CLLocationCoordinate2D] {
+        CoordinateTransformer.displayCoordinates(for: routeDetailCoordinates.map(\.coordinate))
+    }
+
+    nonisolated static func fullCoordinatesIfSampled(
+        rawCoordinates: [RouteCoordinate],
+        sampledCoordinates: [RouteCoordinate]
+    ) -> [RouteCoordinate]? {
+        rawCoordinates.count > sampledCoordinates.count ? rawCoordinates : nil
     }
 
     private func quantityMetric(for identifier: String) -> TrackedWorkoutQuantityMetric? {

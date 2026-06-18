@@ -11,6 +11,13 @@ import SnapKit
 import SwiftUI
 import UIKit
 
+private func sportsCareerWeekCalendar(from calendar: Calendar) -> Calendar {
+    var weekCalendar = calendar
+    weekCalendar.firstWeekday = 2
+    weekCalendar.minimumDaysInFirstWeek = 4
+    return weekCalendar
+}
+
 final class SportsCareerViewController: UIViewController {
     private enum Section: Int, CaseIterable {
         case summary
@@ -620,13 +627,15 @@ private struct SportsCareerStatistics {
         calendar: Calendar,
         now: Date
     ) -> [AnnualDurationSeries] {
-        let currentYear = calendar.component(.year, from: now)
+        let weekCalendar = sportsCareerWeekCalendar(from: calendar)
+        let currentYear = weekCalendar.component(.yearForWeekOfYear, from: now)
+        let currentWeekOfYear = min(max(weekCalendar.component(.weekOfYear, from: now), 1), 53)
         var yearlyDurations: [Int: [Int: TimeInterval]] = [:]
         var yearlyDistances: [Int: [Int: Double]] = [:]
 
         for workout in workouts {
-            let year = calendar.component(.year, from: workout.startDate)
-            let weekOfYear = min(max(calendar.component(.weekOfYear, from: workout.startDate), 1), 53)
+            let year = weekCalendar.component(.yearForWeekOfYear, from: workout.startDate)
+            let weekOfYear = min(max(weekCalendar.component(.weekOfYear, from: workout.startDate), 1), 53)
             yearlyDurations[year, default: [:]][weekOfYear, default: 0] += workout.durationSeconds ?? 0
             yearlyDistances[year, default: [:]][weekOfYear, default: 0] += workout.distanceMeters
         }
@@ -639,14 +648,15 @@ private struct SportsCareerStatistics {
         return yearlyDurations.keys.sorted(by: >).map { year in
             let durations = yearlyDurations[year] ?? [:]
             let distances = yearlyDistances[year] ?? [:]
-            let durationValues = (1...53).map { weekOfYear in
+            let weekCount = weeksInYear(year, calendar: weekCalendar)
+            let durationValues = (1...weekCount).map { weekOfYear in
                 durations[weekOfYear] ?? 0
             }
-            let distanceValues = (1...53).map { weekOfYear in
+            let distanceValues = (1...weekCount).map { weekOfYear in
                 distances[weekOfYear] ?? 0
             }
             let visibleWeekCount = year == currentYear
-                ? min(max(calendar.component(.weekOfYear, from: now), 1), durationValues.count)
+                ? min(currentWeekOfYear, durationValues.count)
                 : durationValues.count
             return AnnualDurationSeries(
                 year: year,
@@ -657,6 +667,15 @@ private struct SportsCareerStatistics {
                 totalDurationSeconds: durationValues.reduce(0, +)
             )
         }
+    }
+
+    private static func weeksInYear(_ year: Int, calendar: Calendar) -> Int {
+        let components = DateComponents(calendar: calendar, year: year, month: 12, day: 28)
+        guard let date = calendar.date(from: components) else {
+            return 52
+        }
+
+        return min(max(calendar.component(.weekOfYear, from: date), 52), 53)
     }
 
     private static func makeMonthActivityDays(
@@ -695,8 +714,7 @@ private struct SportsCareerStatistics {
         now: Date,
         language: AppLanguage
     ) -> [WeeklyDistanceRow] {
-        var weekCalendar = calendar
-        weekCalendar.firstWeekday = 2
+        let weekCalendar = sportsCareerWeekCalendar(from: calendar)
 
         guard let weekInterval = weekCalendar.dateInterval(of: .weekOfYear, for: now) else {
             return []
@@ -1743,15 +1761,14 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         monthPanGestureRecognizer.isEnabled = true
         loadingView.hide()
 
-        calendar = Calendar.current
+        calendar = sportsCareerWeekCalendar(from: .current)
         calendar.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
-        calendar.firstWeekday = 1
 
         activitySymbolsByDateKey = Dictionary(uniqueKeysWithValues: days.map { day in
-            (Self.dateKey(for: day.date), day.symbolNames)
+            (dateKey(for: day.date), day.symbolNames)
         })
         activityWorkoutsByDateKey = Dictionary(uniqueKeysWithValues: days.map { day in
-            (Self.dateKey(for: day.date), day.workouts)
+            (dateKey(for: day.date), day.workouts)
         })
 
         if !hasConfiguredMonth {
@@ -1956,8 +1973,8 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
             let date = calendar.date(byAdding: .day, value: dayOffset, to: monthStartDate) ?? monthStartDate
             let isCurrentMonth = dayOffset >= 0 && dayOffset < dayCount
 
-            let symbolNames = activitySymbolsByDateKey[Self.dateKey(for: date)] ?? []
-            let workouts = activityWorkoutsByDateKey[Self.dateKey(for: date)] ?? []
+            let symbolNames = activitySymbolsByDateKey[dateKey(for: date)] ?? []
+            let workouts = activityWorkoutsByDateKey[dateKey(for: date)] ?? []
             return DayItem(
                 date: date,
                 day: calendar.component(.day, from: date),
@@ -2125,6 +2142,10 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         interactiveTargetContentView = nil
         interactiveTargetMonthDate = nil
         interactiveTargetOffset = nil
+    }
+
+    private func dateKey(for date: Date) -> String {
+        Self.dateKey(for: calendar.dateComponents([.year, .month, .day], from: date))
     }
 
     private static func dateKey(for date: Date) -> String {

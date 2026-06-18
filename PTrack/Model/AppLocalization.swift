@@ -54,6 +54,11 @@ enum AppTextKey: String {
     case healthDataReadAuthorized
     case healthDataUnavailable
     case appleHealthDataSourceSubtitle
+    case exportGPX
+    case gpxExportFailed
+    case gpxExportNoRoute
+    case gpxExportRouteName
+    case gpxExporting
     case gpxImportInvalidFile
     case gpxImportNoRoute
     case hiking
@@ -221,6 +226,11 @@ enum AppLocalization {
             .healthDataReadAuthorized: "已授权读取数据",
             .healthDataUnavailable: "当前设备不支持健康数据。",
             .appleHealthDataSourceSubtitle: "读取 Apple 健康中记录的数据。",
+            .exportGPX: "导出 GPX",
+            .gpxExportFailed: "GPX 导出失败",
+            .gpxExportNoRoute: "这条轨迹没有可导出的路线点。",
+            .gpxExportRouteName: "来自 Movinn 的路线",
+            .gpxExporting: "正在导出 GPX",
             .gpxImportInvalidFile: "无法解析这个 GPX 文件。",
             .gpxImportNoRoute: "这个 GPX 文件里没有可用轨迹。",
             .hiking: "徒步",
@@ -253,10 +263,10 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "已授权读取相册",
             .photoMatching: "照片匹配",
             .queryingLocation: "位置查询中",
-            .routeBook: "路书",
-            .routeBookExit: "退出路书模式？",
+            .routeBook: "作为路书",
+            .routeBookExit: "退出作为路书？",
             .routeBookExitMessage: "退出后将回到运动列表。",
-            .routeBookLocationPermissionRequiredMessage: "请在系统设置中允许 Movinn 使用位置，这样才能在路书模式下显示你的位置。",
+            .routeBookLocationPermissionRequiredMessage: "请在系统设置中允许 Movinn 使用位置，这样才能在作为路书时显示你的位置。",
             .routeBookLocationPermissionRequiredTitle: "需要位置权限",
             .routeCollection: "导入路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
@@ -342,6 +352,11 @@ enum AppLocalization {
             .healthDataReadAuthorized: "データ読み取りは許可されています",
             .healthDataUnavailable: "このデバイスはヘルスケアデータに対応していません。",
             .appleHealthDataSourceSubtitle: "Appleヘルスケアに記録されたデータを読み取ります。",
+            .exportGPX: "GPXを書き出す",
+            .gpxExportFailed: "GPXの書き出しに失敗しました",
+            .gpxExportNoRoute: "この軌跡には書き出せるルートポイントがありません。",
+            .gpxExportRouteName: "Movinn からのルート",
+            .gpxExporting: "GPXを書き出し中",
             .gpxImportInvalidFile: "この GPX ファイルを解析できません。",
             .gpxImportNoRoute: "この GPX ファイルに利用できるルートがありません。",
             .hiking: "ハイキング",
@@ -374,7 +389,7 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "写真の読み取りは許可されています",
             .photoMatching: "写真照合",
             .queryingLocation: "位置を検索中",
-            .routeBook: "ルートブック",
+            .routeBook: "ルートブックとして使う",
             .routeBookExit: "ルートブックモードを終了しますか？",
             .routeBookExitMessage: "終了するとワークアウト一覧に戻ります。",
             .routeBookLocationPermissionRequiredMessage: "ルートブックモードで現在地を表示するには、システム設定で Movinn の位置情報利用を許可してください。",
@@ -463,6 +478,11 @@ enum AppLocalization {
             .healthDataReadAuthorized: "데이터 읽기 권한이 허용되었습니다",
             .healthDataUnavailable: "이 기기는 건강 데이터를 지원하지 않습니다.",
             .appleHealthDataSourceSubtitle: "Apple 건강에 기록된 데이터를 읽습니다.",
+            .exportGPX: "GPX 내보내기",
+            .gpxExportFailed: "GPX 내보내기 실패",
+            .gpxExportNoRoute: "이 궤적에는 내보낼 수 있는 경로 지점이 없습니다.",
+            .gpxExportRouteName: "Movinn에서 온 경로",
+            .gpxExporting: "GPX 내보내는 중",
             .gpxImportInvalidFile: "이 GPX 파일을 해석할 수 없습니다.",
             .gpxImportNoRoute: "이 GPX 파일에 사용할 수 있는 경로가 없습니다.",
             .hiking: "하이킹",
@@ -495,7 +515,7 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "사진 읽기 권한이 허용되었습니다",
             .photoMatching: "사진 매칭",
             .queryingLocation: "위치 조회 중",
-            .routeBook: "루트북",
+            .routeBook: "루트북으로 사용",
             .routeBookExit: "루트북 모드를 종료할까요?",
             .routeBookExitMessage: "종료하면 운동 목록으로 돌아갑니다.",
             .routeBookLocationPermissionRequiredMessage: "루트북 모드에서 현재 위치를 표시하려면 시스템 설정에서 Movinn의 위치 사용을 허용해 주세요.",
@@ -584,6 +604,11 @@ enum AppLocalization {
             .healthDataReadAuthorized: "Data read access is authorized",
             .healthDataUnavailable: "Health data is not available on this device.",
             .appleHealthDataSourceSubtitle: "Read data recorded in Apple Health.",
+            .exportGPX: "Export GPX",
+            .gpxExportFailed: "GPX export failed",
+            .gpxExportNoRoute: "This route does not have exportable route points.",
+            .gpxExportRouteName: "Route from Movinn",
+            .gpxExporting: "Exporting GPX",
             .gpxImportInvalidFile: "This GPX file could not be parsed.",
             .gpxImportNoRoute: "This GPX file does not contain a usable route.",
             .hiking: "Hiking",
@@ -616,7 +641,7 @@ enum AppLocalization {
             .photoLibraryReadAuthorized: "Photo access is authorized",
             .photoMatching: "Photo Matching",
             .queryingLocation: "Locating",
-            .routeBook: "Route Book",
+            .routeBook: "Use as Route Book",
             .routeBookExit: "Exit Route Book Mode?",
             .routeBookExitMessage: "You will return to the workout list.",
             .routeBookLocationPermissionRequiredMessage: "Allow Movinn to use location in system Settings so your position can be shown in Route Book mode.",

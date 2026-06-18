@@ -37,9 +37,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let routePreparationQueue = DispatchQueue(label: "studio.pj.PTrack.route-detail-prepare", qos: .userInitiated)
+    private let gpxExportQueue = DispatchQueue(label: "studio.pj.PTrack.gpx-export", qos: .userInitiated)
     private let routeLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let routeLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let routeLoadingLabel = UILabel()
+    private let gpxExportLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
+    private let gpxExportLoadingIndicator = UIActivityIndicatorView(style: .medium)
+    private let gpxExportLoadingLabel = UILabel()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let panelShadowView = UIView()
@@ -79,7 +83,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
     private var resolvedNavigationTitle: String?
     private var lastObservedPhotoAuthorizationState: PhotoLibraryAuthorizationState?
+    private var hasDisplayedRouteMediaAnnotations = false
     private var hasStartedRouteLoading = false
+    private var hasStartedDeferredDetailLoading = false
+    private var isExportingGPX = false
 
     private let minimumPanelHeight: CGFloat = 68
     private let mediumPanelHeight: CGFloat = 200
@@ -112,10 +119,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private static func makePanelGlassEffect() -> UIVisualEffect {
-        let effect = UIGlassEffect(style: .regular)
-        effect.isInteractive = true
-        effect.tintColor = UIColor.white.withAlphaComponent(0.16)
-        return effect
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = true
+            effect.tintColor = UIColor.white.withAlphaComponent(0.16)
+            return effect
+        }
+
+        return UIBlurEffect(style: .systemThinMaterialLight)
     }
 
     override func viewDidLoad() {
@@ -127,13 +138,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         configureNavigationBackgroundView()
         configureRouteLoadingView()
         configurePanelView()
-        startRouteLoadingIfNeeded()
+        configureGPXExportLoadingView()
         if presentationMode == .routeCollection {
             resolvedNavigationTitle = workout.title
             updateNavigationLocationTitle(workout.title)
-        } else {
-            loadRouteLocationTitle()
-            loadRouteMedia()
         }
     }
 
@@ -154,6 +162,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
         } else {
             navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
         }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        startDeferredDetailLoadingIfNeeded()
     }
 
     override func viewDidLayoutSubviews() {
@@ -200,6 +213,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             calorieRiceView.configure(caloriesKilocalories: caloriesKilocalories)
         }
         routeLoadingLabel.text = AppLocalization.text(.routeLoading)
+        gpxExportLoadingLabel.text = AppLocalization.text(.gpxExporting)
     }
 
     private func makeMoreBarButtonItem() -> UIBarButtonItem {
@@ -230,6 +244,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
         ) { [weak self] _ in
             self?.startRouteBookMode()
         }
+
+        let exportGPXAction = UIAction(
+            title: AppLocalization.text(.exportGPX),
+            image: UIImage(systemName: "square.and.arrow.up")
+        ) { [weak self] _ in
+            self?.exportGPX()
+        }
+        exportGPXAction.attributes = isExportingGPX ? [.disabled] : []
 
         let photoMatchingAction = UIAction(
             title: AppLocalization.text(.photoMatching),
@@ -262,6 +284,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         if PhotoLibraryAuthorizationManager.authorizationState == .needsAttention {
             menuChildren.append(photoMatchingAction)
         }
+        menuChildren.append(exportGPXAction)
         menuChildren.append(UIMenu(
             title: AppLocalization.text(.mapStyle),
             image: UIImage(systemName: "map"),
@@ -537,6 +560,43 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
+    private func configureGPXExportLoadingView() {
+        gpxExportLoadingView.isHidden = true
+        gpxExportLoadingView.alpha = 0
+        gpxExportLoadingView.layer.cornerRadius = 16
+        gpxExportLoadingView.layer.cornerCurve = .continuous
+        gpxExportLoadingView.layer.masksToBounds = true
+        gpxExportLoadingView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+
+        gpxExportLoadingIndicator.hidesWhenStopped = true
+
+        gpxExportLoadingLabel.text = AppLocalization.text(.gpxExporting)
+        gpxExportLoadingLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        gpxExportLoadingLabel.textColor = UIColor.black.withAlphaComponent(0.72)
+        gpxExportLoadingLabel.textAlignment = .center
+
+        view.addSubview(gpxExportLoadingView)
+        gpxExportLoadingView.contentView.addSubview(gpxExportLoadingIndicator)
+        gpxExportLoadingView.contentView.addSubview(gpxExportLoadingLabel)
+
+        gpxExportLoadingView.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.centerY.equalTo(view.safeAreaLayoutGuide.snp.centerY).offset(-46)
+            make.width.greaterThanOrEqualTo(132)
+            make.height.equalTo(72)
+        }
+
+        gpxExportLoadingIndicator.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.top.equalToSuperview().offset(13)
+        }
+
+        gpxExportLoadingLabel.snp.makeConstraints { make in
+            make.top.equalTo(gpxExportLoadingIndicator.snp.bottom).offset(7)
+            make.leading.trailing.equalToSuperview().inset(14)
+        }
+    }
+
     private func setRouteLoadingVisible(_ isVisible: Bool) {
         routeLoadingView.layer.removeAllAnimations()
 
@@ -555,6 +615,30 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 completion: { _ in
                     self.routeLoadingIndicator.stopAnimating()
                     self.routeLoadingView.isHidden = true
+                }
+            )
+        }
+    }
+
+    private func setGPXExportLoadingVisible(_ isVisible: Bool) {
+        gpxExportLoadingView.layer.removeAllAnimations()
+
+        if isVisible {
+            view.bringSubviewToFront(gpxExportLoadingView)
+            gpxExportLoadingView.isHidden = false
+            gpxExportLoadingIndicator.startAnimating()
+            UIView.animate(withDuration: 0.18) {
+                self.gpxExportLoadingView.alpha = 1
+            }
+        } else {
+            UIView.animate(
+                withDuration: 0.18,
+                animations: {
+                    self.gpxExportLoadingView.alpha = 0
+                },
+                completion: { _ in
+                    self.gpxExportLoadingIndicator.stopAnimating()
+                    self.gpxExportLoadingView.isHidden = true
                 }
             )
         }
@@ -602,8 +686,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func openEndpointInMaps(kind: RouteEndpoint) {
-        let coordinates = workout.displayCoordinates
-        let fallbackCoordinates = workout.coordinates.map(\.coordinate)
+        let coordinates = workout.routeDetailDisplayCoordinates
+        let fallbackCoordinates = workout.routeDetailCoordinates.map(\.coordinate)
         let coordinate: CLLocationCoordinate2D?
         switch kind {
         case .start:
@@ -617,8 +701,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return
         }
 
-        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        let mapItem = MKMapItem(location: location, address: nil)
+        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
         mapItem.name = AppLocalization.text(kind.titleTextKey)
 
         let launchOptions: [String: Any] = [
@@ -646,8 +729,79 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
-    private func showAlert(title: String) {
-        let alertController = UIAlertController(title: title, message: nil, preferredStyle: .alert)
+    private func exportGPX() {
+        guard !isExportingGPX else {
+            return
+        }
+
+        isExportingGPX = true
+        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.beginGPXExport()
+        }
+    }
+
+    private func beginGPXExport() {
+        guard isExportingGPX else {
+            return
+        }
+
+        setGPXExportLoadingVisible(true)
+
+        let routeName = AppLocalization.text(.gpxExportRouteName)
+        let coordinates = workout.routeDetailCoordinates
+        let fileName = GPXRouteExporter.suggestedFileName(routeName: routeName)
+
+        gpxExportQueue.async { [weak self, routeName, coordinates, fileName] in
+            let result: Result<URL, Error>
+            do {
+                let data = try GPXRouteExporter.data(
+                    routeName: routeName,
+                    coordinates: coordinates
+                )
+                let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+                try data.write(to: fileURL, options: .atomic)
+                result = .success(fileURL)
+            } catch {
+                result = .failure(error)
+            }
+
+            DispatchQueue.main.async {
+                guard let self else {
+                    if case let .success(fileURL) = result {
+                        try? FileManager.default.removeItem(at: fileURL)
+                    }
+                    return
+                }
+
+                self.isExportingGPX = false
+                self.navigationItem.rightBarButtonItem = self.makeMoreBarButtonItem()
+                self.setGPXExportLoadingVisible(false)
+                self.handleGPXExportResult(result)
+            }
+        }
+    }
+
+    private func handleGPXExportResult(_ result: Result<URL, Error>) {
+        switch result {
+        case let .success(fileURL):
+            let activityViewController = UIActivityViewController(
+                activityItems: [fileURL],
+                applicationActivities: nil
+            )
+            activityViewController.popoverPresentationController?.barButtonItem = navigationItem.rightBarButtonItem
+            activityViewController.completionWithItemsHandler = { _, _, _, _ in
+                try? FileManager.default.removeItem(at: fileURL)
+            }
+            present(activityViewController, animated: true)
+        case let .failure(error):
+            showAlert(title: AppLocalization.text(.gpxExportFailed), message: error.localizedDescription)
+        }
+    }
+
+    private func showAlert(title: String, message: String? = nil) {
+        let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
         present(alertController, animated: true)
     }
@@ -831,6 +985,19 @@ final class WorkoutRouteDetailViewController: UIViewController {
         ).cgPath
     }
 
+    private func startDeferredDetailLoadingIfNeeded() {
+        guard !hasStartedDeferredDetailLoading else {
+            return
+        }
+
+        hasStartedDeferredDetailLoading = true
+        startRouteLoadingIfNeeded()
+        if presentationMode == .workout {
+            loadRouteLocationTitle()
+            loadRouteMedia()
+        }
+    }
+
     private func startRouteLoadingIfNeeded() {
         guard !hasStartedRouteLoading else {
             return
@@ -866,7 +1033,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         for workout: TrackedWorkout,
         maximumElevationSampleCount: Int
     ) -> PreparedRoute? {
-        let routeCoordinates = workout.coordinates
+        let routeCoordinates = workout.routeDetailCoordinates
         let coordinates = CoordinateTransformer.displayCoordinates(for: routeCoordinates.map(\.coordinate))
         guard coordinates.count > 1 else {
             return nil
@@ -908,6 +1075,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         setRouteLoadingVisible(false)
         fitRouteIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            self?.displayRouteMediaIfRouteReady()
+        }
     }
 
     private func fitRouteIfNeeded() {
@@ -942,8 +1112,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             case .success(let mediaItems):
                 Task { @MainActor in
                     self.routeMediaItems = mediaItems
-                    let annotations = mediaItems.map(RouteMediaAnnotation.init)
-                    self.mapView.addAnnotations(annotations)
+                    self.displayRouteMediaIfRouteReady()
                     self.refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: false)
                 }
             case .failure(let error):
@@ -951,6 +1120,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 self.refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: false)
             }
         }
+    }
+
+    private func displayRouteMediaIfRouteReady() {
+        guard routePolyline != nil,
+              !hasDisplayedRouteMediaAnnotations,
+              !routeMediaItems.isEmpty else {
+            return
+        }
+
+        hasDisplayedRouteMediaAnnotations = true
+        mapView.addAnnotations(routeMediaItems.map(RouteMediaAnnotation.init))
     }
 
     @objc private func handlePanelPan(_ recognizer: UIPanGestureRecognizer) {

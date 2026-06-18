@@ -5,7 +5,7 @@
 //  Created by Codex on 2026/6/15.
 //
 
-import MapKit
+import CoreLocation
 
 @MainActor
 final class WorkoutRouteLocationResolver {
@@ -59,7 +59,7 @@ final class WorkoutRouteLocationResolver {
 
     private let userDefaults: UserDefaults
     private var pendingCompletions: [String: [(WorkoutRouteResolvedLocation?) -> Void]] = [:]
-    private var activeRequests: [String: MKReverseGeocodingRequest] = [:]
+    private var activeRequests: [String: CLGeocoder] = [:]
 
     private static let currentCacheVersion = 4
     private let cacheKeyPrefix = "workoutRouteLocation."
@@ -119,33 +119,29 @@ final class WorkoutRouteLocationResolver {
 
         pendingCompletions[workout.id] = [completion]
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-        guard let request = MKReverseGeocodingRequest(location: location) else {
-            if let localLocation {
-                cache(CachedLocation(location: localLocation), for: workout.id)
-            }
-            completePendingRequests(for: workout.id, location: localLocation)
-            return
-        }
+        let geocoder = CLGeocoder()
+        activeRequests[workout.id] = geocoder
 
-        activeRequests[workout.id] = request
-        request.getMapItems { [weak self] mapItems, _ in
-            guard let self else {
-                return
-            }
-
-            let location = mapItems?.compactMap {
+        geocoder.reverseGeocodeLocation(location) { [weak self] placemarks, _ in
+            let resolvedLocation = placemarks?.compactMap {
                 Self.resolvedLocation(from: $0, coordinate: coordinate)
             }.first ?? localLocation
 
-            if let location {
-                self.cache(CachedLocation(location: location), for: workout.id)
-            }
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
 
-            self.completePendingRequests(for: workout.id, location: location)
+                if let resolvedLocation {
+                    self.cache(CachedLocation(location: resolvedLocation), for: workout.id)
+                }
+
+                self.completePendingRequests(for: workout.id, location: resolvedLocation)
+            }
         }
     }
 
-    private static func resolvedLocation(
+    nonisolated private static func resolvedLocation(
         from region: CoordinateRegionResult?,
         coordinate: CLLocationCoordinate2D
     ) -> WorkoutRouteResolvedLocation? {
@@ -220,26 +216,32 @@ final class WorkoutRouteLocationResolver {
         return sourceLocation.distance(from: storedLocation) <= cachedCoordinateToleranceMeters
     }
 
-    private static func resolvedLocation(
-        from mapItem: MKMapItem,
+    nonisolated private static func resolvedLocation(
+        from placemark: CLPlacemark,
         coordinate: CLLocationCoordinate2D
     ) -> WorkoutRouteResolvedLocation? {
-        let addressRepresentations = mapItem.addressRepresentations
-        let administrativeArea = administrativeArea(from: addressRepresentations)
-        let countryCode = mapItem.placemark.isoCountryCode
-        let fullAddress = addressRepresentations?.fullAddress(includingRegion: true, singleLine: true)
-            ?? mapItem.address?.fullAddress
-            ?? mapItem.address?.shortAddress
-            ?? mapItem.placemark.title
-        let countryName = addressRepresentations?.regionName ?? mapItem.placemark.country
-        let locality = addressRepresentations?.cityName ?? mapItem.placemark.locality
-        let titleComponents = uniqueComponents([
-            mapItem.name,
-            mapItem.address?.shortAddress,
+        let countryCode = placemark.isoCountryCode
+        let countryName = placemark.country
+        let administrativeArea = placemark.administrativeArea
+        let subAdministrativeArea = placemark.subAdministrativeArea
+        let locality = placemark.locality
+        let subLocality = placemark.subLocality
+        let fullAddress = uniqueComponents([
+            placemark.name,
+            subLocality,
             locality,
+            subAdministrativeArea,
+            administrativeArea,
+            countryName
+        ]).joined(separator: " ")
+        let titleComponents = uniqueComponents([
+            placemark.name,
+            subLocality,
+            locality,
+            subAdministrativeArea,
             administrativeArea,
             countryName,
-            fullAddress
+            fullAddress.isEmpty ? nil : fullAddress
         ])
 
         guard let title = titleComponents.first else {
@@ -251,45 +253,17 @@ final class WorkoutRouteLocationResolver {
             countryCode: countryCode,
             countryName: countryName,
             administrativeArea: administrativeArea,
-            subAdministrativeArea: nil,
+            subAdministrativeArea: subAdministrativeArea,
             locality: locality,
-            subLocality: nil,
-            fullAddress: fullAddress,
+            subLocality: subLocality,
+            fullAddress: fullAddress.isEmpty ? nil : fullAddress,
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
             updatedAt: Date()
         )
     }
 
-    private static func administrativeArea(from addressRepresentations: MKAddressRepresentations?) -> String? {
-        guard let addressRepresentations,
-              let cityName = addressRepresentations.cityName else {
-            return nil
-        }
-
-        let countryName = addressRepresentations.regionName
-        let contextCandidates = [
-            addressRepresentations.cityWithContext(.full),
-            addressRepresentations.cityWithContext
-        ]
-
-        for candidate in contextCandidates {
-            let parts = candidate?
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? []
-            let area = parts.first {
-                !$0.isEmpty && $0 != cityName && $0 != countryName
-            }
-
-            if let area {
-                return area
-            }
-        }
-
-        return nil
-    }
-
-    private static func uniqueComponents(_ components: [String?]) -> [String] {
+    nonisolated private static func uniqueComponents(_ components: [String?]) -> [String] {
         var seen = Set<String>()
         var result: [String] = []
 
@@ -308,7 +282,7 @@ final class WorkoutRouteLocationResolver {
         return result
     }
 
-    private static func isUnknownLocationValue(_ value: String) -> Bool {
+    nonisolated private static func isUnknownLocationValue(_ value: String) -> Bool {
         let normalizedValue = value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()

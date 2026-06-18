@@ -61,11 +61,11 @@ struct RouteCoordinate: Codable {
         floorLevel = location.floor?.level
     }
 
-    var coordinate: CLLocationCoordinate2D {
+    nonisolated var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
-    var hasAltitude: Bool {
+    nonisolated var hasAltitude: Bool {
         altitudeMeters != nil
     }
 }

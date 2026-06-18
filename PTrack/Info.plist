@@ -20,10 +20,10 @@
 	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
 	<dict>
 		<key>RouteBookNavigation</key>
-		<string>Movinn 需要使用精确位置，让你在路书模式下对照轨迹运动。</string>
+		<string>Movinn 需要使用精确位置，让你在作为路书时对照轨迹运动。</string>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Movinn 需要使用你的位置，让你在路书模式下对照轨迹运动。</string>
+	<string>Movinn 需要使用你的位置，让你在作为路书时对照轨迹运动。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
