@@ -13,6 +13,10 @@ import HealthKit
 import UIKit
 
 class ViewController: UIViewController {
+    private enum DefaultsKey {
+        static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
+    }
+
     private let store = HealthWorkoutStore()
     private let cacheStore = WorkoutCacheStore()
     let newWorkoutBadgeStore = NewWorkoutBadgeStore()
@@ -444,10 +448,10 @@ class ViewController: UIViewController {
 
     private func routeCollectionMenuImage(hasUnseenRoute: Bool) -> UIImage? {
         guard hasUnseenRoute else {
-            return UIImage(systemName: "bookmark")
+            return UIImage(systemName: "square.and.arrow.down")
         }
 
-        return UIImage(systemName: "sparkles")?
+        return UIImage(systemName: "square.and.arrow.down.fill")?
             .withTintColor(AppColors.movinnGreen, renderingMode: .alwaysOriginal)
     }
 
@@ -905,6 +909,7 @@ class ViewController: UIViewController {
                     self.scheduleCacheSave(delay: 0)
                     print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
                 }
+                self.markStravaHistoricalBackfillCompletedIfNeeded(after: startDate)
 
                 print(
                     "PTrack Strava: import completed, loaded routes: \(importedWorkouts.count), flushed: \(didFlushPendingWorkouts)"
@@ -933,12 +938,27 @@ class ViewController: UIViewController {
     }
 
     private func latestStravaStartDateForIncrementalSync() -> Date? {
+        guard UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) else {
+            print("PTrack Strava: historical backfill not completed; requesting full activity history")
+            return nil
+        }
+
         let latestStartDate = workouts
             .filter { $0.stravaActivityID != nil }
             .map(\.startDate)
             .max()
 
         return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
+    }
+
+    private func markStravaHistoricalBackfillCompletedIfNeeded(after startDate: Date?) {
+        guard startDate == nil,
+              !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) else {
+            return
+        }
+
+        UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
+        print("PTrack Strava: historical backfill marked completed")
     }
 
     private static func debugDateString(_ date: Date?) -> String {

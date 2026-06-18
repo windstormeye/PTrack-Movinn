@@ -13,28 +13,25 @@ final class RouteCollectionStore {
     static let didChangeNotification = Notification.Name("studio.pj.PTrack.routeCollectionDidChange")
 
     private let directoryURL: URL
-    private let fileURL: URL
+    private let manifestFileURL: URL
+    private let routesDirectoryURL: URL
 
     init() {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         directoryURL = baseURL
             .appendingPathComponent("PTrack", isDirectory: true)
             .appendingPathComponent("route-collection", isDirectory: true)
-        fileURL = directoryURL.appendingPathComponent("routes.json")
+        manifestFileURL = directoryURL.appendingPathComponent("route-index.json")
+        routesDirectoryURL = directoryURL.appendingPathComponent("routes", isDirectory: true)
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
     }
 
     func load() -> [TrackedWorkout] {
-        guard let data = try? Data(contentsOf: fileURL) else {
-            return []
+        if let splitRoutes = loadSplitCache() {
+            return splitRoutes
         }
 
-        do {
-            return sorted(try JSONDecoder().decode([TrackedWorkout].self, from: data))
-        } catch {
-            print("PTrack Route Collection: failed to decode routes: \(error)")
-            return []
-        }
+        return []
     }
 
     @discardableResult
@@ -53,17 +50,55 @@ final class RouteCollectionStore {
         routes = deduplicated(sorted(routes))
         save(routes)
         NotificationCenter.default.post(name: Self.didChangeNotification, object: routes)
+        RouteCollectionCloudSyncCoordinator.shared.handleRoutesAppended(workouts)
         return routes
     }
 
     func save(_ routes: [TrackedWorkout]) {
         do {
-            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(deduplicated(sorted(routes)))
-            try data.write(to: fileURL, options: [.atomic])
+            try FileManager.default.createDirectory(at: routesDirectoryURL, withIntermediateDirectories: true)
+
+            let normalizedRoutes = deduplicated(sorted(routes))
+            var currentFileNames = Set<String>()
+            var writtenRouteFileCount = 0
+
+            for route in normalizedRoutes {
+                let fileURL = routeFileURL(for: route.id)
+                currentFileNames.insert(fileURL.lastPathComponent)
+
+                let data = try JSONEncoder().encode(route)
+                if (try? Data(contentsOf: fileURL)) != data {
+                    try data.write(to: fileURL, options: [.atomic])
+                    writtenRouteFileCount += 1
+                }
+            }
+
+            let removedRouteFileCount = removeStaleRouteFiles(currentFileNames: currentFileNames)
+            let manifest = RouteCollectionCacheManifest(
+                version: 1,
+                routeIDs: normalizedRoutes.map(\.id)
+            )
+            let manifestData = try JSONEncoder().encode(manifest)
+            try manifestData.write(to: manifestFileURL, options: [.atomic])
+
+            print(
+                "PTrack Route Collection: saved \(normalizedRoutes.count) routes, written files: \(writtenRouteFileCount), removed files: \(removedRouteFileCount), path: \(routesDirectoryURL.path)"
+            )
         } catch {
             print("PTrack Route Collection: failed to save routes: \(error)")
         }
+    }
+
+    @discardableResult
+    func replace(with routes: [TrackedWorkout]) -> [TrackedWorkout] {
+        let normalizedRoutes = deduplicated(sorted(routes))
+        guard !routesAreEquivalent(load(), normalizedRoutes) else {
+            return normalizedRoutes
+        }
+
+        save(normalizedRoutes)
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: normalizedRoutes)
+        return normalizedRoutes
     }
 
     @discardableResult
@@ -78,6 +113,7 @@ final class RouteCollectionStore {
 
         save(routes)
         NotificationCenter.default.post(name: Self.didChangeNotification, object: routes)
+        RouteCollectionCloudSyncCoordinator.shared.handleRouteDeleted(workout)
         return routes
     }
 
@@ -89,6 +125,120 @@ final class RouteCollectionStore {
         var seenIDs = Set<String>()
         return routes.filter { seenIDs.insert($0.id).inserted }
     }
+
+    private func loadSplitCache() -> [TrackedWorkout]? {
+        let manifest = loadManifest()
+        let fileURLs: [URL]
+
+        if let manifest {
+            fileURLs = manifest.routeIDs.map(routeFileURL(for:))
+        } else {
+            fileURLs = existingRouteFileURLs()
+            guard !fileURLs.isEmpty else {
+                return nil
+            }
+        }
+
+        var routes: [TrackedWorkout] = []
+        routes.reserveCapacity(fileURLs.count)
+
+        for fileURL in fileURLs {
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                print("PTrack Route Collection: missing route cache file: \(fileURL.path)")
+                continue
+            }
+
+            do {
+                let data = try Data(contentsOf: fileURL)
+                let route = try JSONDecoder().decode(TrackedWorkout.self, from: data)
+                routes.append(route)
+            } catch {
+                print("PTrack Route Collection: failed to decode route cache file \(fileURL.lastPathComponent): \(error)")
+            }
+        }
+
+        let sortedRoutes = sorted(routes)
+        print(
+            "PTrack Route Collection: loaded \(sortedRoutes.count) routes, files: \(fileURLs.count), size: \(Self.formattedByteCount(totalSplitCacheByteCount())), path: \(routesDirectoryURL.path)"
+        )
+        return sortedRoutes
+    }
+
+    private func loadManifest() -> RouteCollectionCacheManifest? {
+        guard let data = try? Data(contentsOf: manifestFileURL) else {
+            return nil
+        }
+
+        do {
+            return try JSONDecoder().decode(RouteCollectionCacheManifest.self, from: data)
+        } catch {
+            print("PTrack Route Collection: failed to decode route cache manifest: \(error)")
+            return nil
+        }
+    }
+
+    private func existingRouteFileURLs() -> [URL] {
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: routesDirectoryURL,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return fileURLs
+            .filter { $0.pathExtension == "json" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    private func routeFileURL(for routeID: String) -> URL {
+        routesDirectoryURL.appendingPathComponent(Self.routeFileName(for: routeID), isDirectory: false)
+    }
+
+    private func removeStaleRouteFiles(currentFileNames: Set<String>) -> Int {
+        var removedFileCount = 0
+        for fileURL in existingRouteFileURLs() where !currentFileNames.contains(fileURL.lastPathComponent) {
+            do {
+                try FileManager.default.removeItem(at: fileURL)
+                removedFileCount += 1
+            } catch {
+                print("PTrack Route Collection: failed to remove stale route file \(fileURL.lastPathComponent): \(error)")
+            }
+        }
+
+        return removedFileCount
+    }
+
+    private func totalSplitCacheByteCount() -> Int64 {
+        existingRouteFileURLs().reduce(Int64(0)) { total, fileURL in
+            let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
+            return total + Int64(values?.fileSize ?? 0)
+        }
+    }
+
+    private static func routeFileName(for routeID: String) -> String {
+        let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let escapedID = routeID.addingPercentEncoding(withAllowedCharacters: allowedCharacters) ?? routeID
+        return "\(escapedID).json"
+    }
+
+    private static func formattedByteCount(_ byteCount: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
+    }
+
+    private func routesAreEquivalent(_ lhs: [TrackedWorkout], _ rhs: [TrackedWorkout]) -> Bool {
+        guard lhs.count == rhs.count else {
+            return false
+        }
+
+        let encoder = JSONEncoder()
+        return (try? encoder.encode(lhs)) == (try? encoder.encode(rhs))
+    }
+}
+
+private struct RouteCollectionCacheManifest: Codable {
+    let version: Int
+    let routeIDs: [String]
 }
 
 enum SharedRouteImportInbox {
@@ -361,7 +511,7 @@ extension TrackedWorkout {
 
 extension TrackedWorkoutSourceRevision {
     nonisolated init(routeCollectionSourceName sourceName: String) {
-        self.sourceName = "Route Collection"
+        self.sourceName = "Imported Routes"
         bundleIdentifier = "studio.pj.app.PTrack.routeCollection"
         version = nil
         productType = sourceName

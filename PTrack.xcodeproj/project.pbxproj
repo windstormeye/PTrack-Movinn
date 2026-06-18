@@ -179,6 +179,9 @@
 							com.apple.HealthKit = {
 								enabled = 1;
 							};
+							com.apple.iCloud = {
+								enabled = 1;
+							};
 						};
 					};
 					0C7A00072FE25A0000000007 = {

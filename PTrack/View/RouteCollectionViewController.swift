@@ -15,6 +15,9 @@ final class RouteCollectionViewController: UIViewController {
     private let navigationBackgroundMask = CAGradientLayer()
     private let navigationBackgroundHeight: CGFloat = 124
     private let store = RouteCollectionStore()
+    private let navigationTitleStackView = UIStackView()
+    private let navigationTitleLabel = UILabel()
+    private let navigationSubtitleLabel = UILabel()
     private let emptyLabel = UILabel()
     private let routeGridView = WorkoutRouteGridView()
     private var collectionView: UICollectionView!
@@ -40,6 +43,7 @@ final class RouteCollectionViewController: UIViewController {
         navigationController?.setNavigationBarHidden(false, animated: animated)
         configureNavigationBar()
         reloadRoutes(importsPendingSharedRoutes: true)
+        RouteCollectionCloudSyncCoordinator.shared.startIfEnabled(store: store)
     }
 
     override func viewDidLayoutSubviews() {
@@ -52,13 +56,40 @@ final class RouteCollectionViewController: UIViewController {
         view.backgroundColor = .systemBackground
         navigationItem.largeTitleDisplayMode = .never
         edgesForExtendedLayout = [.top, .bottom]
+        configureNavigationTitleView()
         navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: UIImage(systemName: "plus"),
+            image: UIImage(systemName: "square.and.arrow.down"),
             style: .plain,
             target: self,
             action: #selector(presentGPXPicker)
         )
         updateLocalizedText()
+    }
+
+    private func configureNavigationTitleView() {
+        navigationTitleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        navigationTitleLabel.textColor = .label
+        navigationTitleLabel.textAlignment = .center
+        navigationTitleLabel.adjustsFontSizeToFitWidth = true
+        navigationTitleLabel.minimumScaleFactor = 0.86
+        navigationTitleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        navigationSubtitleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        navigationSubtitleLabel.textColor = .secondaryLabel
+        navigationSubtitleLabel.textAlignment = .center
+        navigationSubtitleLabel.adjustsFontSizeToFitWidth = true
+        navigationSubtitleLabel.minimumScaleFactor = 0.82
+        navigationSubtitleLabel.isHidden = true
+        navigationSubtitleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        navigationTitleStackView.axis = .vertical
+        navigationTitleStackView.alignment = .center
+        navigationTitleStackView.spacing = 1
+        navigationTitleStackView.isUserInteractionEnabled = false
+        navigationTitleStackView.addArrangedSubview(navigationTitleLabel)
+        navigationTitleStackView.addArrangedSubview(navigationSubtitleLabel)
+
+        navigationItem.titleView = navigationTitleStackView
     }
 
     private func configureNavigationBar() {
@@ -178,6 +209,18 @@ final class RouteCollectionViewController: UIViewController {
             name: SharedRouteImportInbox.pendingRoutesDidChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleICloudSyncProgressDidChange),
+            name: RouteCollectionCloudSyncCoordinator.progressDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleICloudSyncSettingDidChange),
+            name: RouteCollectionCloudSyncSettings.didChangeNotification,
+            object: nil
+        )
     }
 
     @objc private func handleLanguageDidChange() {
@@ -192,10 +235,45 @@ final class RouteCollectionViewController: UIViewController {
         reloadRoutes(importsPendingSharedRoutes: true)
     }
 
+    @objc private func handleICloudSyncProgressDidChange() {
+        updateICloudSyncSubtitle()
+    }
+
+    @objc private func handleICloudSyncSettingDidChange() {
+        updateICloudSyncSubtitle()
+    }
+
     private func updateLocalizedText() {
-        title = AppLocalization.text(.routeCollection)
+        let routeCollectionTitle = AppLocalization.text(.routeCollection)
+        title = routeCollectionTitle
+        navigationTitleLabel.text = routeCollectionTitle
         emptyLabel.text = AppLocalization.text(.routeCollectionEmptyMessage)
+        updateICloudSyncSubtitle()
         collectionView?.reloadData()
+    }
+
+    private func updateICloudSyncSubtitle() {
+        let progress = RouteCollectionCloudSyncCoordinator.shared.currentProgress
+        guard progress.isEnabled else {
+            navigationSubtitleLabel.text = nil
+            navigationSubtitleLabel.isHidden = true
+            navigationTitleStackView.sizeToFit()
+            return
+        }
+
+        navigationSubtitleLabel.isHidden = false
+        if progress.isSynchronizing || !progress.isComplete {
+            navigationSubtitleLabel.text = String(
+                format: AppLocalization.text(.routeCollectionICloudSyncProgressFormat),
+                progress.completedCount,
+                progress.totalCount
+            )
+            navigationSubtitleLabel.textColor = .secondaryLabel
+        } else {
+            navigationSubtitleLabel.text = AppLocalization.text(.routeCollectionICloudSyncComplete)
+            navigationSubtitleLabel.textColor = AppColors.movinnGreen
+        }
+        navigationTitleStackView.sizeToFit()
     }
 
     private func reloadRoutes(importsPendingSharedRoutes: Bool) {
@@ -208,6 +286,7 @@ final class RouteCollectionViewController: UIViewController {
         routes = store.load()
         collectionView?.reloadData()
         updateEmptyState()
+        updateICloudSyncSubtitle()
     }
 
     private func updateEmptyState() {

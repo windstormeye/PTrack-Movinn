@@ -42,7 +42,9 @@ enum AppTextKey: String {
     case deleteRoute
     case deleteRouteMessage
     case developerWebsite
+    case disable
     case distanceMetersFormat
+    case enable
     case exit
     case healthAuthorizationDenied
     case healthAuthorizationFailed
@@ -55,6 +57,17 @@ enum AppTextKey: String {
     case gpxImportInvalidFile
     case gpxImportNoRoute
     case hiking
+    case iCloudRouteSync
+    case iCloudRouteSyncAlreadyEnabled
+    case iCloudRouteSyncConfirmMessage
+    case iCloudRouteSyncConfirmTitle
+    case iCloudRouteSyncDisabled
+    case iCloudRouteSyncDisableConfirmMessage
+    case iCloudRouteSyncDisableConfirmTitle
+    case iCloudRouteSyncEnabled
+    case iCloudRouteSyncFailed
+    case routeCollectionICloudSyncComplete
+    case routeCollectionICloudSyncProgressFormat
     case mapStyle
     case more
     case movinnLocalDataPrivacyStatement
@@ -196,7 +209,9 @@ enum AppLocalization {
             .deleteRoute: "删除路线？",
             .deleteRouteMessage: "删除后无法恢复。",
             .developerWebsite: "开发者网站",
+            .disable: "关闭",
             .distanceMetersFormat: "%.0f 米",
+            .enable: "开启",
             .exit: "退出",
             .healthAuthorizationDenied: "未获得健康数据读取权限。",
             .healthAuthorizationFailed: "健康授权失败",
@@ -209,6 +224,17 @@ enum AppLocalization {
             .gpxImportInvalidFile: "无法解析这个 GPX 文件。",
             .gpxImportNoRoute: "这个 GPX 文件里没有可用轨迹。",
             .hiking: "徒步",
+            .iCloudRouteSync: "iCloud 同步",
+            .iCloudRouteSyncAlreadyEnabled: "iCloud 同步已开启",
+            .iCloudRouteSyncConfirmMessage: "确认后会同步导入路线数据，并在之后导入或删除路线时自动同步 iCloud。",
+            .iCloudRouteSyncConfirmTitle: "确认同步导入路线数据？",
+            .iCloudRouteSyncDisabled: "已关闭 iCloud 同步",
+            .iCloudRouteSyncDisableConfirmMessage: "关闭后将停止同步导入路线数据，之后导入或删除路线不会自动同步 iCloud。已同步到 iCloud 的数据会保留。",
+            .iCloudRouteSyncDisableConfirmTitle: "关闭 iCloud 同步？",
+            .iCloudRouteSyncEnabled: "已开启 iCloud 同步",
+            .iCloudRouteSyncFailed: "iCloud 同步开启失败",
+            .routeCollectionICloudSyncComplete: "iCloud 同步完成",
+            .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 同步中",
             .mapStyle: "地图样式",
             .more: "更多",
             .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
@@ -232,8 +258,8 @@ enum AppLocalization {
             .routeBookExitMessage: "退出后将回到运动列表。",
             .routeBookLocationPermissionRequiredMessage: "请在系统设置中允许 Movinn 使用位置，这样才能在路书模式下显示你的位置。",
             .routeBookLocationPermissionRequiredTitle: "需要位置权限",
-            .routeCollection: "路线收藏",
-            .routeCollectionEmptyMessage: "还没有收藏路线",
+            .routeCollection: "导入路线",
+            .routeCollectionEmptyMessage: "还没有导入路线",
             .routeCollectionImportSuccess: "已导入 GPX 路线",
             .routeCollectionImporting: "正在导入 GPX",
             .routeHeatmap: "轨迹热图",
@@ -271,7 +297,7 @@ enum AppLocalization {
             .totalWorkoutTime: "总时间",
             .trailRunning: "越野跑",
             .today: "今天",
-            .uiSettings: "UI 设置",
+            .uiSettings: "功能设置",
             .unknownDistance: "未知距离",
             .unknownDuration: "未知时长",
             .unknownLocation: "未知位置",
@@ -304,7 +330,9 @@ enum AppLocalization {
             .deleteRoute: "ルートを削除しますか？",
             .deleteRouteMessage: "削除すると元に戻せません。",
             .developerWebsite: "開発者サイト",
+            .disable: "オフにする",
             .distanceMetersFormat: "%.0f m",
+            .enable: "オンにする",
             .exit: "終了",
             .healthAuthorizationDenied: "ヘルスケアデータの読み取り権限がありません。",
             .healthAuthorizationFailed: "ヘルスケア認証に失敗しました",
@@ -317,6 +345,17 @@ enum AppLocalization {
             .gpxImportInvalidFile: "この GPX ファイルを解析できません。",
             .gpxImportNoRoute: "この GPX ファイルに利用できるルートがありません。",
             .hiking: "ハイキング",
+            .iCloudRouteSync: "iCloud同期",
+            .iCloudRouteSyncAlreadyEnabled: "iCloud同期はオンです",
+            .iCloudRouteSyncConfirmMessage: "読み込んだルートのデータを同期し、今後ルートを読み込むか削除したときに iCloud へ自動同期します。",
+            .iCloudRouteSyncConfirmTitle: "読み込んだルートを同期しますか？",
+            .iCloudRouteSyncDisabled: "iCloud同期をオフにしました",
+            .iCloudRouteSyncDisableConfirmMessage: "オフにすると読み込んだルートの同期を停止し、今後ルートを読み込むか削除したときに iCloud へ自動同期しません。すでに iCloud に同期されたデータは保持されます。",
+            .iCloudRouteSyncDisableConfirmTitle: "iCloud同期をオフにしますか？",
+            .iCloudRouteSyncEnabled: "iCloud同期をオンにしました",
+            .iCloudRouteSyncFailed: "iCloud同期をオンにできませんでした",
+            .routeCollectionICloudSyncComplete: "iCloud同期完了",
+            .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud同期中",
             .mapStyle: "地図スタイル",
             .more: "その他",
             .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
@@ -340,8 +379,8 @@ enum AppLocalization {
             .routeBookExitMessage: "終了するとワークアウト一覧に戻ります。",
             .routeBookLocationPermissionRequiredMessage: "ルートブックモードで現在地を表示するには、システム設定で Movinn の位置情報利用を許可してください。",
             .routeBookLocationPermissionRequiredTitle: "位置情報の許可が必要です",
-            .routeCollection: "ルート保存",
-            .routeCollectionEmptyMessage: "保存したルートはまだありません",
+            .routeCollection: "ルート読み込み",
+            .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
             .routeCollectionImportSuccess: "GPX ルートを読み込みました",
             .routeCollectionImporting: "GPX を読み込み中",
             .routeHeatmap: "軌跡ヒートマップ",
@@ -379,7 +418,7 @@ enum AppLocalization {
             .totalWorkoutTime: "合計時間",
             .trailRunning: "トレイルランニング",
             .today: "今日",
-            .uiSettings: "UI設定",
+            .uiSettings: "機能設定",
             .unknownDistance: "不明な距離",
             .unknownDuration: "不明な時間",
             .unknownLocation: "不明な位置",
@@ -412,7 +451,9 @@ enum AppLocalization {
             .deleteRoute: "경로를 삭제할까요?",
             .deleteRouteMessage: "삭제하면 되돌릴 수 없습니다.",
             .developerWebsite: "개발자 웹사이트",
+            .disable: "끄기",
             .distanceMetersFormat: "%.0f m",
+            .enable: "켜기",
             .exit: "종료",
             .healthAuthorizationDenied: "건강 데이터 읽기 권한이 없습니다.",
             .healthAuthorizationFailed: "건강 권한 요청 실패",
@@ -425,6 +466,17 @@ enum AppLocalization {
             .gpxImportInvalidFile: "이 GPX 파일을 해석할 수 없습니다.",
             .gpxImportNoRoute: "이 GPX 파일에 사용할 수 있는 경로가 없습니다.",
             .hiking: "하이킹",
+            .iCloudRouteSync: "iCloud 동기화",
+            .iCloudRouteSyncAlreadyEnabled: "iCloud 동기화가 켜져 있습니다",
+            .iCloudRouteSyncConfirmMessage: "가져온 경로 데이터를 동기화하고 이후 경로를 가져오거나 삭제할 때 iCloud에 자동으로 동기화합니다.",
+            .iCloudRouteSyncConfirmTitle: "가져온 경로를 동기화할까요?",
+            .iCloudRouteSyncDisabled: "iCloud 동기화가 꺼졌습니다",
+            .iCloudRouteSyncDisableConfirmMessage: "끄면 가져온 경로 데이터 동기화를 중지하고 이후 경로를 가져오거나 삭제할 때 iCloud에 자동으로 동기화하지 않습니다. 이미 iCloud에 동기화된 데이터는 유지됩니다.",
+            .iCloudRouteSyncDisableConfirmTitle: "iCloud 동기화를 끌까요?",
+            .iCloudRouteSyncEnabled: "iCloud 동기화가 켜졌습니다",
+            .iCloudRouteSyncFailed: "iCloud 동기화를 켜지 못했습니다",
+            .routeCollectionICloudSyncComplete: "iCloud 동기화 완료",
+            .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 동기화 중",
             .mapStyle: "지도 스타일",
             .more: "더보기",
             .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
@@ -448,8 +500,8 @@ enum AppLocalization {
             .routeBookExitMessage: "종료하면 운동 목록으로 돌아갑니다.",
             .routeBookLocationPermissionRequiredMessage: "루트북 모드에서 현재 위치를 표시하려면 시스템 설정에서 Movinn의 위치 사용을 허용해 주세요.",
             .routeBookLocationPermissionRequiredTitle: "위치 권한 필요",
-            .routeCollection: "경로 보관함",
-            .routeCollectionEmptyMessage: "아직 저장한 경로가 없습니다",
+            .routeCollection: "경로 가져오기",
+            .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
             .routeCollectionImportSuccess: "GPX 경로를 가져왔습니다",
             .routeCollectionImporting: "GPX 가져오는 중",
             .routeHeatmap: "경로 히트맵",
@@ -487,7 +539,7 @@ enum AppLocalization {
             .totalWorkoutTime: "총 시간",
             .trailRunning: "트레일 러닝",
             .today: "오늘",
-            .uiSettings: "UI 설정",
+            .uiSettings: "기능 설정",
             .unknownDistance: "알 수 없는 거리",
             .unknownDuration: "알 수 없는 시간",
             .unknownLocation: "알 수 없는 위치",
@@ -520,7 +572,9 @@ enum AppLocalization {
             .deleteRoute: "Delete Route?",
             .deleteRouteMessage: "This cannot be undone.",
             .developerWebsite: "Developer Website",
+            .disable: "Disable",
             .distanceMetersFormat: "%.0f m",
+            .enable: "Enable",
             .exit: "Exit",
             .healthAuthorizationDenied: "Health data read permission has not been granted.",
             .healthAuthorizationFailed: "Health authorization failed",
@@ -533,6 +587,17 @@ enum AppLocalization {
             .gpxImportInvalidFile: "This GPX file could not be parsed.",
             .gpxImportNoRoute: "This GPX file does not contain a usable route.",
             .hiking: "Hiking",
+            .iCloudRouteSync: "iCloud Sync",
+            .iCloudRouteSyncAlreadyEnabled: "iCloud sync is already enabled",
+            .iCloudRouteSyncConfirmMessage: "This will sync imported route data and automatically update iCloud whenever routes are imported or deleted.",
+            .iCloudRouteSyncConfirmTitle: "Sync Imported Routes?",
+            .iCloudRouteSyncDisabled: "iCloud sync disabled",
+            .iCloudRouteSyncDisableConfirmMessage: "Disabling will stop syncing imported route data. Future route imports or deletions will not update iCloud automatically. Data already synced to iCloud will be kept.",
+            .iCloudRouteSyncDisableConfirmTitle: "Disable iCloud Sync?",
+            .iCloudRouteSyncEnabled: "iCloud sync enabled",
+            .iCloudRouteSyncFailed: "iCloud sync could not be enabled",
+            .routeCollectionICloudSyncComplete: "iCloud sync complete",
+            .routeCollectionICloudSyncProgressFormat: "%d/%d syncing with iCloud",
             .mapStyle: "Map Style",
             .more: "More",
             .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
@@ -556,8 +621,8 @@ enum AppLocalization {
             .routeBookExitMessage: "You will return to the workout list.",
             .routeBookLocationPermissionRequiredMessage: "Allow Movinn to use location in system Settings so your position can be shown in Route Book mode.",
             .routeBookLocationPermissionRequiredTitle: "Location Permission Required",
-            .routeCollection: "Route Collection",
-            .routeCollectionEmptyMessage: "No saved routes yet",
+            .routeCollection: "Imported Routes",
+            .routeCollectionEmptyMessage: "No imported routes yet",
             .routeCollectionImportSuccess: "GPX route imported",
             .routeCollectionImporting: "Importing GPX",
             .routeHeatmap: "Route Heatmap",
@@ -595,7 +660,7 @@ enum AppLocalization {
             .totalWorkoutTime: "Total Time",
             .trailRunning: "Trail Running",
             .today: "Today",
-            .uiSettings: "UI Settings",
+            .uiSettings: "Feature Settings",
             .unknownDistance: "Unknown Distance",
             .unknownDuration: "Unknown Duration",
             .unknownLocation: "Unknown Location",

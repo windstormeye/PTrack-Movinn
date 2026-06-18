@@ -30,7 +30,11 @@ final class MoreSettingsViewController: UIViewController {
         var items: [SettingsItem] {
             switch self {
             case .uiSettings:
-                return [.appLanguage]
+                var items: [SettingsItem] = [.appLanguage]
+                if RouteCollectionCloudSyncSettings.isFeatureAvailable {
+                    items.append(.iCloudRouteSync)
+                }
+                return items
             case .dataIntegration:
                 return [.appleHealth, .strava, .systemPhotos]
             case .other:
@@ -41,6 +45,7 @@ final class MoreSettingsViewController: UIViewController {
 
     private enum SettingsItem {
         case appLanguage
+        case iCloudRouteSync
         case appleHealth
         case strava
         case systemPhotos
@@ -50,6 +55,8 @@ final class MoreSettingsViewController: UIViewController {
             switch self {
             case .appLanguage:
                 return .appLanguage
+            case .iCloudRouteSync:
+                return .iCloudRouteSync
             case .appleHealth:
                 return .appleHealth
             case .strava:
@@ -65,6 +72,8 @@ final class MoreSettingsViewController: UIViewController {
             switch self {
             case .appLanguage:
                 return "globe"
+            case .iCloudRouteSync:
+                return "icloud"
             case .appleHealth:
                 return "heart.fill"
             case .strava:
@@ -102,7 +111,7 @@ final class MoreSettingsViewController: UIViewController {
         configureNavigationItem()
         configureCollectionView()
         configureNavigationBackgroundView()
-        registerLanguageObserver()
+        registerObservers()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -197,17 +206,27 @@ final class MoreSettingsViewController: UIViewController {
         navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
     }
 
-    private func registerLanguageObserver() {
+    private func registerObservers() {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleLanguageDidChange),
             name: AppLanguageStore.languageDidChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRouteCollectionCloudSyncSettingDidChange),
+            name: RouteCollectionCloudSyncSettings.didChangeNotification,
+            object: nil
+        )
     }
 
     @objc private func handleLanguageDidChange() {
         updateLocalizedText()
+    }
+
+    @objc private func handleRouteCollectionCloudSyncSettingDidChange() {
+        collectionView?.reloadData()
     }
 
     private func updateLocalizedText() {
@@ -248,6 +267,8 @@ final class MoreSettingsViewController: UIViewController {
             case .needsAttention:
                 return nil
             }
+        case .iCloudRouteSync:
+            return RouteCollectionCloudSyncSettings.isEnabled ? .connected : nil
         case .appLanguage, .developerWebsite:
             return nil
         }
@@ -354,6 +375,76 @@ final class MoreSettingsViewController: UIViewController {
         case .needsAttention:
             presentPhotoLibrarySettingsAlert()
         }
+    }
+
+    private func handleRouteCollectionCloudSyncSelection() {
+        guard RouteCollectionCloudSyncSettings.isEnabled else {
+            presentEnableRouteCollectionCloudSyncAlert()
+            return
+        }
+
+        presentDisableRouteCollectionCloudSyncAlert()
+    }
+
+    private func presentEnableRouteCollectionCloudSyncAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.iCloudRouteSyncConfirmTitle),
+            message: AppLocalization.text(.iCloudRouteSyncConfirmMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.enable),
+            style: .default
+        ) { [weak self] _ in
+            self?.enableRouteCollectionCloudSync()
+        })
+        present(alertController, animated: true)
+    }
+
+    private func presentDisableRouteCollectionCloudSyncAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.iCloudRouteSyncDisableConfirmTitle),
+            message: AppLocalization.text(.iCloudRouteSyncDisableConfirmMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.disable),
+            style: .destructive
+        ) { [weak self] _ in
+            self?.disableRouteCollectionCloudSync()
+        })
+        present(alertController, animated: true)
+    }
+
+    private func enableRouteCollectionCloudSync() {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            do {
+                try await RouteCollectionCloudSyncCoordinator.shared.enableSync()
+                collectionView.reloadData()
+                Toast.show(AppLocalization.text(.iCloudRouteSyncEnabled), in: view)
+            } catch {
+                collectionView.reloadData()
+                presentErrorAlert(title: AppLocalization.text(.iCloudRouteSyncFailed), error: error)
+            }
+        }
+    }
+
+    private func disableRouteCollectionCloudSync() {
+        RouteCollectionCloudSyncSettings.setEnabled(false)
+        collectionView.reloadData()
+        Toast.show(AppLocalization.text(.iCloudRouteSyncDisabled), in: view)
     }
 
     private func presentPhotoLibrarySettingsAlert() {
@@ -509,6 +600,12 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
                 title: AppLocalization.text(item.titleKey),
                 indicatorColor: indicatorColor
             )
+        case .iCloudRouteSync:
+            cell.configureAssetIcon(
+                image: UIImage(named: "icloud")?.withRenderingMode(.alwaysOriginal),
+                title: AppLocalization.text(item.titleKey),
+                indicatorColor: indicatorColor
+            )
         case .strava:
             cell.configureBrandImage(
                 image: UIImage(named: "strava")?.withRenderingMode(.alwaysTemplate),
@@ -559,6 +656,8 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
         switch item(at: indexPath) {
         case .appLanguage:
             presentLanguagePicker(from: collectionView.cellForItem(at: indexPath))
+        case .iCloudRouteSync:
+            handleRouteCollectionCloudSyncSelection()
         case .appleHealth:
             requestHealthAuthorization()
         case .strava:
@@ -652,7 +751,11 @@ private final class MoreSettingsCell: UICollectionViewCell {
         }
     }
 
-    func configureSystemIcon(iconName: String, title: String, indicatorColor: UIColor?) {
+    func configureSystemIcon(
+        iconName: String,
+        title: String,
+        indicatorColor: UIColor?
+    ) {
         configureIconAndTitle(
             image: UIImage(
                 systemName: iconName,
@@ -693,7 +796,10 @@ private final class MoreSettingsCell: UICollectionViewCell {
         title: String,
         indicatorColor: UIColor?
     ) {
-        applyBaseStyle(backgroundColor: UIColor(white: 0.945, alpha: 1), indicatorColor: indicatorColor)
+        applyBaseStyle(
+            backgroundColor: UIColor(white: 0.945, alpha: 1),
+            indicatorColor: indicatorColor
+        )
         iconView.isHidden = false
         titleLabel.isHidden = false
         brandImageView.isHidden = true
@@ -702,7 +808,10 @@ private final class MoreSettingsCell: UICollectionViewCell {
         titleLabel.text = title
     }
 
-    private func applyBaseStyle(backgroundColor: UIColor, indicatorColor: UIColor?) {
+    private func applyBaseStyle(
+        backgroundColor: UIColor,
+        indicatorColor: UIColor?
+    ) {
         contentView.backgroundColor = backgroundColor
         brandImageView.image = nil
         iconView.image = nil

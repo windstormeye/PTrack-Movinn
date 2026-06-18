@@ -36,6 +36,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        RouteCollectionCloudSyncCoordinator.shared.startIfEnabled()
         notifyPendingSharedRoutesDidChangeIfNeeded()
     }
 
@@ -45,6 +46,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
+        RouteCollectionCloudSyncCoordinator.shared.startIfEnabled()
         notifyPendingSharedRoutesDidChangeIfNeeded()
     }
 
