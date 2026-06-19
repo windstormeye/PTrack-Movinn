@@ -30,6 +30,7 @@ enum AppLanguage: String, CaseIterable {
 enum AppTextKey: String {
     case all
     case appLanguage
+    case aspectRatio
     case appleHealth
     case appDefault
     case activitySummaryPrefix
@@ -62,6 +63,7 @@ enum AppTextKey: String {
     case gpxExporting
     case gpxImportInvalidFile
     case gpxImportNoRoute
+    case followPhoto
     case hiking
     case iCloudRouteSync
     case iCloudRouteSyncAlreadyEnabled
@@ -95,6 +97,7 @@ enum AppTextKey: String {
     case photoLibraryFullAccessRequiredTitle
     case photoLibraryReadAuthorized
     case photoSaving
+    case photoBackgroundAdjustmentHint
     case photoMatching
     case queryingLocation
     case routeBook
@@ -213,6 +216,7 @@ enum AppLocalization {
         .chinese: [
             .all: "全部",
             .appLanguage: "App 语言",
+            .aspectRatio: "比例",
             .appleHealth: "苹果健康",
             .appDefault: "默认",
             .activitySummaryPrefix: "运动",
@@ -245,6 +249,7 @@ enum AppLocalization {
             .gpxExporting: "正在导出 GPX",
             .gpxImportInvalidFile: "无法解析这个 GPX 文件。",
             .gpxImportNoRoute: "这个 GPX 文件里没有可用轨迹。",
+            .followPhoto: "跟随",
             .hiking: "徒步",
             .iCloudRouteSync: "iCloud 同步",
             .iCloudRouteSyncAlreadyEnabled: "iCloud 同步已开启",
@@ -278,6 +283,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "需要完整相册权限",
             .photoLibraryReadAuthorized: "已授权读取相册",
             .photoSaving: "正在保存图片",
+            .photoBackgroundAdjustmentHint: "双击照片空白区域可调整显示范围",
             .photoMatching: "照片匹配",
             .queryingLocation: "位置查询中",
             .routeBook: "作为路书",
@@ -350,6 +356,7 @@ enum AppLocalization {
         .japanese: [
             .all: "すべて",
             .appLanguage: "アプリの言語",
+            .aspectRatio: "比率",
             .appleHealth: "Appleヘルスケア",
             .appDefault: "デフォルト",
             .activitySummaryPrefix: "運動",
@@ -382,6 +389,7 @@ enum AppLocalization {
             .gpxExporting: "GPXを書き出し中",
             .gpxImportInvalidFile: "この GPX ファイルを解析できません。",
             .gpxImportNoRoute: "この GPX ファイルに利用できるルートがありません。",
+            .followPhoto: "追従",
             .hiking: "ハイキング",
             .iCloudRouteSync: "iCloud同期",
             .iCloudRouteSyncAlreadyEnabled: "iCloud同期はオンです",
@@ -415,6 +423,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "写真へのフルアクセスが必要です",
             .photoLibraryReadAuthorized: "写真の読み取りは許可されています",
             .photoSaving: "画像を保存中",
+            .photoBackgroundAdjustmentHint: "写真の空白部分をダブルタップして表示範囲を調整できます",
             .photoMatching: "写真照合",
             .queryingLocation: "位置を検索中",
             .routeBook: "ルートブックとして使う",
@@ -487,6 +496,7 @@ enum AppLocalization {
         .korean: [
             .all: "전체",
             .appLanguage: "앱 언어",
+            .aspectRatio: "비율",
             .appleHealth: "Apple 건강",
             .appDefault: "기본",
             .activitySummaryPrefix: "운동",
@@ -519,6 +529,7 @@ enum AppLocalization {
             .gpxExporting: "GPX 내보내는 중",
             .gpxImportInvalidFile: "이 GPX 파일을 해석할 수 없습니다.",
             .gpxImportNoRoute: "이 GPX 파일에 사용할 수 있는 경로가 없습니다.",
+            .followPhoto: "따라가기",
             .hiking: "하이킹",
             .iCloudRouteSync: "iCloud 동기화",
             .iCloudRouteSyncAlreadyEnabled: "iCloud 동기화가 켜져 있습니다",
@@ -552,6 +563,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "사진 전체 접근 권한 필요",
             .photoLibraryReadAuthorized: "사진 읽기 권한이 허용되었습니다",
             .photoSaving: "이미지 저장 중",
+            .photoBackgroundAdjustmentHint: "사진의 빈 영역을 두 번 탭하면 표시 범위를 조정할 수 있습니다",
             .photoMatching: "사진 매칭",
             .queryingLocation: "위치 조회 중",
             .routeBook: "루트북으로 사용",
@@ -624,6 +636,7 @@ enum AppLocalization {
         .english: [
             .all: "All",
             .appLanguage: "App Language",
+            .aspectRatio: "Ratio",
             .appleHealth: "Apple Health",
             .appDefault: "Default",
             .activitySummaryPrefix: "Activity",
@@ -656,6 +669,7 @@ enum AppLocalization {
             .gpxExporting: "Exporting GPX",
             .gpxImportInvalidFile: "This GPX file could not be parsed.",
             .gpxImportNoRoute: "This GPX file does not contain a usable route.",
+            .followPhoto: "Follow",
             .hiking: "Hiking",
             .iCloudRouteSync: "iCloud Sync",
             .iCloudRouteSyncAlreadyEnabled: "iCloud sync is already enabled",
@@ -689,6 +703,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "Full Photos Access Required",
             .photoLibraryReadAuthorized: "Photo access is authorized",
             .photoSaving: "Saving Image",
+            .photoBackgroundAdjustmentHint: "Double-tap empty photo space to adjust the visible area",
             .photoMatching: "Photo Matching",
             .queryingLocation: "Locating",
             .routeBook: "Use as Route Book",

@@ -10,6 +10,7 @@ import UIKit
 
 final class RouteShareToolBarView: UIView {
     let colorButton = UIButton(type: .system)
+    let aspectRatioButton = UIButton(type: .system)
     let mapStyleButton = UIButton(type: .system)
     let deleteButton = UIButton(type: .system)
     let addRouteButton = UIButton(type: .system)
@@ -28,12 +29,13 @@ final class RouteShareToolBarView: UIView {
     }
 
     static func preferredWidth(for visibleButtonCount: Int) -> CGFloat {
-        CGFloat(max(visibleButtonCount, 1)) * 78
+        CGFloat(max(visibleButtonCount, 1)) * 62
     }
 
     func visibleButtonCount() -> Int {
         [
             colorButton,
+            aspectRatioButton,
             mapStyleButton,
             deleteButton,
             addRouteButton,
@@ -43,7 +45,7 @@ final class RouteShareToolBarView: UIView {
 
     private func configureViews() {
         backgroundColor = UIColor(white: 0.94, alpha: 1)
-        layer.cornerRadius = 22
+        layer.cornerRadius = 18
         layer.masksToBounds = true
 
         stackView.axis = .horizontal
@@ -54,6 +56,7 @@ final class RouteShareToolBarView: UIView {
         addSubview(stackView)
         [
             colorButton,
+            aspectRatioButton,
             mapStyleButton,
             deleteButton,
             addRouteButton,

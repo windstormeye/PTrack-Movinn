@@ -14,6 +14,7 @@ import UIKit
 final class WorkoutRouteShareViewController: UIViewController {
     private typealias PreviewModule = RouteSharePreviewModule
     private typealias PreviewBackground = RouteSharePreviewBackground
+    private typealias CanvasAspectRatio = RouteShareCanvasAspectRatio
     private typealias SharePhotoItem = RouteSharePhotoItem
 
     private let workout: TrackedWorkout
@@ -42,6 +43,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let photoCollectionView: UICollectionView
     private let toolBarView = RouteShareToolBarView()
     private var colorToolButton: UIButton { toolBarView.colorButton }
+    private var aspectRatioToolButton: UIButton { toolBarView.aspectRatioButton }
     private var mapStyleToolButton: UIButton { toolBarView.mapStyleButton }
     private var deleteToolButton: UIButton { toolBarView.deleteButton }
     private var addRouteToolButton: UIButton { toolBarView.addRouteButton }
@@ -49,10 +51,14 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let exportLoadingView = RouteShareExportLoadingView()
     private var toolsContainerWidthConstraint: Constraint?
     private weak var previewBackgroundTapGesture: UITapGestureRecognizer?
+    private weak var previewBackgroundDoubleTapGesture: UITapGestureRecognizer?
     private weak var previewModulePanGesture: UIPanGestureRecognizer?
     private weak var previewModulePinchGesture: UIPinchGestureRecognizer?
     private weak var previewModuleRotationGesture: UIRotationGestureRecognizer?
+    private var interactivePopBlockerGesture: UIScreenEdgePanGestureRecognizer?
     private var hasPlayedEntranceAnimation = false
+    private var hasAppliedInitialModuleLayout = false
+    private var hasShownAspectRatioAdjustmentToast = false
 
     private var photoItems: [SharePhotoItem]
     private var selectedPhotoIndex: Int?
@@ -70,12 +76,14 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
     }
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
+    private var selectedCanvasAspectRatio: CanvasAspectRatio = .followPhoto
     private var previewBackground: PreviewBackground
     private var routePolyline: MKPolyline?
     private var previewImageRequestID: PHImageRequestID?
     private var previewLivePhotoRequestID: PHImageRequestID?
     private var representedPreviewPhotoID: String?
     private var pendingUploadedSelectionID: UUID?
+    private var lastSelectedPhotoIndexForAspectRatio: Int?
     private var isRouteModuleEnabled = true
     private var isMetricsModuleEnabled = true
     private var routeModuleScale: CGFloat = 1
@@ -85,9 +93,16 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var routeModuleTranslation: CGPoint = .zero
     private var metricsModuleTranslation: CGPoint = .zero
     private var brandPillTranslation: CGPoint = .zero
+    private var backgroundMediaScale: CGFloat = 1
+    private var backgroundMediaRotation: CGFloat = 0
+    private var backgroundMediaTranslation: CGPoint = .zero
+    private var isBackgroundAdjustmentEnabled = false
+    private var hasManualMapAdjustment = false
     private var previousInteractivePopGestureEnabled: Bool?
     private let moduleMinimumScale: CGFloat = 0.35
     private let moduleMaximumScale: CGFloat = 3
+    private let backgroundMediaMinimumScale: CGFloat = 0.35
+    private let backgroundMediaMaximumScale: CGFloat = 4
     private let brandPillVisibleInset: CGFloat = 6
 
     private let navigationBackgroundHeight: CGFloat = 124
@@ -111,8 +126,8 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = .horizontal
-        layout.minimumLineSpacing = 10
-        layout.minimumInteritemSpacing = 10
+        layout.minimumLineSpacing = 8
+        layout.minimumInteritemSpacing = 8
         photoCollectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
 
         super.init(nibName: nil, bundle: nil)
@@ -139,6 +154,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         configureNavigationItem()
+        configureInteractivePopBlockerGesture()
         configureScrollView()
         configurePreviewView()
         configurePhotoCollectionView()
@@ -168,6 +184,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        disableInteractivePopGesture()
         playEntranceAnimationIfNeeded()
     }
 
@@ -176,8 +193,10 @@ final class WorkoutRouteShareViewController: UIViewController {
         updateNavigationBackgroundMask()
         updateSelectionChromeFrames()
         updatePreviewPhotoIfNeeded()
+        updatePhotoBackgroundLayout()
         fitMapRouteIfNeeded()
         snapBrandPillIntoPreviewBounds(animated: false)
+        applyInitialModuleLayoutIfNeeded()
     }
 
     private func configureNavigationItem() {
@@ -209,6 +228,24 @@ final class WorkoutRouteShareViewController: UIViewController {
         navigationItem.rightBarButtonItem?.tintColor = AppColors.movinnGreen
     }
 
+    private func configureInteractivePopBlockerGesture() {
+        let gestureRecognizer = UIScreenEdgePanGestureRecognizer(
+            target: self,
+            action: #selector(handleInteractivePopBlockerGesture(_:))
+        )
+        gestureRecognizer.edges = .left
+        gestureRecognizer.cancelsTouchesInView = true
+        gestureRecognizer.delegate = self
+        view.addGestureRecognizer(gestureRecognizer)
+        interactivePopBlockerGesture = gestureRecognizer
+    }
+
+    @objc private func handleInteractivePopBlockerGesture(_ gestureRecognizer: UIScreenEdgePanGestureRecognizer) {
+        if gestureRecognizer.state == .began {
+            disableInteractivePopGesture()
+        }
+    }
+
     private func disableInteractivePopGesture() {
         guard let gestureRecognizer = navigationController?.interactivePopGestureRecognizer else {
             return
@@ -218,6 +255,9 @@ final class WorkoutRouteShareViewController: UIViewController {
             previousInteractivePopGestureEnabled = gestureRecognizer.isEnabled
         }
         gestureRecognizer.isEnabled = false
+        if let interactivePopBlockerGesture {
+            gestureRecognizer.require(toFail: interactivePopBlockerGesture)
+        }
     }
 
     private func restoreInteractivePopGesture() {
@@ -256,7 +296,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func configurePreviewView() {
-        previewView.backgroundColor = UIColor(white: 0.08, alpha: 1)
+        previewView.backgroundColor = .white
         previewView.layer.cornerRadius = 8
         previewView.layer.masksToBounds = true
         let previewBackgroundTapGesture = UITapGestureRecognizer(target: self, action: #selector(handlePreviewBackgroundTap(_:)))
@@ -264,6 +304,18 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewBackgroundTapGesture.delegate = self
         previewView.addGestureRecognizer(previewBackgroundTapGesture)
         self.previewBackgroundTapGesture = previewBackgroundTapGesture
+
+        let previewBackgroundDoubleTapGesture = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handlePreviewBackgroundDoubleTap(_:))
+        )
+        previewBackgroundDoubleTapGesture.numberOfTapsRequired = 2
+        previewBackgroundDoubleTapGesture.cancelsTouchesInView = false
+        previewBackgroundDoubleTapGesture.delegate = self
+        previewBackgroundTapGesture.require(toFail: previewBackgroundDoubleTapGesture)
+        previewView.addGestureRecognizer(previewBackgroundDoubleTapGesture)
+        self.previewBackgroundDoubleTapGesture = previewBackgroundDoubleTapGesture
+
         configurePreviewModuleGestures()
 
         mapView.delegate = self
@@ -310,21 +362,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewView.addSubview(metricsDeleteCornerButton)
         previewView.addSubview(brandPillView)
 
-        previewView.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(4)
-            make.leading.trailing.equalToSuperview().inset(16)
-            make.height.equalTo(previewView.snp.width).multipliedBy(1.25)
-        }
+        remakePreviewViewConstraints()
 
         mapContainerView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
-
-        previewImageView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
-
-        previewLivePhotoView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
 
@@ -354,6 +394,62 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         configureMapRouteOverlay()
         updatePreviewModuleVisibility()
+    }
+
+    private func remakePreviewViewConstraints() {
+        previewView.snp.remakeConstraints { make in
+            make.top.equalToSuperview().offset(4)
+            make.leading.trailing.equalToSuperview().inset(16)
+            make.height.equalTo(previewView.snp.width).multipliedBy(currentCanvasHeightMultiplier())
+        }
+    }
+
+    private func currentCanvasHeightMultiplier() -> CGFloat {
+        selectedCanvasAspectRatio.heightMultiplier(followingPhotoHeightMultiplier: currentPhotoHeightMultiplier())
+    }
+
+    private func currentPhotoHeightMultiplier() -> CGFloat? {
+        if let selectedPhotoIndex,
+           photoItems.indices.contains(selectedPhotoIndex),
+           let heightMultiplier = photoItems[selectedPhotoIndex].heightMultiplier {
+            return heightMultiplier
+        }
+
+        if let lastSelectedPhotoIndexForAspectRatio,
+           photoItems.indices.contains(lastSelectedPhotoIndexForAspectRatio),
+           let heightMultiplier = photoItems[lastSelectedPhotoIndexForAspectRatio].heightMultiplier {
+            return heightMultiplier
+        }
+
+        return photoItems.first?.heightMultiplier
+    }
+
+    private func updatePreviewCanvasAspectRatio(animated: Bool, resetsModuleLayout: Bool = false) {
+        if animated, !previewLivePhotoView.isHidden {
+            previewLivePhotoView.stopPlayback()
+        }
+
+        remakePreviewViewConstraints()
+        configureAspectRatioToolButton()
+
+        let updates = {
+            self.view.layoutIfNeeded()
+            if resetsModuleLayout {
+                self.resetBackgroundAdjustment()
+                self.resetPreviewModuleAdjustments()
+            }
+            self.updatePhotoBackgroundLayout()
+            self.fitMapRouteIfNeeded()
+            self.updateSelectionChromeFrames()
+            self.snapBrandPillIntoPreviewBounds(animated: false)
+        }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        UIView.performWithoutAnimation {
+            updates()
+        }
+        CATransaction.commit()
     }
 
     private func configureModuleGestures() {
@@ -470,26 +566,28 @@ final class WorkoutRouteShareViewController: UIViewController {
         contentView.addSubview(photoCollectionView)
 
         photoCollectionView.snp.makeConstraints { make in
-            make.top.equalTo(previewView.snp.bottom).offset(14)
+            make.top.equalTo(previewView.snp.bottom).offset(12)
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(82)
+            make.height.equalTo(66)
         }
     }
 
     private func configureToolsView() {
         configureColorToolButton()
+        configureAspectRatioToolButton()
         configureDeleteToolButton()
         configureAddToolButtons()
+        aspectRatioToolButton.showsMenuAsPrimaryAction = true
         mapStyleToolButton.showsMenuAsPrimaryAction = true
         configureMapStyleButton()
 
         contentView.addSubview(toolBarView)
 
         toolBarView.snp.makeConstraints { make in
-            make.top.equalTo(photoCollectionView.snp.bottom).offset(14)
+            make.top.equalTo(photoCollectionView.snp.bottom).offset(10)
             make.leading.equalToSuperview().offset(16)
-            make.height.equalTo(64)
-            toolsContainerWidthConstraint = make.width.equalTo(156).constraint
+            make.height.equalTo(52)
+            toolsContainerWidthConstraint = make.width.equalTo(RouteShareToolBarView.preferredWidth(for: 2)).constraint
             make.bottom.equalToSuperview()
         }
     }
@@ -539,6 +637,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     @objc private func handleLanguageDidChange() {
         updateLocalizedText()
         configureColorToolButton()
+        configureAspectRatioToolButton()
         configureMapStyleButton()
     }
 
@@ -546,6 +645,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         title = AppLocalization.text(.share)
         metricsModuleView.updateLocalizedText(for: workout)
         configureColorToolButton()
+        configureAspectRatioToolButton()
         configureDeleteToolButton()
         configureAddToolButtons()
         configureMapStyleButton()
@@ -563,6 +663,17 @@ final class WorkoutRouteShareViewController: UIViewController {
         hasPlayedEntranceAnimation = true
         view.layoutIfNeeded()
         RouteShareEntranceAnimator.animate(entranceAnimatedViews)
+    }
+
+    private func applyInitialModuleLayoutIfNeeded() {
+        guard !hasAppliedInitialModuleLayout,
+              previewView.bounds.width > 0,
+              previewView.bounds.height > 0 else {
+            return
+        }
+
+        hasAppliedInitialModuleLayout = true
+        resetPreviewModuleAdjustments()
     }
 
     private var entranceAnimatedViews: [UIView] {
@@ -590,6 +701,21 @@ final class WorkoutRouteShareViewController: UIViewController {
                 state: selectedColorIndexForCurrentModule() == index ? .on : .off
             ) { [weak self] _ in
                 self?.applyColor(at: index)
+            }
+        })
+    }
+
+    private func configureAspectRatioToolButton() {
+        aspectRatioToolButton.configuration = toolButtonConfiguration(
+            title: AppLocalization.text(.aspectRatio),
+            imageName: "aspectratio"
+        )
+        aspectRatioToolButton.menu = UIMenu(children: CanvasAspectRatio.allCases.map { aspectRatio in
+            UIAction(
+                title: aspectRatio.title,
+                state: aspectRatio == selectedCanvasAspectRatio ? .on : .off
+            ) { [weak self] _ in
+                self?.applyCanvasAspectRatio(aspectRatio)
             }
         })
     }
@@ -639,14 +765,14 @@ final class WorkoutRouteShareViewController: UIViewController {
         configuration.baseForegroundColor = .black
         configuration.image = UIImage(systemName: imageName)
         configuration.imagePlacement = .top
-        configuration.imagePadding = 4
+        configuration.imagePadding = 2
         configuration.title = title
         configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
-            outgoing.font = .systemFont(ofSize: 11, weight: .semibold)
+            outgoing.font = .systemFont(ofSize: 10, weight: .semibold)
             return outgoing
         }
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 8, leading: 4, bottom: 7, trailing: 4)
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 3, bottom: 5, trailing: 3)
         return configuration
     }
 
@@ -667,8 +793,8 @@ final class WorkoutRouteShareViewController: UIViewController {
                 selectedPhotoIndex = imageMediaItems.isEmpty ? nil : 0
                 previewBackground = imageMediaItems.isEmpty ? .map : .photo(0)
                 applyDefaultColorsForCurrentBackground()
-                resetPreviewModuleAdjustments()
                 photoCollectionView.reloadData()
+                updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
                 updatePreviewPhoto()
                 updateToolBarVisibility()
             case .failure(let error):
@@ -755,14 +881,17 @@ final class WorkoutRouteShareViewController: UIViewController {
                 previewImageView.image = image
                 previewImageView.isHidden = false
                 previewLivePhotoView.isHidden = true
+                updatePhotoBackgroundLayout()
             case .routeMedia(let mediaItem):
                 if mediaItem.isLivePhoto {
                     previewImageView.isHidden = true
                     previewLivePhotoView.isHidden = false
+                    updatePhotoBackgroundLayout()
                     requestPreviewLivePhoto(for: mediaItem.asset, representedID: item.id, playWhenReady: true)
                 } else {
                     previewImageView.isHidden = false
                     previewLivePhotoView.isHidden = true
+                    updatePhotoBackgroundLayout()
                     requestPreviewImage(for: mediaItem.asset, representedID: item.id)
                 }
             }
@@ -791,6 +920,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
             previewImageView.image = image
             previewPlaceholderView.isHidden = image != nil
+            updatePhotoBackgroundLayout()
         }
     }
 
@@ -819,38 +949,137 @@ final class WorkoutRouteShareViewController: UIViewController {
 
             previewLivePhotoView.livePhoto = livePhoto
             previewPlaceholderView.isHidden = livePhoto != nil
+            updatePhotoBackgroundLayout()
             if livePhoto != nil, playWhenReady {
                 previewLivePhotoView.startPlayback(with: .full)
             }
         }
     }
 
-    private func selectPhoto(at index: Int) {
-        let replayLivePhoto = selectedPhotoIndex == index
-            && photoItems.indices.contains(index)
-            && photoItems[index].isLivePhoto
-        selectedPhotoIndex = index
-        previewBackground = .photo(index)
-        applyDefaultColorsForCurrentBackground()
-        resetPreviewModuleAdjustments()
-        representedPreviewPhotoID = nil
-        photoCollectionView.reloadData()
-        updatePreviewPhoto()
-        updateToolBarVisibility()
+    private func updatePhotoBackgroundLayout() {
+        guard case .photo = previewBackground,
+              let naturalSize = currentPhotoNaturalSize(),
+              previewView.bounds.width > 0,
+              previewView.bounds.height > 0 else {
+            return
+        }
 
-        if replayLivePhoto {
-            previewLivePhotoView.stopPlayback()
-            previewLivePhotoView.startPlayback(with: .full)
+        let baseSize = aspectFillSize(for: naturalSize, in: previewView.bounds.size)
+
+        [previewImageView, previewLivePhotoView].forEach { backgroundView in
+            backgroundView.bounds = CGRect(origin: .zero, size: baseSize)
+            backgroundView.center = CGPoint(x: previewView.bounds.midX, y: previewView.bounds.midY)
+            backgroundView.transform = CGAffineTransform(translationX: backgroundMediaTranslation.x, y: backgroundMediaTranslation.y)
+                .rotated(by: backgroundMediaRotation)
+                .scaledBy(x: backgroundMediaScale, y: backgroundMediaScale)
         }
     }
 
-    private func selectMapBackground() {
-        selectedPhotoIndex = nil
-        previewBackground = .map
+    private func currentPhotoNaturalSize() -> CGSize? {
+        guard case .photo(let selectedPhotoIndex) = previewBackground,
+              photoItems.indices.contains(selectedPhotoIndex) else {
+            return nil
+        }
+
+        switch photoItems[selectedPhotoIndex] {
+        case .routeMedia(let mediaItem):
+            return CGSize(width: mediaItem.asset.pixelWidth, height: mediaItem.asset.pixelHeight)
+        case .uploaded(let image):
+            return image.size
+        }
+    }
+
+    private func aspectFillSize(for contentSize: CGSize, in containerSize: CGSize) -> CGSize {
+        guard contentSize.width > 0,
+              contentSize.height > 0,
+              containerSize.width > 0,
+              containerSize.height > 0 else {
+            return containerSize
+        }
+
+        let scale = max(containerSize.width / contentSize.width, containerSize.height / contentSize.height)
+        return CGSize(width: contentSize.width * scale, height: contentSize.height * scale)
+    }
+
+    private func clampedBackgroundMediaTranslation(
+        proposed: CGPoint,
+        scale: CGFloat,
+        baseSize: CGSize? = nil
+    ) -> CGPoint {
+        guard previewView.bounds.width > 0,
+              previewView.bounds.height > 0 else {
+            return proposed
+        }
+
+        let resolvedBaseSize = baseSize ?? currentPhotoNaturalSize().map {
+            aspectFillSize(for: $0, in: previewView.bounds.size)
+        } ?? previewView.bounds.size
+        let scaledSize = CGSize(
+            width: resolvedBaseSize.width * scale,
+            height: resolvedBaseSize.height * scale
+        )
+        let maxX = max((scaledSize.width - previewView.bounds.width) / 2, 0)
+        let maxY = max((scaledSize.height - previewView.bounds.height) / 2, 0)
+        return CGPoint(
+            x: min(max(proposed.x, -maxX), maxX),
+            y: min(max(proposed.y, -maxY), maxY)
+        )
+    }
+
+    private func resetBackgroundAdjustment() {
+        isBackgroundAdjustmentEnabled = false
+        backgroundMediaScale = 1
+        backgroundMediaRotation = 0
+        backgroundMediaTranslation = .zero
+        hasManualMapAdjustment = false
+        resetMapCameraHeading()
+        updatePhotoBackgroundLayout()
+    }
+
+    private func selectPhoto(at index: Int) {
+        guard photoItems.indices.contains(index) else {
+            return
+        }
+
+        if selectedPhotoIndex == index {
+            lastSelectedPhotoIndexForAspectRatio = index
+            if photoItems[index].isLivePhoto {
+                replayPreviewLivePhoto()
+            }
+            return
+        }
+
+        selectedPhotoIndex = index
+        lastSelectedPhotoIndexForAspectRatio = index
+        previewBackground = .photo(index)
         applyDefaultColorsForCurrentBackground()
-        resetPreviewModuleAdjustments()
         representedPreviewPhotoID = nil
         photoCollectionView.reloadData()
+        updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
+        updatePreviewPhoto()
+        updateToolBarVisibility()
+
+    }
+
+    private func replayPreviewLivePhoto() {
+        guard previewLivePhotoView.livePhoto != nil else {
+            return
+        }
+
+        previewLivePhotoView.stopPlayback()
+        previewLivePhotoView.startPlayback(with: .full)
+    }
+
+    private func selectMapBackground(usesDefaultMapAspectRatio: Bool = true) {
+        selectedPhotoIndex = nil
+        if usesDefaultMapAspectRatio {
+            selectedCanvasAspectRatio = .portrait3x4
+        }
+        previewBackground = .map
+        applyDefaultColorsForCurrentBackground()
+        representedPreviewPhotoID = nil
+        photoCollectionView.reloadData()
+        updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
         updatePreviewPhoto()
         updateToolBarVisibility()
     }
@@ -877,22 +1106,101 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func resetPreviewModuleAdjustments() {
-        routeModuleScale = 1
-        metricsModuleScale = 1
+        routeModuleScale = defaultModuleScale(for: .route)
+        metricsModuleScale = defaultModuleScale(for: .metrics)
         routeModuleRotation = 0
         metricsModuleRotation = 0
-        routeModuleTranslation = .zero
-        metricsModuleTranslation = .zero
+        routeModuleTranslation = defaultModuleTranslation(for: .route, scale: routeModuleScale)
+        metricsModuleTranslation = defaultModuleTranslation(for: .metrics, scale: metricsModuleScale)
+        brandPillTranslation = .zero
         applyModuleTransform(.route)
         applyModuleTransform(.metrics)
+        applyBrandPillTransform()
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = nil
         updatePreviewSelection()
+    }
+
+    private func resetPreviewModuleAdjustment(for module: PreviewModule) {
+        let scale = defaultModuleScale(for: module)
+        switch module {
+        case .route:
+            routeModuleScale = scale
+            routeModuleRotation = 0
+            routeModuleTranslation = defaultModuleTranslation(for: module, scale: scale)
+        case .metrics:
+            metricsModuleScale = scale
+            metricsModuleRotation = 0
+            metricsModuleTranslation = defaultModuleTranslation(for: module, scale: scale)
+        }
+        applyModuleTransform(module)
+    }
+
+    private func defaultModuleScale(for module: PreviewModule) -> CGFloat {
+        let heightMultiplier = currentRenderedCanvasHeightMultiplier()
+        switch module {
+        case .route:
+            if heightMultiplier <= 0.62 {
+                return 0.48
+            }
+            if heightMultiplier < 0.92 {
+                return 0.64
+            }
+            return 1
+        case .metrics:
+            if heightMultiplier <= 0.62 {
+                return 0.66
+            }
+            if heightMultiplier < 0.92 {
+                return 0.78
+            }
+            return 1
+        }
+    }
+
+    private func currentRenderedCanvasHeightMultiplier() -> CGFloat {
+        guard previewView.bounds.width > 0, previewView.bounds.height > 0 else {
+            return currentCanvasHeightMultiplier()
+        }
+        return previewView.bounds.height / previewView.bounds.width
+    }
+
+    private func defaultModuleTranslation(for module: PreviewModule, scale: CGFloat) -> CGPoint {
+        guard previewView.bounds.width > 0, previewView.bounds.height > 0 else {
+            return .zero
+        }
+
+        let moduleView = moduleView(for: module)
+        let center = moduleView.center
+        let scaledSize = CGSize(
+            width: moduleView.bounds.width * scale,
+            height: moduleView.bounds.height * scale
+        )
+        let heightMultiplier = currentRenderedCanvasHeightMultiplier()
+
+        switch module {
+        case .route:
+            let margin: CGFloat = heightMultiplier < 0.92 ? 14 : 22
+            let targetCenter = CGPoint(
+                x: margin + scaledSize.width / 2,
+                y: margin + scaledSize.height / 2
+            )
+            return CGPoint(x: targetCenter.x - center.x, y: targetCenter.y - center.y)
+        case .metrics:
+            let margin: CGFloat = heightMultiplier < 0.92 ? 14 : 22
+            let targetCenter = CGPoint(
+                x: previewView.bounds.midX,
+                y: previewView.bounds.height - margin - scaledSize.height / 2
+            )
+            return CGPoint(x: targetCenter.x - center.x, y: targetCenter.y - center.y)
+        }
     }
 
     @objc private func selectRouteModule() {
         guard !routeModuleView.isHidden else {
             return
         }
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .route
         previewView.bringSubviewToFront(routeModuleView)
         keepBrandPillOnTop()
@@ -903,6 +1211,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         guard !metricsModuleView.isHidden else {
             return
         }
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .metrics
         previewView.bringSubviewToFront(metricsModuleView)
         keepBrandPillOnTop()
@@ -949,10 +1258,8 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     @objc private func addRouteModule() {
         isRouteModuleEnabled = true
-        routeModuleScale = 1
-        routeModuleRotation = 0
-        routeModuleTranslation = .zero
-        applyModuleTransform(.route)
+        resetPreviewModuleAdjustment(for: .route)
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .route
         previewView.bringSubviewToFront(routeModuleView)
         keepBrandPillOnTop()
@@ -962,10 +1269,8 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     @objc private func addMetricsModule() {
         isMetricsModuleEnabled = true
-        metricsModuleScale = 1
-        metricsModuleRotation = 0
-        metricsModuleTranslation = .zero
-        applyModuleTransform(.metrics)
+        resetPreviewModuleAdjustment(for: .metrics)
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .metrics
         previewView.bringSubviewToFront(metricsModuleView)
         keepBrandPillOnTop()
@@ -984,10 +1289,16 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     @objc private func handleModulePan(_ recognizer: UIPanGestureRecognizer) {
+        if recognizer.view === previewView, isBackgroundAdjustmentEnabled {
+            handleBackgroundPan(recognizer)
+            return
+        }
+
         guard let module = previewModule(for: recognizer.view) else {
             return
         }
 
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = module
         previewView.bringSubviewToFront(moduleView(for: module))
         keepBrandPillOnTop()
@@ -1016,10 +1327,16 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     @objc private func handleModulePinch(_ recognizer: UIPinchGestureRecognizer) {
+        if recognizer.view === previewView, isBackgroundAdjustmentEnabled {
+            handleBackgroundPinch(recognizer)
+            return
+        }
+
         guard let module = previewModule(for: recognizer.view) else {
             return
         }
 
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = module
         previewView.bringSubviewToFront(moduleView(for: module))
         keepBrandPillOnTop()
@@ -1037,10 +1354,16 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     @objc private func handleModuleRotation(_ recognizer: UIRotationGestureRecognizer) {
+        if recognizer.view === previewView, isBackgroundAdjustmentEnabled {
+            handleBackgroundRotation(recognizer)
+            return
+        }
+
         guard let module = previewModule(for: recognizer.view) else {
             return
         }
 
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = module
         previewView.bringSubviewToFront(moduleView(for: module))
         keepBrandPillOnTop()
@@ -1056,6 +1379,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     @objc private func handleBrandPillPan(_ recognizer: UIPanGestureRecognizer) {
+        isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = nil
         updatePreviewSelection()
         keepBrandPillOnTop()
@@ -1075,13 +1399,129 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
     }
 
+    private func handleBackgroundPan(_ recognizer: UIPanGestureRecognizer) {
+        let translation = recognizer.translation(in: previewView)
+        switch previewBackground {
+        case .photo:
+            backgroundMediaTranslation = CGPoint(
+                x: backgroundMediaTranslation.x + translation.x,
+                y: backgroundMediaTranslation.y + translation.y
+            )
+            updatePhotoBackgroundLayout()
+        case .map:
+            panMapBackground(by: translation)
+        }
+        recognizer.setTranslation(.zero, in: previewView)
+    }
+
+    private func handleBackgroundPinch(_ recognizer: UIPinchGestureRecognizer) {
+        switch previewBackground {
+        case .photo:
+            backgroundMediaScale = min(
+                max(backgroundMediaScale * recognizer.scale, backgroundMediaMinimumScale),
+                backgroundMediaMaximumScale
+            )
+            updatePhotoBackgroundLayout()
+        case .map:
+            zoomMapBackground(by: recognizer.scale)
+        }
+        recognizer.scale = 1
+    }
+
+    private func handleBackgroundRotation(_ recognizer: UIRotationGestureRecognizer) {
+        switch previewBackground {
+        case .photo:
+            backgroundMediaRotation += recognizer.rotation
+            updatePhotoBackgroundLayout()
+        case .map:
+            rotateMapBackground(by: recognizer.rotation)
+        }
+        recognizer.rotation = 0
+    }
+
+    private func panMapBackground(by translation: CGPoint) {
+        guard translation != .zero,
+              previewView.bounds.width > 0,
+              previewView.bounds.height > 0 else {
+            return
+        }
+
+        let centerPoint = mapView.convert(mapView.centerCoordinate, toPointTo: mapView)
+        let adjustedPoint = CGPoint(
+            x: centerPoint.x - translation.x,
+            y: centerPoint.y - translation.y
+        )
+        mapView.setCenter(mapView.convert(adjustedPoint, toCoordinateFrom: mapView), animated: false)
+        hasManualMapAdjustment = true
+    }
+
+    private func zoomMapBackground(by scale: CGFloat) {
+        guard scale > 0,
+              mapView.visibleMapRect.size.width > 0,
+              mapView.visibleMapRect.size.height > 0 else {
+            return
+        }
+
+        let currentMapRect = mapView.visibleMapRect
+        let zoomFactor = 1 / scale
+        let minDimension: Double = 20
+        let maxDimension = MKMapRect.world.size.width
+        let targetWidth = min(max(currentMapRect.size.width * zoomFactor, minDimension), maxDimension)
+        let targetHeight = min(max(currentMapRect.size.height * zoomFactor, minDimension), maxDimension)
+        let targetRect = MKMapRect(
+            x: currentMapRect.midX - targetWidth / 2,
+            y: currentMapRect.midY - targetHeight / 2,
+            width: targetWidth,
+            height: targetHeight
+        )
+        mapView.setVisibleMapRect(targetRect, animated: false)
+        hasManualMapAdjustment = true
+    }
+
+    private func rotateMapBackground(by rotation: CGFloat) {
+        guard rotation != 0 else {
+            return
+        }
+
+        let camera = mapView.camera
+        camera.heading = normalizedMapHeading(camera.heading + CLLocationDirection(rotation * 180 / .pi))
+        mapView.setCamera(camera, animated: false)
+        hasManualMapAdjustment = true
+    }
+
+    private func normalizedMapHeading(_ heading: CLLocationDirection) -> CLLocationDirection {
+        let normalizedHeading = heading.truncatingRemainder(dividingBy: 360)
+        return normalizedHeading >= 0 ? normalizedHeading : normalizedHeading + 360
+    }
+
+    private func resetMapCameraHeading() {
+        let camera = mapView.camera
+        guard camera.heading != 0 else {
+            return
+        }
+
+        camera.heading = 0
+        mapView.setCamera(camera, animated: false)
+    }
+
     @objc private func handlePreviewBackgroundTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended,
-              selectedPreviewModule != nil else {
+              selectedPreviewModule != nil || isBackgroundAdjustmentEnabled else {
+            return
+        }
+
+        isBackgroundAdjustmentEnabled = false
+        selectedPreviewModule = nil
+        updatePreviewSelection()
+    }
+
+    @objc private func handlePreviewBackgroundDoubleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else {
             return
         }
 
         selectedPreviewModule = nil
+        isBackgroundAdjustmentEnabled = true
         updatePreviewSelection()
     }
 
@@ -1250,10 +1690,31 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     private func applyMapStyle(_ style: AppMapDisplayStyle) {
         selectedMapStyle = style
-        selectMapBackground()
+        if case .map = previewBackground {
+            isBackgroundAdjustmentEnabled = false
+            selectedPreviewModule = nil
+            updatePreviewSelection()
+        } else {
+            selectMapBackground(usesDefaultMapAspectRatio: false)
+        }
         AppMapStyle.apply(style, to: mapView)
         AppMapStyle.setToneOverlay(mapToneOverlay, visible: style == .appDefault, on: mapView)
         configureMapStyleButton()
+    }
+
+    private func applyCanvasAspectRatio(_ aspectRatio: CanvasAspectRatio) {
+        selectedCanvasAspectRatio = aspectRatio
+        updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
+        showAspectRatioAdjustmentToastIfNeeded()
+    }
+
+    private func showAspectRatioAdjustmentToastIfNeeded() {
+        guard !hasShownAspectRatioAdjustmentToast else {
+            return
+        }
+
+        hasShownAspectRatioAdjustmentToast = true
+        Toast.show(AppLocalization.text(.photoBackgroundAdjustmentHint), in: view)
     }
 
     private func updateToolBarVisibility() {
@@ -1271,12 +1732,13 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         let visibleButtonCount = [
             colorToolButton,
+            aspectRatioToolButton,
             mapStyleToolButton,
             deleteToolButton,
             addRouteToolButton,
             addMetricsToolButton
         ].filter { !$0.isHidden }.count
-        toolsContainerWidthConstraint?.update(offset: CGFloat(max(visibleButtonCount, 1)) * 78)
+        toolsContainerWidthConstraint?.update(offset: RouteShareToolBarView.preferredWidth(for: visibleButtonCount))
         UIView.animate(withDuration: 0.18) {
             self.view.layoutIfNeeded()
         }
@@ -1333,6 +1795,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     private func fitMapRouteIfNeeded() {
         guard case .map = previewBackground,
+              !hasManualMapAdjustment,
               let routePolyline,
               previewView.bounds.width > 0,
               previewView.bounds.height > 0 else {
@@ -1409,7 +1872,8 @@ final class WorkoutRouteShareViewController: UIViewController {
         livePhotoExporter.export(
             asset: asset,
             overlayImage: overlayImage,
-            outputSize: outputSize
+            outputSize: outputSize,
+            backgroundTransform: currentBackgroundRenderTransform(outputSize: outputSize)
         ) { [weak self] result in
             guard let self else {
                 return
@@ -1436,6 +1900,26 @@ final class WorkoutRouteShareViewController: UIViewController {
                 showAlert(title: AppLocalization.text(.share), message: error.localizedDescription)
             }
         }
+    }
+
+    private func currentBackgroundRenderTransform(outputSize: CGSize) -> RouteShareBackgroundRenderTransform {
+        guard previewView.bounds.width > 0 else {
+            return RouteShareBackgroundRenderTransform(
+                scale: backgroundMediaScale,
+                translation: .zero,
+                rotation: backgroundMediaRotation
+            )
+        }
+
+        let outputScale = outputSize.width / previewView.bounds.width
+        return RouteShareBackgroundRenderTransform(
+            scale: backgroundMediaScale,
+            translation: CGPoint(
+                x: backgroundMediaTranslation.x * outputScale,
+                y: backgroundMediaTranslation.y * outputScale
+            ),
+            rotation: backgroundMediaRotation
+        )
     }
 
     private func showExportLoading(text: String) {
@@ -1543,7 +2027,7 @@ extension WorkoutRouteShareViewController: UICollectionViewDelegateFlowLayout {
         layout collectionViewLayout: UICollectionViewLayout,
         sizeForItemAt indexPath: IndexPath
     ) -> CGSize {
-        CGSize(width: 72, height: 72)
+        CGSize(width: 58, height: 58)
     }
 }
 
@@ -1576,11 +2060,12 @@ extension WorkoutRouteShareViewController: PHPickerViewControllerDelegate {
                     self.photoItems.append(.uploaded(image))
                     if self.pendingUploadedSelectionID == selectionID {
                         self.selectedPhotoIndex = newIndex
+                        self.lastSelectedPhotoIndexForAspectRatio = newIndex
                         self.previewBackground = .photo(newIndex)
                         self.applyDefaultColorsForCurrentBackground()
-                        self.resetPreviewModuleAdjustments()
                         self.representedPreviewPhotoID = nil
                         self.pendingUploadedSelectionID = nil
+                        self.updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
                     }
                     self.photoCollectionView.reloadData()
                     self.updatePreviewPhoto()
@@ -1597,14 +2082,19 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
         }
 
         if isPreviewModuleGesture(gestureRecognizer) {
-            guard selectedPreviewModule != nil else {
+            if selectedPreviewModule != nil {
+                return !interactivePreviewElementContains(touch)
+            }
+
+            guard isBackgroundAdjustmentEnabled else {
                 return false
             }
 
             return !interactivePreviewElementContains(touch)
         }
 
-        if gestureRecognizer === previewBackgroundTapGesture {
+        if gestureRecognizer === previewBackgroundTapGesture
+            || gestureRecognizer === previewBackgroundDoubleTapGesture {
             return !interactivePreviewElementContains(touch)
         }
 
@@ -1641,6 +2131,11 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
         }
 
         if gestureView === previewView, otherGestureView === previewView {
+            if isBackgroundAdjustmentEnabled {
+                return isPreviewModuleGesture(gestureRecognizer)
+                    && isPreviewModuleGesture(otherGestureRecognizer)
+            }
+
             return isPreviewModuleGesture(gestureRecognizer)
                 && isPreviewModuleGesture(otherGestureRecognizer)
         }

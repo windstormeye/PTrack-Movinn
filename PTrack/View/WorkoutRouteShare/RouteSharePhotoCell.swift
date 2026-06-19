@@ -47,7 +47,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         representedAssetIdentifier = asset.localIdentifier
 
         let scale = max(UIScreen.main.scale, 2)
-        let targetSize = CGSize(width: 92 * scale, height: 92 * scale)
+        let targetSize = CGSize(width: 72 * scale, height: 72 * scale)
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
         options.resizeMode = .fast
@@ -79,11 +79,11 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(
             systemName: "map",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 23, weight: .semibold)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold)
         )
         addIconView.isHidden = false
         liveIconView.isHidden = true
-        contentView.layer.borderWidth = isSelected ? 3 : 0
+        contentView.layer.borderWidth = isSelected ? 2 : 0
         contentView.layer.borderColor = AppColors.movinnGreen.cgColor
     }
 
@@ -93,7 +93,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(
             systemName: "plus",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
         )
         addIconView.isHidden = false
         liveIconView.isHidden = true
@@ -104,13 +104,13 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         contentView.backgroundColor = .black
         imageView.backgroundColor = UIColor(white: 0.9, alpha: 1)
         addIconView.isHidden = true
-        contentView.layer.borderWidth = isSelected ? 3 : 0
+        contentView.layer.borderWidth = isSelected ? 2 : 0
         contentView.layer.borderColor = AppColors.movinnGreen.cgColor
     }
 
     private func configureViews() {
         backgroundColor = .clear
-        contentView.layer.cornerRadius = 8
+        contentView.layer.cornerRadius = 7
         contentView.layer.masksToBounds = true
 
         imageView.contentMode = .scaleAspectFill
@@ -118,19 +118,19 @@ final class RouteSharePhotoCell: UICollectionViewCell {
 
         addIconView.image = UIImage(
             systemName: "plus",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
         )
         addIconView.tintColor = .black
         addIconView.contentMode = .scaleAspectFit
 
         liveIconView.image = UIImage(
             systemName: "livephoto",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
         )
         liveIconView.tintColor = .white
         liveIconView.contentMode = .scaleAspectFit
         liveIconView.backgroundColor = UIColor.black.withAlphaComponent(0.46)
-        liveIconView.layer.cornerRadius = 9
+        liveIconView.layer.cornerRadius = 7
         liveIconView.layer.masksToBounds = true
         liveIconView.isHidden = true
 
@@ -144,12 +144,12 @@ final class RouteSharePhotoCell: UICollectionViewCell {
 
         addIconView.snp.makeConstraints { make in
             make.center.equalToSuperview()
-            make.size.equalTo(30)
+            make.size.equalTo(24)
         }
 
         liveIconView.snp.makeConstraints { make in
-            make.top.leading.equalToSuperview().inset(5)
-            make.size.equalTo(18)
+            make.top.leading.equalToSuperview().inset(4)
+            make.size.equalTo(14)
         }
     }
 }
