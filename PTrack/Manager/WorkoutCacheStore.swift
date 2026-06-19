@@ -9,7 +9,6 @@ import Foundation
 
 final class WorkoutCacheStore {
     private let directoryURL: URL
-    private let legacyFileURL: URL
     private let manifestFileURL: URL
     private let workoutsDirectoryURL: URL
 
@@ -17,7 +16,6 @@ final class WorkoutCacheStore {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         directoryURL = baseURL.appendingPathComponent("PTrack", isDirectory: true)
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        legacyFileURL = directoryURL.appendingPathComponent("tracked-workouts.json")
         manifestFileURL = directoryURL.appendingPathComponent("tracked-workout-index.json")
         workoutsDirectoryURL = directoryURL.appendingPathComponent("tracked-workouts", isDirectory: true)
     }
@@ -30,13 +28,7 @@ final class WorkoutCacheStore {
             return splitCacheWorkouts
         }
 
-        let legacyWorkouts = loadLegacyCache()
-        if !legacyWorkouts.isEmpty {
-            print("PTrack Cache: migrating legacy monolithic cache to per-workout files")
-            save(legacyWorkouts)
-            onBatch?(legacyWorkouts)
-        }
-        return legacyWorkouts
+        return []
     }
 
     func save(_ workouts: [TrackedWorkout]) {
@@ -181,24 +173,6 @@ final class WorkoutCacheStore {
             "PTrack Cache: loaded \(sortedWorkouts.count) workouts, Strava: \(sortedWorkouts.compactMap(\.stravaActivityID).count), files: \(fileURLs.count), size: \(Self.formattedByteCount(totalSplitCacheByteCount())), path: \(workoutsDirectoryURL.path)"
         )
         return sortedWorkouts
-    }
-
-    private func loadLegacyCache() -> [TrackedWorkout] {
-        guard let data = try? Data(contentsOf: legacyFileURL) else {
-            return []
-        }
-
-        do {
-            let workouts = try JSONDecoder().decode([TrackedWorkout].self, from: data)
-            let sortedWorkouts = sorted(workouts)
-            print(
-                "PTrack Cache: loaded legacy \(sortedWorkouts.count) workouts, Strava: \(sortedWorkouts.compactMap(\.stravaActivityID).count), size: \(Self.formattedByteCount(Int64(data.count))), path: \(legacyFileURL.path)"
-            )
-            return sortedWorkouts
-        } catch {
-            print("PTrack Cache: failed to decode legacy cached workouts: \(error)")
-            return []
-        }
     }
 
     private func loadManifest() -> WorkoutCacheManifest? {

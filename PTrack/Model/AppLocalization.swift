@@ -34,6 +34,7 @@ enum AppTextKey: String {
     case appDefault
     case activitySummaryPrefix
     case cancel
+    case color
     case cycling
     case dark
     case dataIntegration
@@ -74,13 +75,17 @@ enum AppTextKey: String {
     case routeCollectionICloudSyncComplete
     case routeCollectionICloudSyncProgressFormat
     case mapStyle
+    case livePhotoSaved
+    case livePhotoSaving
     case more
     case movinnLocalDataPrivacyStatement
     case newActivity
     case newRoute
     case ok
     case navigation
+    case startNavigation
     case openEnd
+    case openPhotos
     case openStart
     case openSettings
     case other
@@ -89,6 +94,7 @@ enum AppTextKey: String {
     case photoLibraryFullAccessRequiredMessage
     case photoLibraryFullAccessRequiredTitle
     case photoLibraryReadAuthorized
+    case photoSaving
     case photoMatching
     case queryingLocation
     case routeBook
@@ -96,6 +102,7 @@ enum AppTextKey: String {
     case routeBookExitMessage
     case routeBookLocationPermissionRequiredMessage
     case routeBookLocationPermissionRequiredTitle
+    case route
     case routeCollection
     case routeCollectionEmptyMessage
     case routeCollectionImportSuccess
@@ -104,6 +111,7 @@ enum AppTextKey: String {
     case routeLoading
     case running
     case satellite
+    case share
     case sportsCareerAnnualData
     case sportsCareerMonthlyData
     case sportsCareerOverview
@@ -118,6 +126,7 @@ enum AppTextKey: String {
     case sportTypeCountSummary
     case sportTypeTimeSummary
     case sportsCareer
+    case data
     case standard
     case sportType
     case sportTypeSummary
@@ -125,6 +134,8 @@ enum AppTextKey: String {
     case stravaAuthorizationAlreadyGrantedMessage
     case stravaDataSourceSubtitle
     case stravaReauthorizationRequired
+    case saveLivePhoto
+    case startTimeFormat
     case stillOpen
     case systemPhotos
     case systemMapsNotFound
@@ -206,6 +217,7 @@ enum AppLocalization {
             .appDefault: "默认",
             .activitySummaryPrefix: "运动",
             .cancel: "取消",
+            .color: "颜色",
             .cycling: "骑行",
             .dark: "暗色",
             .dataIntegration: "数据接入",
@@ -246,13 +258,17 @@ enum AppLocalization {
             .routeCollectionICloudSyncComplete: "iCloud 同步完成",
             .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 同步中",
             .mapStyle: "地图样式",
+            .livePhotoSaved: "已保存到相册",
+            .livePhotoSaving: "正在生成 Live Photo",
             .more: "更多",
             .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
             .newActivity: "新活动！",
             .newRoute: "新路线！",
             .ok: "好",
             .navigation: "导航",
+            .startNavigation: "开始导航",
             .openEnd: "去终点",
+            .openPhotos: "去相册查看",
             .openStart: "去起点",
             .openSettings: "打开设置",
             .other: "其他",
@@ -261,6 +277,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "只有完整访问权限才能为轨迹匹配照片。请在系统设置中把照片权限改为“完全访问”。",
             .photoLibraryFullAccessRequiredTitle: "需要完整相册权限",
             .photoLibraryReadAuthorized: "已授权读取相册",
+            .photoSaving: "正在保存图片",
             .photoMatching: "照片匹配",
             .queryingLocation: "位置查询中",
             .routeBook: "作为路书",
@@ -268,6 +285,7 @@ enum AppLocalization {
             .routeBookExitMessage: "退出后将回到运动列表。",
             .routeBookLocationPermissionRequiredMessage: "请在系统设置中允许 Movinn 使用位置，这样才能在作为路书时显示你的位置。",
             .routeBookLocationPermissionRequiredTitle: "需要位置权限",
+            .route: "轨迹",
             .routeCollection: "导入路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
             .routeCollectionImportSuccess: "已导入 GPX 路线",
@@ -276,6 +294,7 @@ enum AppLocalization {
             .routeLoading: "正在加载轨迹",
             .running: "跑步",
             .satellite: "卫星",
+            .share: "分享",
             .sportsCareerAnnualData: "全年",
             .sportsCareerMonthlyData: "月度",
             .sportsCareerOverview: "总览",
@@ -290,6 +309,7 @@ enum AppLocalization {
             .sportTypeCountSummary: "不同运动类型的运动次数汇总",
             .sportTypeTimeSummary: "运动时间汇总",
             .sportsCareer: "运动生涯",
+            .data: "数据",
             .standard: "标准",
             .sportType: "运动类型",
             .sportTypeSummary: "运动类型汇总",
@@ -297,6 +317,8 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 已拿到授权，可以读取你的运动数据。",
             .stravaDataSourceSubtitle: "读取 Strava 中记录的数据。",
             .stravaReauthorizationRequired: "Strava 授权已失效，请进入“更多”页面点击 Strava 重新登录。",
+            .saveLivePhoto: "保存 Live Photo",
+            .startTimeFormat: "%@ 开始",
             .stillOpen: "仍要打开",
             .systemPhotos: "系统相册",
             .systemMapsNotFound: "未找到系统地图",
@@ -332,6 +354,7 @@ enum AppLocalization {
             .appDefault: "デフォルト",
             .activitySummaryPrefix: "運動",
             .cancel: "キャンセル",
+            .color: "カラー",
             .cycling: "サイクリング",
             .dark: "ダーク",
             .dataIntegration: "データ連携",
@@ -372,13 +395,17 @@ enum AppLocalization {
             .routeCollectionICloudSyncComplete: "iCloud同期完了",
             .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud同期中",
             .mapStyle: "地図スタイル",
+            .livePhotoSaved: "写真に保存しました",
+            .livePhotoSaving: "Live Photoを生成中",
             .more: "その他",
             .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
             .newActivity: "新規",
             .newRoute: "新規ルート",
             .ok: "OK",
             .navigation: "ナビゲーション",
+            .startNavigation: "ナビを開始",
             .openEnd: "ゴールへ",
+            .openPhotos: "写真で表示",
             .openStart: "スタートへ",
             .openSettings: "設定を開く",
             .other: "その他",
@@ -387,6 +414,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "ルートに写真を照合するには、写真へのフルアクセスが必要です。システム設定で写真の権限を「フルアクセス」に変更してください。",
             .photoLibraryFullAccessRequiredTitle: "写真へのフルアクセスが必要です",
             .photoLibraryReadAuthorized: "写真の読み取りは許可されています",
+            .photoSaving: "画像を保存中",
             .photoMatching: "写真照合",
             .queryingLocation: "位置を検索中",
             .routeBook: "ルートブックとして使う",
@@ -394,6 +422,7 @@ enum AppLocalization {
             .routeBookExitMessage: "終了するとワークアウト一覧に戻ります。",
             .routeBookLocationPermissionRequiredMessage: "ルートブックモードで現在地を表示するには、システム設定で Movinn の位置情報利用を許可してください。",
             .routeBookLocationPermissionRequiredTitle: "位置情報の許可が必要です",
+            .route: "ルート",
             .routeCollection: "ルート読み込み",
             .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
             .routeCollectionImportSuccess: "GPX ルートを読み込みました",
@@ -402,6 +431,7 @@ enum AppLocalization {
             .routeLoading: "ルートを読み込み中",
             .running: "ランニング",
             .satellite: "衛星",
+            .share: "共有",
             .sportsCareerAnnualData: "年間",
             .sportsCareerMonthlyData: "月別",
             .sportsCareerOverview: "概要",
@@ -416,6 +446,7 @@ enum AppLocalization {
             .sportTypeCountSummary: "種目別ワークアウト回数",
             .sportTypeTimeSummary: "ワークアウト時間の集計",
             .sportsCareer: "運動履歴",
+            .data: "データ",
             .standard: "標準",
             .sportType: "ワークアウト種別",
             .sportTypeSummary: "種目別サマリー",
@@ -423,6 +454,8 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava は認証済みで、ワークアウトデータを読み取れます。",
             .stravaDataSourceSubtitle: "Strava に記録されたデータを読み取ります。",
             .stravaReauthorizationRequired: "Strava の認証が無効になりました。「その他」画面で Strava をタップして再ログインしてください。",
+            .saveLivePhoto: "Live Photoを保存",
+            .startTimeFormat: "%@開始",
             .stillOpen: "それでも開く",
             .systemPhotos: "写真",
             .systemMapsNotFound: "システムマップが見つかりません",
@@ -458,6 +491,7 @@ enum AppLocalization {
             .appDefault: "기본",
             .activitySummaryPrefix: "운동",
             .cancel: "취소",
+            .color: "색상",
             .cycling: "사이클링",
             .dark: "어두운",
             .dataIntegration: "데이터 연동",
@@ -498,13 +532,17 @@ enum AppLocalization {
             .routeCollectionICloudSyncComplete: "iCloud 동기화 완료",
             .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 동기화 중",
             .mapStyle: "지도 스타일",
+            .livePhotoSaved: "사진 앱에 저장되었습니다",
+            .livePhotoSaving: "Live Photo 생성 중",
             .more: "더보기",
             .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
             .newActivity: "새 활동!",
             .newRoute: "새 경로!",
             .ok: "확인",
             .navigation: "내비게이션",
+            .startNavigation: "내비게이션 시작",
             .openEnd: "도착점으로",
+            .openPhotos: "사진 앱에서 보기",
             .openStart: "시작점으로",
             .openSettings: "설정 열기",
             .other: "기타",
@@ -513,6 +551,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "경로와 사진을 매칭하려면 사진 전체 접근 권한이 필요합니다. 시스템 설정에서 사진 권한을 전체 접근으로 변경해 주세요.",
             .photoLibraryFullAccessRequiredTitle: "사진 전체 접근 권한 필요",
             .photoLibraryReadAuthorized: "사진 읽기 권한이 허용되었습니다",
+            .photoSaving: "이미지 저장 중",
             .photoMatching: "사진 매칭",
             .queryingLocation: "위치 조회 중",
             .routeBook: "루트북으로 사용",
@@ -520,6 +559,7 @@ enum AppLocalization {
             .routeBookExitMessage: "종료하면 운동 목록으로 돌아갑니다.",
             .routeBookLocationPermissionRequiredMessage: "루트북 모드에서 현재 위치를 표시하려면 시스템 설정에서 Movinn의 위치 사용을 허용해 주세요.",
             .routeBookLocationPermissionRequiredTitle: "위치 권한 필요",
+            .route: "경로",
             .routeCollection: "경로 가져오기",
             .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
             .routeCollectionImportSuccess: "GPX 경로를 가져왔습니다",
@@ -528,6 +568,7 @@ enum AppLocalization {
             .routeLoading: "경로 불러오는 중",
             .running: "달리기",
             .satellite: "위성",
+            .share: "공유",
             .sportsCareerAnnualData: "연간",
             .sportsCareerMonthlyData: "월간",
             .sportsCareerOverview: "개요",
@@ -542,6 +583,7 @@ enum AppLocalization {
             .sportTypeCountSummary: "운동 유형별 횟수 요약",
             .sportTypeTimeSummary: "운동 시간 요약",
             .sportsCareer: "운동 경력",
+            .data: "데이터",
             .standard: "표준",
             .sportType: "운동 유형",
             .sportTypeSummary: "운동 유형 요약",
@@ -549,6 +591,8 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava 권한을 이미 받았으며 운동 데이터를 읽을 수 있습니다.",
             .stravaDataSourceSubtitle: "Strava에 기록된 데이터를 읽습니다.",
             .stravaReauthorizationRequired: "Strava 인증이 만료되었습니다. 더보기 화면에서 Strava를 눌러 다시 로그인하세요.",
+            .saveLivePhoto: "Live Photo 저장",
+            .startTimeFormat: "%@ 시작",
             .stillOpen: "그래도 열기",
             .systemPhotos: "사진",
             .systemMapsNotFound: "시스템 지도를 찾을 수 없음",
@@ -584,6 +628,7 @@ enum AppLocalization {
             .appDefault: "Default",
             .activitySummaryPrefix: "Activity",
             .cancel: "Cancel",
+            .color: "Color",
             .cycling: "Cycling",
             .dark: "Dark",
             .dataIntegration: "Data Connections",
@@ -624,13 +669,17 @@ enum AppLocalization {
             .routeCollectionICloudSyncComplete: "iCloud sync complete",
             .routeCollectionICloudSyncProgressFormat: "%d/%d syncing with iCloud",
             .mapStyle: "Map Style",
+            .livePhotoSaved: "Saved to Photos",
+            .livePhotoSaving: "Creating Live Photo",
             .more: "More",
             .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
             .newActivity: "New!",
             .newRoute: "New Route!",
             .ok: "OK",
             .navigation: "Navigation",
+            .startNavigation: "Start Navigation",
             .openEnd: "Go to End",
+            .openPhotos: "View in Photos",
             .openStart: "Go to Start",
             .openSettings: "Open Settings",
             .other: "Other",
@@ -639,6 +688,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredMessage: "Full Photos access is required to match photos to routes. Change Photos permission to Full Access in system settings.",
             .photoLibraryFullAccessRequiredTitle: "Full Photos Access Required",
             .photoLibraryReadAuthorized: "Photo access is authorized",
+            .photoSaving: "Saving Image",
             .photoMatching: "Photo Matching",
             .queryingLocation: "Locating",
             .routeBook: "Use as Route Book",
@@ -646,6 +696,7 @@ enum AppLocalization {
             .routeBookExitMessage: "You will return to the workout list.",
             .routeBookLocationPermissionRequiredMessage: "Allow Movinn to use location in system Settings so your position can be shown in Route Book mode.",
             .routeBookLocationPermissionRequiredTitle: "Location Permission Required",
+            .route: "Route",
             .routeCollection: "Imported Routes",
             .routeCollectionEmptyMessage: "No imported routes yet",
             .routeCollectionImportSuccess: "GPX route imported",
@@ -654,6 +705,7 @@ enum AppLocalization {
             .routeLoading: "Loading Route",
             .running: "Running",
             .satellite: "Satellite",
+            .share: "Share",
             .sportsCareerAnnualData: "Year",
             .sportsCareerMonthlyData: "Month",
             .sportsCareerOverview: "Overview",
@@ -668,6 +720,7 @@ enum AppLocalization {
             .sportTypeCountSummary: "Workout Count by Type",
             .sportTypeTimeSummary: "Workout Time Summary",
             .sportsCareer: "Sports Career",
+            .data: "Data",
             .standard: "Standard",
             .sportType: "Sport Type",
             .sportTypeSummary: "Sport Type Summary",
@@ -675,6 +728,8 @@ enum AppLocalization {
             .stravaAuthorizationAlreadyGrantedMessage: "Strava is already authorized to read your activity data.",
             .stravaDataSourceSubtitle: "Read data recorded in Strava.",
             .stravaReauthorizationRequired: "Strava authorization has expired. Open More and tap Strava to sign in again.",
+            .saveLivePhoto: "Save Live Photo",
+            .startTimeFormat: "Starts %@",
             .stillOpen: "Open Anyway",
             .systemPhotos: "Photos",
             .systemMapsNotFound: "System Maps not found",

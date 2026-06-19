@@ -245,6 +245,16 @@ final class WorkoutRouteDetailViewController: UIViewController {
             self?.startRouteBookMode()
         }
 
+        let startNavigationMenu = UIMenu(
+            title: AppLocalization.text(.startNavigation),
+            image: UIImage(systemName: "location.north.line"),
+            children: [
+                openStartAction,
+                openEndAction,
+                routeBookAction
+            ]
+        )
+
         let exportGPXAction = UIAction(
             title: AppLocalization.text(.exportGPX),
             image: UIImage(systemName: "square.and.arrow.up")
@@ -252,6 +262,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
             self?.exportGPX()
         }
         exportGPXAction.attributes = isExportingGPX ? [.disabled] : []
+
+        let shareAction = UIAction(
+            title: AppLocalization.text(.share),
+            image: UIImage(systemName: "square.and.arrow.up.on.square")
+        ) { [weak self] _ in
+            self?.showRouteShare()
+        }
 
         let photoMatchingAction = UIAction(
             title: AppLocalization.text(.photoMatching),
@@ -269,22 +286,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
         }
 
-        var menuChildren: [UIMenuElement] = [
-            openStartAction,
-            openEndAction,
-            routeBookAction
-        ]
         guard presentationMode == .workout else {
             return UIMenu(
                 title: "",
-                children: menuChildren
+                children: [startNavigationMenu]
             )
         }
 
+        var menuChildren: [UIMenuElement] = [
+            exportGPXAction,
+            shareAction
+        ]
         if PhotoLibraryAuthorizationManager.authorizationState == .needsAttention {
             menuChildren.append(photoMatchingAction)
         }
-        menuChildren.append(exportGPXAction)
+        menuChildren.append(startNavigationMenu)
         menuChildren.append(UIMenu(
             title: AppLocalization.text(.mapStyle),
             image: UIImage(systemName: "map"),
@@ -295,6 +311,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
             title: "",
             children: menuChildren
         )
+    }
+
+    private func showRouteShare() {
+        let shareViewController = WorkoutRouteShareViewController(
+            workout: workout,
+            initialMediaItems: routeMediaItems
+        )
+        navigationController?.pushViewController(shareViewController, animated: true)
     }
 
     private func refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: Bool = true) {

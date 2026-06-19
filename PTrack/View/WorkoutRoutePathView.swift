@@ -17,7 +17,7 @@ final class WorkoutRoutePathView: UIView {
     private var strokeColor: UIColor = .black
 
     private let paddingRatio: Double = 0.18
-    private let lineWidth: CGFloat = 2.8
+    private var lineWidth: CGFloat = 2.8
     private static let maximumThumbnailPointCount = 180
     private static let sourceCache: NSCache<NSString, RouteSource> = {
         let cache = NSCache<NSString, RouteSource>()
@@ -75,6 +75,16 @@ final class WorkoutRoutePathView: UIView {
         strokeColor = workout.routeColor
         shapeLayer.strokeColor = strokeColor.cgColor
         updatePathIfNeeded()
+    }
+
+    func setStrokeColor(_ color: UIColor) {
+        strokeColor = color
+        shapeLayer.strokeColor = color.cgColor
+    }
+
+    func setLineWidth(_ width: CGFloat) {
+        lineWidth = width
+        shapeLayer.lineWidth = width
     }
 
     static func prewarmSource(for workout: TrackedWorkout) {

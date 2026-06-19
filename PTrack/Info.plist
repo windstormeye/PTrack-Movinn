@@ -24,6 +24,10 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Movinn 需要使用你的位置，让你在作为路书时对照轨迹运动。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Movinn 需要保存你生成的轨迹分享图片和 Live Photo。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Movinn 需要读取你在轨迹附近拍摄的照片，用于生成分享图片。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
