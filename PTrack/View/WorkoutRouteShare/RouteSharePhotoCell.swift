@@ -11,10 +11,12 @@ import UIKit
 
 final class RouteSharePhotoCell: UICollectionViewCell {
     static let reuseIdentifier = "RouteSharePhotoCell"
+    private static let selectedBorderWidth: CGFloat = 3.5
 
     private let imageView = UIImageView()
     private let addIconView = UIImageView()
     private let liveIconView = UIImageView()
+    private let disabledOverlayView = UIView()
     private var imageRequestID: PHImageRequestID?
     private var representedAssetIdentifier: String?
 
@@ -38,6 +40,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         imageView.image = nil
         addIconView.isHidden = true
         liveIconView.isHidden = true
+        disabledOverlayView.isHidden = true
         contentView.layer.borderWidth = 0
     }
 
@@ -83,7 +86,21 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         )
         addIconView.isHidden = false
         liveIconView.isHidden = true
-        contentView.layer.borderWidth = isSelected ? 2 : 0
+        contentView.layer.borderWidth = isSelected ? Self.selectedBorderWidth : 0
+        contentView.layer.borderColor = AppColors.movinnGreen.cgColor
+    }
+
+    func configureCollage(isSelected: Bool) {
+        contentView.backgroundColor = UIColor(white: 0.945, alpha: 1)
+        imageView.image = nil
+        imageView.backgroundColor = .clear
+        addIconView.image = UIImage(
+            systemName: "square.grid.2x2",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold)
+        )
+        addIconView.isHidden = false
+        liveIconView.isHidden = true
+        contentView.layer.borderWidth = isSelected ? Self.selectedBorderWidth : 0
         contentView.layer.borderColor = AppColors.movinnGreen.cgColor
     }
 
@@ -104,7 +121,16 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         contentView.backgroundColor = .black
         imageView.backgroundColor = UIColor(white: 0.9, alpha: 1)
         addIconView.isHidden = true
-        contentView.layer.borderWidth = isSelected ? 2 : 0
+        contentView.layer.borderWidth = isSelected ? Self.selectedBorderWidth : 0
+        contentView.layer.borderColor = AppColors.movinnGreen.cgColor
+    }
+
+    func setDisabled(_ disabled: Bool) {
+        disabledOverlayView.isHidden = !disabled
+    }
+
+    func setSelectionHighlighted(_ highlighted: Bool) {
+        contentView.layer.borderWidth = highlighted ? Self.selectedBorderWidth : 0
         contentView.layer.borderColor = AppColors.movinnGreen.cgColor
     }
 
@@ -134,9 +160,14 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         liveIconView.layer.masksToBounds = true
         liveIconView.isHidden = true
 
+        disabledOverlayView.backgroundColor = UIColor(white: 1, alpha: 0.58)
+        disabledOverlayView.isUserInteractionEnabled = false
+        disabledOverlayView.isHidden = true
+
         contentView.addSubview(imageView)
         contentView.addSubview(addIconView)
         contentView.addSubview(liveIconView)
+        contentView.addSubview(disabledOverlayView)
 
         imageView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
@@ -150,6 +181,10 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         liveIconView.snp.makeConstraints { make in
             make.top.leading.equalToSuperview().inset(4)
             make.size.equalTo(14)
+        }
+
+        disabledOverlayView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
         }
     }
 }

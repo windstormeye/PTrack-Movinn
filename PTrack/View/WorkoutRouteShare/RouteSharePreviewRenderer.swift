@@ -23,7 +23,9 @@ enum RouteSharePreviewRenderer {
         restoreSelection: () -> Void
     ) -> UIImage {
         setSelectionChromeHidden(true)
+        prepareForCapture(previewView)
         defer {
+            setSelectionChromeHidden(false)
             restoreSelection()
         }
 
@@ -31,7 +33,7 @@ enum RouteSharePreviewRenderer {
         format.scale = UIScreen.main.scale
         format.opaque = true
         return UIGraphicsImageRenderer(bounds: previewView.bounds, format: format).image { _ in
-            previewView.drawHierarchy(in: previewView.bounds, afterScreenUpdates: true)
+            previewView.drawHierarchy(in: previewView.bounds, afterScreenUpdates: false)
         }
     }
 
@@ -48,11 +50,13 @@ enum RouteSharePreviewRenderer {
         backgroundViews.forEach { $0.isHidden = true }
         previewView.backgroundColor = .clear
         setSelectionChromeHidden(true)
+        prepareForCapture(previewView)
         defer {
             zip(backgroundViews, hiddenStates).forEach { view, isHidden in
                 view.isHidden = isHidden
             }
             previewView.backgroundColor = backgroundColor
+            setSelectionChromeHidden(false)
             restoreSelection()
         }
 
@@ -62,8 +66,16 @@ enum RouteSharePreviewRenderer {
         return UIGraphicsImageRenderer(size: outputSize, format: format).image { _ in
             previewView.drawHierarchy(
                 in: CGRect(origin: .zero, size: outputSize),
-                afterScreenUpdates: true
+                afterScreenUpdates: false
             )
         }
+    }
+
+    private static func prepareForCapture(_ view: UIView) {
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        view.layer.setNeedsDisplay()
+        view.layer.displayIfNeeded()
+        CATransaction.flush()
     }
 }

@@ -27,12 +27,13 @@ final class RouteShareMetricsModuleView: UIView {
 
     func configure(with workout: TrackedWorkout, color: UIColor) {
         distanceLabel.text = workout.distanceText
-        durationLabel.text = workout.durationText
+        durationLabel.text = durationAndElevationText(for: workout)
         timeLabel.text = workoutStartTimeText(for: workout)
         applyColor(color)
     }
 
     func updateLocalizedText(for workout: TrackedWorkout) {
+        durationLabel.text = durationAndElevationText(for: workout)
         timeLabel.text = workoutStartTimeText(for: workout)
     }
 
@@ -41,6 +42,20 @@ final class RouteShareMetricsModuleView: UIView {
         durationLabel.textColor = color.withAlphaComponent(0.92)
         timeLabel.textColor = color.withAlphaComponent(0.86)
         applyTextShadow(isVisible: !isEffectivelyBlack(color))
+    }
+
+    func selectionChromeRect() -> CGRect {
+        layoutIfNeeded()
+        let contentRect = [distanceLabel, durationLabel, timeLabel]
+            .map(textContentRect(for:))
+            .reduce(CGRect.null) { $0.union($1) }
+            .insetBy(dx: -7, dy: -5)
+        let clippedRect = contentRect.intersection(bounds)
+        return clippedRect.isNull || clippedRect.isEmpty ? bounds.insetBy(dx: 12, dy: 8) : clippedRect
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        selectionChromeRect().contains(point)
     }
 
     private func configureViews() {
@@ -104,6 +119,41 @@ final class RouteShareMetricsModuleView: UIView {
         }
     }
 
+    private func textContentRect(for label: UILabel) -> CGRect {
+        guard let text = label.text,
+              !text.isEmpty,
+              label.bounds.width > 0,
+              label.bounds.height > 0 else {
+            return .null
+        }
+
+        let fittingSize = label.sizeThatFits(CGSize(
+            width: label.bounds.width,
+            height: CGFloat.greatestFiniteMagnitude
+        ))
+        let contentWidth = min(ceil(fittingSize.width), label.bounds.width)
+        let contentHeight = min(ceil(fittingSize.height), label.bounds.height)
+        let xOffset: CGFloat
+        switch label.textAlignment {
+        case .center:
+            xOffset = (label.bounds.width - contentWidth) / 2
+        case .right:
+            xOffset = label.bounds.width - contentWidth
+        case .natural where effectiveUserInterfaceLayoutDirection == .rightToLeft:
+            xOffset = label.bounds.width - contentWidth
+        default:
+            xOffset = 0
+        }
+        let yOffset = (label.bounds.height - contentHeight) / 2
+
+        return CGRect(
+            x: label.frame.minX + xOffset,
+            y: label.frame.minY + yOffset,
+            width: contentWidth,
+            height: contentHeight
+        )
+    }
+
     private func isEffectivelyBlack(_ color: UIColor) -> Bool {
         let resolvedColor = color.resolvedColor(with: traitCollection)
         var white: CGFloat = 0
@@ -126,5 +176,13 @@ final class RouteShareMetricsModuleView: UIView {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return AppLocalization.format(.startTimeFormat, formatter.string(from: workout.startDate))
+    }
+
+    private func durationAndElevationText(for workout: TrackedWorkout) -> String {
+        if let elevationGainText = workout.elevationGainText {
+            return "\(workout.durationText) · \(elevationGainText)"
+        }
+
+        return workout.durationText
     }
 }

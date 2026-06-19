@@ -277,6 +277,16 @@ struct TrackedWorkout: Codable {
         return AppLocalization.format(.durationMinutesFormat, max(minutes, 1))
     }
 
+    var elevationGainText: String? {
+        guard let elevationGainMeters = routeSummary?.elevationGainMeters,
+              elevationGainMeters.isFinite,
+              elevationGainMeters > 0 else {
+            return nil
+        }
+
+        return AppLocalization.format(.elevationGainFormat, elevationGainMeters.rounded())
+    }
+
     var displayCoordinates: [CLLocationCoordinate2D] {
         CoordinateTransformer.displayCoordinates(for: coordinates.map(\.coordinate))
     }

@@ -5,6 +5,7 @@
 //  Created by Codex on 2026/6/19.
 //
 
+import AVFoundation
 import MapKit
 import Photos
 import PhotosUI
@@ -17,6 +18,21 @@ final class WorkoutRouteShareViewController: UIViewController {
     private typealias CanvasAspectRatio = RouteShareCanvasAspectRatio
     private typealias SharePhotoItem = RouteSharePhotoItem
 
+    private enum LivePhotoExportSource {
+        case photo(PHAsset)
+        case collage([CollageLivePhotoExportSource])
+    }
+
+    private struct CollageLivePhotoExportSource {
+        let asset: PHAsset
+        let tileIndex: Int
+    }
+
+    private struct CollageLivePhotoPreviewInfo {
+        let freezeImage: UIImage?
+        let duration: TimeInterval
+    }
+
     private let workout: TrackedWorkout
     private let mediaStore = RouteMediaStore()
     private let livePhotoExporter = RouteShareLivePhotoExporter()
@@ -24,12 +40,15 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let navigationBackgroundMask = CAGradientLayer()
     private let scrollView = UIScrollView()
     private let contentView = UIView()
+    private let previewContainerView = UIView()
     private let previewView = UIView()
+    private let bottomControlsView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let mapContainerView = AppMapContainerView()
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let previewImageView = UIImageView()
     private let previewLivePhotoView = PHLivePhotoView()
+    private let collageView = RouteShareCollageView()
     private let previewPlaceholderView = UIView()
     private let previewPlaceholderIconView = UIImageView()
     private let routeModuleView = RouteShareRouteModuleView()
@@ -45,13 +64,17 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var colorToolButton: UIButton { toolBarView.colorButton }
     private var aspectRatioToolButton: UIButton { toolBarView.aspectRatioButton }
     private var mapStyleToolButton: UIButton { toolBarView.mapStyleButton }
+    private var collageToolButton: UIButton { toolBarView.collageButton }
+    private var collageStyleToolButton: UIButton { toolBarView.collageStyleButton }
     private var deleteToolButton: UIButton { toolBarView.deleteButton }
     private var addRouteToolButton: UIButton { toolBarView.addRouteButton }
     private var addMetricsToolButton: UIButton { toolBarView.addMetricsButton }
+    private var livePhotoToolButton: UIButton { toolBarView.livePhotoButton }
     private let exportLoadingView = RouteShareExportLoadingView()
     private var toolsContainerWidthConstraint: Constraint?
     private weak var previewBackgroundTapGesture: UITapGestureRecognizer?
     private weak var previewBackgroundDoubleTapGesture: UITapGestureRecognizer?
+    private weak var previewContainerTapGesture: UITapGestureRecognizer?
     private weak var previewModulePanGesture: UIPanGestureRecognizer?
     private weak var previewModulePinchGesture: UIPinchGestureRecognizer?
     private weak var previewModuleRotationGesture: UIRotationGestureRecognizer?
@@ -59,9 +82,13 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var hasPlayedEntranceAnimation = false
     private var hasAppliedInitialModuleLayout = false
     private var hasShownAspectRatioAdjustmentToast = false
+    private var isExportChromeHidden = false
 
     private var photoItems: [SharePhotoItem]
     private var selectedPhotoIndex: Int?
+    private var collagePhotoIndices: [Int] = []
+    private var selectedCollageStyleIndex = 0
+    private var selectedCollageLayout: RouteShareCollageLayout?
     private var selectedPreviewModule: PreviewModule?
     private var selectedRouteColorIndex = 0 {
         didSet {
@@ -81,6 +108,9 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var routePolyline: MKPolyline?
     private var previewImageRequestID: PHImageRequestID?
     private var previewLivePhotoRequestID: PHImageRequestID?
+    private var collageLivePhotoRequestIDs: [PHImageRequestID] = []
+    private var collageLivePhotoFrameTasks: [Task<Void, Never>] = []
+    private var collageLivePhotoPlaybackToken = UUID()
     private var representedPreviewPhotoID: String?
     private var pendingUploadedSelectionID: UUID?
     private var lastSelectedPhotoIndexForAspectRatio: Int?
@@ -99,6 +129,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var isBackgroundAdjustmentEnabled = false
     private var hasManualMapAdjustment = false
     private var previousInteractivePopGestureEnabled: Bool?
+    private weak var previousInteractivePopGestureDelegate: UIGestureRecognizerDelegate?
     private let moduleMinimumScale: CGFloat = 0.35
     private let moduleMaximumScale: CGFloat = 3
     private let backgroundMediaMinimumScale: CGFloat = 0.35
@@ -144,6 +175,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         if let previewLivePhotoRequestID {
             PHImageManager.default().cancelImageRequest(previewLivePhotoRequestID)
         }
+        cancelCollageLivePhotoRequest()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -156,6 +188,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         configureNavigationItem()
         configureInteractivePopBlockerGesture()
         configureScrollView()
+        configureBottomControlsView()
         configurePreviewView()
         configurePhotoCollectionView()
         configureToolsView()
@@ -185,6 +218,9 @@ final class WorkoutRouteShareViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         disableInteractivePopGesture()
+        DispatchQueue.main.async { [weak self] in
+            self?.disableInteractivePopGesture()
+        }
         playEntranceAnimationIfNeeded()
     }
 
@@ -253,8 +289,10 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         if previousInteractivePopGestureEnabled == nil {
             previousInteractivePopGestureEnabled = gestureRecognizer.isEnabled
+            previousInteractivePopGestureDelegate = gestureRecognizer.delegate
         }
         gestureRecognizer.isEnabled = false
+        gestureRecognizer.delegate = self
         if let interactivePopBlockerGesture {
             gestureRecognizer.require(toFail: interactivePopBlockerGesture)
         }
@@ -267,7 +305,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
 
         gestureRecognizer.isEnabled = previousInteractivePopGestureEnabled
+        gestureRecognizer.delegate = previousInteractivePopGestureDelegate
         self.previousInteractivePopGestureEnabled = nil
+        previousInteractivePopGestureDelegate = nil
     }
 
     private func configureScrollView() {
@@ -277,7 +317,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         scrollView.contentInset = UIEdgeInsets(
             top: navigationBackgroundHeight,
             left: 0,
-            bottom: 28,
+            bottom: 190,
             right: 0
         )
         scrollView.scrollIndicatorInsets = scrollView.contentInset
@@ -295,10 +335,26 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
     }
 
+    private func configureBottomControlsView() {
+        bottomControlsView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.76)
+
+        view.addSubview(bottomControlsView)
+
+        bottomControlsView.snp.makeConstraints { make in
+            make.leading.trailing.bottom.equalToSuperview()
+        }
+    }
+
     private func configurePreviewView() {
+        previewContainerView.backgroundColor = .clear
+        let previewContainerTapGesture = UITapGestureRecognizer(target: self, action: #selector(handlePreviewContainerTap(_:)))
+        previewContainerTapGesture.cancelsTouchesInView = false
+        previewContainerTapGesture.delegate = self
+        previewContainerView.addGestureRecognizer(previewContainerTapGesture)
+        self.previewContainerTapGesture = previewContainerTapGesture
+
         previewView.backgroundColor = .white
-        previewView.layer.cornerRadius = 8
-        previewView.layer.masksToBounds = true
+        previewView.clipsToBounds = true
         let previewBackgroundTapGesture = UITapGestureRecognizer(target: self, action: #selector(handlePreviewBackgroundTap(_:)))
         previewBackgroundTapGesture.cancelsTouchesInView = false
         previewBackgroundTapGesture.delegate = self
@@ -333,6 +389,18 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewLivePhotoView.clipsToBounds = true
         previewLivePhotoView.isMuted = false
 
+        collageView.isHidden = true
+        collageView.onLayoutChanged = { [weak self] layout in
+            self?.selectedCollageLayout = layout
+        }
+        collageView.onCanvasTap = { [weak self] in
+            self?.clearPreviewSelections()
+        }
+        collageView.onCropInteraction = { [weak self] in
+            self?.clearElementSelectionForPreviewInteraction()
+            self?.updateVisiblePhotoBrowserCellStates()
+        }
+
         previewPlaceholderView.backgroundColor = UIColor(white: 0.91, alpha: 1)
         previewPlaceholderIconView.image = UIImage(
             systemName: "photo",
@@ -350,10 +418,12 @@ final class WorkoutRouteShareViewController: UIViewController {
         configureBrandPillGestures()
         configureModuleSelectionChrome()
 
-        contentView.addSubview(previewView)
+        contentView.addSubview(previewContainerView)
+        previewContainerView.addSubview(previewView)
         previewView.addSubview(mapContainerView)
         previewView.addSubview(previewImageView)
         previewView.addSubview(previewLivePhotoView)
+        previewView.addSubview(collageView)
         previewView.addSubview(previewPlaceholderView)
         previewPlaceholderView.addSubview(previewPlaceholderIconView)
         previewView.addSubview(routeModuleView)
@@ -362,9 +432,20 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewView.addSubview(metricsDeleteCornerButton)
         previewView.addSubview(brandPillView)
 
+        previewContainerView.snp.makeConstraints { make in
+            make.top.equalToSuperview().offset(4)
+            make.leading.trailing.equalToSuperview().inset(16)
+            make.height.equalTo(previewContainerView.snp.width).multipliedBy(CanvasAspectRatio.fallbackHeightMultiplier)
+            make.bottom.equalToSuperview().inset(24)
+        }
+
         remakePreviewViewConstraints()
 
         mapContainerView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        collageView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
 
@@ -397,10 +478,16 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func remakePreviewViewConstraints() {
+        let canvasHeightMultiplier = currentCanvasHeightMultiplier()
         previewView.snp.remakeConstraints { make in
-            make.top.equalToSuperview().offset(4)
-            make.leading.trailing.equalToSuperview().inset(16)
-            make.height.equalTo(previewView.snp.width).multipliedBy(currentCanvasHeightMultiplier())
+            make.center.equalToSuperview()
+            if canvasHeightMultiplier <= CanvasAspectRatio.fallbackHeightMultiplier {
+                make.leading.trailing.equalToSuperview()
+                make.height.equalTo(previewView.snp.width).multipliedBy(canvasHeightMultiplier)
+            } else {
+                make.top.bottom.equalToSuperview()
+                make.width.equalTo(previewView.snp.height).multipliedBy(1 / canvasHeightMultiplier)
+            }
         }
     }
 
@@ -530,18 +617,20 @@ final class WorkoutRouteShareViewController: UIViewController {
     ) {
         borderLayer.frame = previewView.bounds
         borderLayer.path = selectionBorderPath(for: moduleView)
+        let chromeRect = selectionChromeRect(for: moduleView)
         deleteButton.center = moduleView.convert(
-            CGPoint(x: moduleView.bounds.maxX, y: moduleView.bounds.minY),
+            CGPoint(x: chromeRect.maxX, y: chromeRect.minY),
             to: previewView
         )
     }
 
     private func selectionBorderPath(for moduleView: UIView) -> CGPath {
+        let chromeRect = selectionChromeRect(for: moduleView)
         let corners = [
-            CGPoint(x: moduleView.bounds.minX, y: moduleView.bounds.minY),
-            CGPoint(x: moduleView.bounds.maxX, y: moduleView.bounds.minY),
-            CGPoint(x: moduleView.bounds.maxX, y: moduleView.bounds.maxY),
-            CGPoint(x: moduleView.bounds.minX, y: moduleView.bounds.maxY)
+            CGPoint(x: chromeRect.minX, y: chromeRect.minY),
+            CGPoint(x: chromeRect.maxX, y: chromeRect.minY),
+            CGPoint(x: chromeRect.maxX, y: chromeRect.maxY),
+            CGPoint(x: chromeRect.minX, y: chromeRect.maxY)
         ].map { moduleView.convert($0, to: previewView) }
 
         let path = UIBezierPath()
@@ -554,6 +643,18 @@ final class WorkoutRouteShareViewController: UIViewController {
         return path.cgPath
     }
 
+    private func selectionChromeRect(for moduleView: UIView) -> CGRect {
+        if let routeModuleView = moduleView as? RouteShareRouteModuleView {
+            return routeModuleView.selectionChromeRect()
+        }
+
+        if let metricsModuleView = moduleView as? RouteShareMetricsModuleView {
+            return metricsModuleView.selectionChromeRect()
+        }
+
+        return moduleView.bounds
+    }
+
     private func configurePhotoCollectionView() {
         photoCollectionView.backgroundColor = .clear
         photoCollectionView.showsHorizontalScrollIndicator = false
@@ -563,10 +664,10 @@ final class WorkoutRouteShareViewController: UIViewController {
         photoCollectionView.delegate = self
         photoCollectionView.register(RouteSharePhotoCell.self, forCellWithReuseIdentifier: RouteSharePhotoCell.reuseIdentifier)
 
-        contentView.addSubview(photoCollectionView)
+        bottomControlsView.contentView.addSubview(photoCollectionView)
 
         photoCollectionView.snp.makeConstraints { make in
-            make.top.equalTo(previewView.snp.bottom).offset(12)
+            make.top.equalToSuperview().offset(12)
             make.leading.trailing.equalToSuperview()
             make.height.equalTo(66)
         }
@@ -577,18 +678,21 @@ final class WorkoutRouteShareViewController: UIViewController {
         configureAspectRatioToolButton()
         configureDeleteToolButton()
         configureAddToolButtons()
+        configureCollageToolButton()
+        configureCollageStyleToolButton()
+        configureLivePhotoToolButton()
         aspectRatioToolButton.showsMenuAsPrimaryAction = true
         mapStyleToolButton.showsMenuAsPrimaryAction = true
         configureMapStyleButton()
 
-        contentView.addSubview(toolBarView)
+        bottomControlsView.contentView.addSubview(toolBarView)
 
         toolBarView.snp.makeConstraints { make in
             make.top.equalTo(photoCollectionView.snp.bottom).offset(10)
             make.leading.equalToSuperview().offset(16)
             make.height.equalTo(52)
             toolsContainerWidthConstraint = make.width.equalTo(RouteShareToolBarView.preferredWidth(for: 2)).constraint
-            make.bottom.equalToSuperview()
+            make.bottom.equalTo(bottomControlsView.safeAreaLayoutGuide.snp.bottom).inset(8)
         }
     }
 
@@ -648,6 +752,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         configureAspectRatioToolButton()
         configureDeleteToolButton()
         configureAddToolButtons()
+        configureCollageToolButton()
+        configureCollageStyleToolButton()
+        configureLivePhotoToolButton()
         configureMapStyleButton()
     }
 
@@ -678,9 +785,8 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     private var entranceAnimatedViews: [UIView] {
         [
-            previewView,
-            photoCollectionView,
-            toolBarView
+            previewContainerView,
+            bottomControlsView
         ]
     }
 
@@ -745,6 +851,39 @@ final class WorkoutRouteShareViewController: UIViewController {
         addMetricsToolButton.addTarget(self, action: #selector(addMetricsModule), for: .touchUpInside)
     }
 
+    private func configureCollageToolButton() {
+        var configuration = toolButtonConfiguration(
+            title: AppLocalization.text(.collage),
+            imageName: "square.grid.2x2"
+        )
+        if case .collage = previewBackground {
+            configuration.baseForegroundColor = AppColors.movinnGreen
+        }
+        collageToolButton.configuration = configuration
+        collageToolButton.removeTarget(nil, action: nil, for: .touchUpInside)
+        collageToolButton.addTarget(self, action: #selector(toggleCollageBackground), for: .touchUpInside)
+    }
+
+    private func configureCollageStyleToolButton() {
+        collageStyleToolButton.configuration = toolButtonConfiguration(
+            title: AppLocalization.text(.collageStyle),
+            imageName: "rectangle.split.3x1"
+        )
+        collageStyleToolButton.removeTarget(nil, action: nil, for: .touchUpInside)
+        collageStyleToolButton.addTarget(self, action: #selector(cycleCollageLayout), for: .touchUpInside)
+    }
+
+    private func configureLivePhotoToolButton() {
+        var configuration = toolButtonConfiguration(
+            title: "Live",
+            imageName: "livephoto"
+        )
+        configuration.baseForegroundColor = AppColors.movinnGreen
+        livePhotoToolButton.configuration = configuration
+        livePhotoToolButton.removeTarget(nil, action: nil, for: .touchUpInside)
+        livePhotoToolButton.addTarget(self, action: #selector(playCollageLivePhoto), for: .touchUpInside)
+    }
+
     private func configureMapStyleButton() {
         mapStyleToolButton.configuration = toolButtonConfiguration(
             title: AppLocalization.text(.mapStyle),
@@ -804,24 +943,37 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func updatePreviewSelection() {
+        collageView.setCropSelectionChromeHidden(isExportChromeHidden)
+        collageView.setDividerInteractionEnabled(selectedPreviewModule == nil && !isBackgroundAdjustmentEnabled)
         applySelectionStyle(to: routeModuleView, isSelected: selectedPreviewModule == .route)
         applySelectionStyle(to: metricsModuleView, isSelected: selectedPreviewModule == .metrics)
         configureColorToolButton()
         updateToolBarVisibility()
     }
 
+    private func clearCollageCropSelectionForElementEditing() {
+        let hadCropSelection = collageView.hasActiveCropSelection
+        collageView.clearCropSelection()
+        if hadCropSelection {
+            updateVisiblePhotoBrowserCellStates()
+        }
+    }
+
     private func applySelectionStyle(to view: UIView, isSelected: Bool) {
         let isRouteView = view === routeModuleView
         let borderLayer = isRouteView ? routeSelectionBorderLayer : metricsSelectionBorderLayer
         let deleteButton = isRouteView ? routeDeleteCornerButton : metricsDeleteCornerButton
-        borderLayer.isHidden = !isSelected
-        deleteButton.isHidden = !isSelected
-        if isSelected {
+        let shouldShowChrome = isSelected && !isExportChromeHidden
+        borderLayer.isHidden = !shouldShowChrome
+        deleteButton.isHidden = !shouldShowChrome
+        if shouldShowChrome {
             borderLayer.removeFromSuperlayer()
             previewView.layer.addSublayer(borderLayer)
             updateSelectionChrome(borderLayer: borderLayer, deleteButton: deleteButton, for: view)
             keepBrandPillOnTop()
             previewView.bringSubviewToFront(deleteButton)
+        } else {
+            borderLayer.removeFromSuperlayer()
         }
     }
 
@@ -844,6 +996,11 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
         previewLivePhotoView.stopPlayback()
         previewLivePhotoView.livePhoto = nil
+        if case .collage = previewBackground {
+        } else {
+            cancelCollageLivePhotoRequest()
+            collageView.stopLivePhotoPlayback()
+        }
 
         switch previewBackground {
         case .map:
@@ -851,6 +1008,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             previewImageView.image = nil
             previewImageView.isHidden = true
             previewLivePhotoView.isHidden = true
+            collageView.isHidden = true
+            collageView.clear()
             previewPlaceholderView.isHidden = true
             mapView.isHidden = false
             routeModuleView.isHidden = true
@@ -865,6 +1024,7 @@ final class WorkoutRouteShareViewController: UIViewController {
                 previewImageView.image = nil
                 previewImageView.isHidden = true
                 previewLivePhotoView.isHidden = true
+                collageView.isHidden = true
                 previewPlaceholderView.isHidden = false
                 mapView.isHidden = true
                 return
@@ -873,6 +1033,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             let item = photoItems[selectedPhotoIndex]
             representedPreviewPhotoID = item.id
             mapView.isHidden = true
+            collageView.isHidden = true
             previewPlaceholderView.isHidden = true
             updatePreviewModuleVisibility()
 
@@ -895,6 +1056,27 @@ final class WorkoutRouteShareViewController: UIViewController {
                     requestPreviewImage(for: mediaItem.asset, representedID: item.id)
                 }
             }
+        case .collage:
+            guard let collageLayout = activeCollageLayout() else {
+                representedPreviewPhotoID = nil
+                previewImageView.image = nil
+                previewImageView.isHidden = true
+                previewLivePhotoView.isHidden = true
+                collageView.isHidden = true
+                previewPlaceholderView.isHidden = false
+                mapView.isHidden = true
+                return
+            }
+
+            representedPreviewPhotoID = collageRepresentationID()
+            previewImageView.image = nil
+            previewImageView.isHidden = true
+            previewLivePhotoView.isHidden = true
+            previewPlaceholderView.isHidden = true
+            mapView.isHidden = true
+            collageView.isHidden = false
+            collageView.configure(items: selectedCollageItems(), layout: collageLayout)
+            updatePreviewModuleVisibility()
         }
     }
 
@@ -956,6 +1138,189 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
     }
 
+    private func requestCollageLivePhotoPlayback(
+        for sources: [(tileIndex: Int, item: SharePhotoItem, asset: PHAsset)]
+    ) {
+        cancelCollageLivePhotoRequest()
+        guard !sources.isEmpty else {
+            return
+        }
+
+        let playbackToken = UUID()
+        collageLivePhotoPlaybackToken = playbackToken
+        let scale = max(UIScreen.main.scale, 2)
+        let targetWidth = max(previewView.bounds.width, 720) * scale
+        let targetHeight = max(previewView.bounds.height, 900) * scale
+        var pendingCount = sources.count
+        var playbacks: [Int: RouteShareCollageLivePhotoPlayback] = [:]
+
+        let options = PHLivePhotoRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.isNetworkAccessAllowed = true
+
+        func completePlayback(
+            source: (tileIndex: Int, item: SharePhotoItem, asset: PHAsset),
+            livePhoto: PHLivePhoto?,
+            previewInfo: CollageLivePhotoPreviewInfo?
+        ) {
+            guard collageLivePhotoPlaybackToken == playbackToken,
+                  case .collage = previewBackground else {
+                return
+            }
+
+            let collageItems = selectedCollageItems()
+            if let livePhoto,
+               collageItems.indices.contains(source.tileIndex),
+               collageItems[source.tileIndex].id == source.item.id {
+                playbacks[source.tileIndex] = RouteShareCollageLivePhotoPlayback(
+                    livePhoto: livePhoto,
+                    tileIndex: source.tileIndex,
+                    representedID: source.item.id,
+                    duration: previewInfo?.duration ?? Self.fallbackLivePhotoPreviewDuration(for: source.asset),
+                    freezeImage: previewInfo?.freezeImage
+                )
+            }
+
+            pendingCount -= 1
+            guard pendingCount == 0 else {
+                return
+            }
+
+            let orderedPlaybacks = sources.compactMap { playbacks[$0.tileIndex] }
+            guard !orderedPlaybacks.isEmpty else {
+                return
+            }
+            let playbackDuration = orderedPlaybacks.map(\.duration).max() ?? Self.defaultLivePhotoPreviewDuration
+            collageView.playLivePhotos(orderedPlaybacks, playbackDuration: playbackDuration)
+        }
+
+        sources.forEach { source in
+            let requestID = PHImageManager.default().requestLivePhoto(
+                for: source.asset,
+                targetSize: CGSize(width: targetWidth, height: targetHeight),
+                contentMode: .aspectFill,
+                options: options
+            ) { [weak self] livePhoto, info in
+                guard let self,
+                      collageLivePhotoPlaybackToken == playbackToken else {
+                    return
+                }
+
+                if (info?[PHImageCancelledKey] as? Bool) == true
+                    || (info?[PHImageResultIsDegradedKey] as? Bool) == true {
+                    return
+                }
+
+                guard let livePhoto else {
+                    completePlayback(source: source, livePhoto: nil, previewInfo: nil)
+                    return
+                }
+
+                let task = Task { [weak self] in
+                    let previewInfo = await Self.previewInfo(forLivePhotoAsset: source.asset)
+                    await MainActor.run {
+                        guard let self,
+                              self.collageLivePhotoPlaybackToken == playbackToken else {
+                            return
+                        }
+                        completePlayback(source: source, livePhoto: livePhoto, previewInfo: previewInfo)
+                    }
+                }
+                collageLivePhotoFrameTasks.append(task)
+            }
+            collageLivePhotoRequestIDs.append(requestID)
+        }
+    }
+
+    private func cancelCollageLivePhotoRequest() {
+        collageLivePhotoPlaybackToken = UUID()
+        collageLivePhotoRequestIDs.forEach { requestID in
+            PHImageManager.default().cancelImageRequest(requestID)
+        }
+        collageLivePhotoRequestIDs.removeAll()
+        collageLivePhotoFrameTasks.forEach { $0.cancel() }
+        collageLivePhotoFrameTasks.removeAll()
+    }
+
+    nonisolated private static var defaultLivePhotoPreviewDuration: TimeInterval {
+        3
+    }
+
+    nonisolated private static func fallbackLivePhotoPreviewDuration(for asset: PHAsset) -> TimeInterval {
+        asset.duration > 0.2 ? asset.duration : defaultLivePhotoPreviewDuration
+    }
+
+    nonisolated private static func previewInfo(forLivePhotoAsset asset: PHAsset) async -> CollageLivePhotoPreviewInfo {
+        guard let pairedVideoResource = pairedVideoResource(for: asset) else {
+            return CollageLivePhotoPreviewInfo(
+                freezeImage: nil,
+                duration: fallbackLivePhotoPreviewDuration(for: asset)
+            )
+        }
+
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MovinnLivePreview-\(UUID().uuidString)", isDirectory: true)
+        let videoURL = directoryURL.appendingPathComponent("source-live-photo.mov")
+
+        do {
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+            defer {
+                try? FileManager.default.removeItem(at: directoryURL)
+            }
+
+            try await writePairedVideoResource(pairedVideoResource, to: videoURL)
+            let videoAsset = AVAsset(url: videoURL)
+            let duration = try await videoAsset.load(.duration)
+            let durationSeconds = CMTimeGetSeconds(duration)
+            let resolvedDuration = durationSeconds.isFinite && durationSeconds > 0.2
+                ? durationSeconds
+                : fallbackLivePhotoPreviewDuration(for: asset)
+            let generator = AVAssetImageGenerator(asset: videoAsset)
+            generator.appliesPreferredTrackTransform = true
+            let frameTimeSeconds = max(resolvedDuration - 0.05, 0)
+            let frameTime = CMTime(seconds: frameTimeSeconds, preferredTimescale: 600)
+            let cgImage = try generator.copyCGImage(at: frameTime, actualTime: nil)
+            return CollageLivePhotoPreviewInfo(
+                freezeImage: UIImage(cgImage: cgImage),
+                duration: resolvedDuration
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: directoryURL)
+            return CollageLivePhotoPreviewInfo(
+                freezeImage: nil,
+                duration: fallbackLivePhotoPreviewDuration(for: asset)
+            )
+        }
+    }
+
+    nonisolated private static func pairedVideoResource(for asset: PHAsset) -> PHAssetResource? {
+        let resources = PHAssetResource.assetResources(for: asset)
+        return resources.first(where: { $0.type == .fullSizePairedVideo })
+            ?? resources.first(where: { $0.type == .pairedVideo })
+    }
+
+    nonisolated private static func writePairedVideoResource(
+        _ pairedVideoResource: PHAssetResource,
+        to sourceVideoURL: URL
+    ) async throws {
+        try? FileManager.default.removeItem(at: sourceVideoURL)
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHAssetResourceManager.default().writeData(
+                for: pairedVideoResource,
+                toFile: sourceVideoURL,
+                options: options
+            ) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     private func updatePhotoBackgroundLayout() {
         guard case .photo = previewBackground,
               let naturalSize = currentPhotoNaturalSize(),
@@ -987,6 +1352,101 @@ final class WorkoutRouteShareViewController: UIViewController {
         case .uploaded(let image):
             return image.size
         }
+    }
+
+    private func selectedCollageItems() -> [SharePhotoItem] {
+        collagePhotoIndices.compactMap { index in
+            photoItems.indices.contains(index) ? photoItems[index] : nil
+        }
+    }
+
+    private func selectedCollageLivePhotoSources() -> [(tileIndex: Int, item: SharePhotoItem, asset: PHAsset)] {
+        var sources: [(tileIndex: Int, item: SharePhotoItem, asset: PHAsset)] = []
+        for (tileIndex, item) in selectedCollageItems().enumerated() {
+            guard item.isLivePhoto,
+                  let asset = item.asset else {
+                continue
+            }
+            sources.append((tileIndex: tileIndex, item: item, asset: asset))
+        }
+        return sources
+    }
+
+    private func selectedCollageHasLivePhoto(excluding photoIndex: Int? = nil) -> Bool {
+        collagePhotoIndices.contains { index in
+            if let photoIndex, index == photoIndex {
+                return false
+            }
+
+            guard photoItems.indices.contains(index) else {
+                return false
+            }
+            return photoItems[index].isLivePhoto
+        }
+    }
+
+    private func canSelectCollagePhoto(at photoIndex: Int) -> Bool {
+        guard photoItems.indices.contains(photoIndex),
+              photoItems[photoIndex].isLivePhoto,
+              !collagePhotoIndices.contains(photoIndex) else {
+            return true
+        }
+
+        return !selectedCollageHasLivePhoto(excluding: activeCollageReplacementPhotoIndex())
+    }
+
+    private func isCollageLivePhotoDisabled(at photoIndex: Int) -> Bool {
+        guard case .collage = previewBackground,
+              photoItems.indices.contains(photoIndex),
+              photoItems[photoIndex].isLivePhoto,
+              !collagePhotoIndices.contains(photoIndex) else {
+            return false
+        }
+
+        return selectedCollageHasLivePhoto(excluding: activeCollageReplacementPhotoIndex())
+    }
+
+    private func activeCollageReplacementPhotoIndex() -> Int? {
+        guard case .collage = previewBackground,
+              let activeCropSelectionIndex = collageView.activeCropSelectionIndex,
+              collagePhotoIndices.indices.contains(activeCropSelectionIndex) else {
+            return nil
+        }
+
+        return collagePhotoIndices[activeCropSelectionIndex]
+    }
+
+    private func showCollageSingleLivePhotoLimitToast() {
+        Toast.show(AppLocalization.text(.collageSingleLivePhotoLimit), in: view)
+    }
+
+    private func collageRepresentationID() -> String {
+        let itemIDs = selectedCollageItems().map(\.id).joined(separator: "|")
+        let layoutID = selectedCollageLayout.map { "\($0.kind.rawValue)-\($0.dividers)" } ?? "none"
+        return "collage-\(collageSlotCount())-\(itemIDs)-\(layoutID)"
+    }
+
+    private func activeCollageLayout() -> RouteShareCollageLayout? {
+        let photoCount = collageSlotCount()
+        if let selectedCollageLayout, selectedCollageLayout.matches(photoCount: photoCount) {
+            return selectedCollageLayout
+        }
+
+        selectedCollageLayout = collageLayoutForCurrentStyle(photoCount: photoCount)
+        return selectedCollageLayout
+    }
+
+    private func collageSlotCount() -> Int {
+        min(max(collagePhotoIndices.count, 2), 4)
+    }
+
+    private func collageLayoutForCurrentStyle(photoCount: Int) -> RouteShareCollageLayout? {
+        let library = RouteShareCollageLayout.library(for: photoCount)
+        guard !library.isEmpty else {
+            return nil
+        }
+
+        return library[selectedCollageStyleIndex % library.count]
     }
 
     private func aspectFillSize(for contentSize: CGSize, in containerSize: CGSize) -> CGSize {
@@ -1036,6 +1496,141 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePhotoBackgroundLayout()
     }
 
+    @objc private func enterCollageBackground() {
+        guard photoItems.count >= 2 else {
+            return
+        }
+
+        selectedPhotoIndex = nil
+        collagePhotoIndices = defaultCollagePhotoIndices()
+        selectedCollageStyleIndex = 0
+        selectedCollageLayout = collageLayoutForCurrentStyle(photoCount: collageSlotCount())
+        previewBackground = .collage
+        applyDefaultColorsForCurrentBackground()
+        representedPreviewPhotoID = nil
+        isBackgroundAdjustmentEnabled = false
+        photoCollectionView.reloadData()
+        updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
+        updatePreviewPhoto()
+        configureCollageToolButton()
+        configureCollageStyleToolButton()
+        updateToolBarVisibility()
+    }
+
+    @objc private func toggleCollageBackground() {
+        if case .collage = previewBackground {
+            selectDefaultPhotoBackground()
+            return
+        }
+
+        enterCollageBackground()
+    }
+
+    private func selectDefaultPhotoBackground() {
+        guard !photoItems.isEmpty else {
+            return
+        }
+
+        collageView.clearCropSelection()
+        cancelCollageLivePhotoRequest()
+        collageView.stopLivePhotoPlayback()
+        selectPhoto(at: 0)
+    }
+
+    private func defaultCollagePhotoIndices() -> [Int] {
+        let targetCount = min(2, photoItems.count)
+        var indices: [Int] = []
+        var hasLivePhoto = false
+
+        for index in photoItems.indices {
+            let isLivePhoto = photoItems[index].isLivePhoto
+            if isLivePhoto && hasLivePhoto {
+                continue
+            }
+
+            indices.append(index)
+            hasLivePhoto = hasLivePhoto || isLivePhoto
+
+            if indices.count == targetCount {
+                break
+            }
+        }
+
+        return indices
+    }
+
+    private func toggleCollagePhoto(at index: Int) {
+        guard photoItems.indices.contains(index) else {
+            return
+        }
+
+        guard canSelectCollagePhoto(at: index) else {
+            showCollageSingleLivePhotoLimitToast()
+            return
+        }
+
+        let previousSlotCount = collageSlotCount()
+        if let activeCropSelectionIndex = collageView.activeCropSelectionIndex,
+           collagePhotoIndices.indices.contains(activeCropSelectionIndex) {
+            replaceCollagePhoto(at: activeCropSelectionIndex, with: index)
+        } else if let existingIndex = collagePhotoIndices.firstIndex(of: index) {
+            collagePhotoIndices.remove(at: existingIndex)
+        } else if collagePhotoIndices.count < 4 {
+            collagePhotoIndices.append(index)
+        } else {
+            collagePhotoIndices.removeFirst()
+            collagePhotoIndices.append(index)
+        }
+
+        if previousSlotCount != collageSlotCount() {
+            selectedCollageLayout = collageLayoutForCurrentStyle(photoCount: collageSlotCount())
+        }
+
+        representedPreviewPhotoID = nil
+        updateVisiblePhotoBrowserCellStates()
+        updatePreviewPhoto()
+        configureCollageStyleToolButton()
+        updateToolBarVisibility()
+    }
+
+    private func replaceCollagePhoto(at slotIndex: Int, with photoIndex: Int) {
+        guard collagePhotoIndices.indices.contains(slotIndex),
+              photoItems.indices.contains(photoIndex) else {
+            return
+        }
+
+        if let duplicateIndex = collagePhotoIndices.firstIndex(of: photoIndex),
+           duplicateIndex != slotIndex {
+            collagePhotoIndices.remove(at: duplicateIndex)
+            let adjustedSlotIndex = duplicateIndex < slotIndex ? slotIndex - 1 : slotIndex
+            if collagePhotoIndices.indices.contains(adjustedSlotIndex) {
+                collagePhotoIndices[adjustedSlotIndex] = photoIndex
+            }
+        } else {
+            collagePhotoIndices[slotIndex] = photoIndex
+        }
+
+        collageView.clearCropSelection()
+    }
+
+    @objc private func cycleCollageLayout() {
+        guard case .collage = previewBackground else {
+            enterCollageBackground()
+            return
+        }
+
+        let library = RouteShareCollageLayout.library(for: collageSlotCount())
+        guard !library.isEmpty else {
+            return
+        }
+
+        selectedCollageStyleIndex = (selectedCollageStyleIndex + 1) % library.count
+        selectedCollageLayout = library[selectedCollageStyleIndex]
+        representedPreviewPhotoID = nil
+        updatePreviewPhoto()
+        configureCollageStyleToolButton()
+    }
+
     private func selectPhoto(at index: Int) {
         guard photoItems.indices.contains(index) else {
             return
@@ -1070,6 +1665,19 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewLivePhotoView.startPlayback(with: .full)
     }
 
+    @objc private func playCollageLivePhoto() {
+        guard case .collage = previewBackground else {
+            return
+        }
+
+        let livePhotoSources = selectedCollageLivePhotoSources()
+        guard !livePhotoSources.isEmpty else {
+            return
+        }
+
+        requestCollageLivePhotoPlayback(for: livePhotoSources)
+    }
+
     private func selectMapBackground(usesDefaultMapAspectRatio: Bool = true) {
         selectedPhotoIndex = nil
         if usesDefaultMapAspectRatio {
@@ -1082,6 +1690,15 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
         updatePreviewPhoto()
         updateToolBarVisibility()
+    }
+
+    private func toggleMapBackground() {
+        if case .map = previewBackground {
+            selectDefaultPhotoBackground()
+            return
+        }
+
+        selectMapBackground()
     }
 
     private func presentPhotoPicker() {
@@ -1099,7 +1716,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         case .map:
             selectedRouteColorIndex = 1
             selectedMetricsColorIndex = 1
-        case .photo:
+        case .photo, .collage:
             selectedRouteColorIndex = 0
             selectedMetricsColorIndex = 0
         }
@@ -1119,6 +1736,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = nil
         updatePreviewSelection()
+        updateVisiblePhotoBrowserCellStates()
     }
 
     private func resetPreviewModuleAdjustment(for module: PreviewModule) {
@@ -1200,6 +1818,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         guard !routeModuleView.isHidden else {
             return
         }
+        clearCollageCropSelectionForElementEditing()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .route
         previewView.bringSubviewToFront(routeModuleView)
@@ -1211,6 +1830,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         guard !metricsModuleView.isHidden else {
             return
         }
+        clearCollageCropSelectionForElementEditing()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .metrics
         previewView.bringSubviewToFront(metricsModuleView)
@@ -1259,6 +1879,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     @objc private func addRouteModule() {
         isRouteModuleEnabled = true
         resetPreviewModuleAdjustment(for: .route)
+        clearCollageCropSelectionForElementEditing()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .route
         previewView.bringSubviewToFront(routeModuleView)
@@ -1270,6 +1891,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     @objc private func addMetricsModule() {
         isMetricsModuleEnabled = true
         resetPreviewModuleAdjustment(for: .metrics)
+        clearCollageCropSelectionForElementEditing()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = .metrics
         previewView.bringSubviewToFront(metricsModuleView)
@@ -1298,6 +1920,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             return
         }
 
+        clearCollageCropSelectionForElementEditing()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = module
         previewView.bringSubviewToFront(moduleView(for: module))
@@ -1336,6 +1959,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             return
         }
 
+        clearCollageCropSelectionForElementEditing()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = module
         previewView.bringSubviewToFront(moduleView(for: module))
@@ -1363,6 +1987,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             return
         }
 
+        clearCollageCropSelectionForElementEditing()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = module
         previewView.bringSubviewToFront(moduleView(for: module))
@@ -1410,6 +2035,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             updatePhotoBackgroundLayout()
         case .map:
             panMapBackground(by: translation)
+        case .collage:
+            break
         }
         recognizer.setTranslation(.zero, in: previewView)
     }
@@ -1424,6 +2051,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             updatePhotoBackgroundLayout()
         case .map:
             zoomMapBackground(by: recognizer.scale)
+        case .collage:
+            break
         }
         recognizer.scale = 1
     }
@@ -1435,6 +2064,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             updatePhotoBackgroundLayout()
         case .map:
             rotateMapBackground(by: recognizer.rotation)
+        case .collage:
+            break
         }
         recognizer.rotation = 0
     }
@@ -1506,7 +2137,32 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     @objc private func handlePreviewBackgroundTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended,
-              selectedPreviewModule != nil || isBackgroundAdjustmentEnabled else {
+              selectedPreviewModule != nil
+                || isBackgroundAdjustmentEnabled
+                || collageView.hasActiveCropSelection else {
+            return
+        }
+
+        clearPreviewSelections()
+    }
+
+    @objc private func handlePreviewContainerTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else {
+            return
+        }
+
+        let location = recognizer.location(in: previewContainerView)
+        guard !previewView.frame.contains(location) else {
+            return
+        }
+
+        clearPreviewSelections()
+    }
+
+    private func clearPreviewSelections() {
+        let hadCropSelection = collageView.hasActiveCropSelection
+        collageView.clearCropSelection()
+        guard selectedPreviewModule != nil || isBackgroundAdjustmentEnabled || hadCropSelection else {
             return
         }
 
@@ -1515,13 +2171,29 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePreviewSelection()
     }
 
-    @objc private func handlePreviewBackgroundDoubleTap(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended else {
+    private func clearElementSelectionForPreviewInteraction() {
+        guard selectedPreviewModule != nil || isBackgroundAdjustmentEnabled else {
             return
         }
 
         selectedPreviewModule = nil
-        isBackgroundAdjustmentEnabled = true
+        isBackgroundAdjustmentEnabled = false
+        updatePreviewSelection()
+        updateVisiblePhotoBrowserCellStates()
+    }
+
+    @objc private func handlePreviewBackgroundDoubleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else {
+            return
+        }
+        guard case .collage = previewBackground else {
+            selectedPreviewModule = nil
+            isBackgroundAdjustmentEnabled = true
+            updatePreviewSelection()
+            return
+        }
+        selectedPreviewModule = nil
+        isBackgroundAdjustmentEnabled = false
         updatePreviewSelection()
     }
 
@@ -1669,6 +2341,8 @@ final class WorkoutRouteShareViewController: UIViewController {
         let isPhotoBackground: Bool
         if case .photo = previewBackground {
             isPhotoBackground = true
+        } else if case .collage = previewBackground {
+            isPhotoBackground = true
         } else {
             isPhotoBackground = false
         }
@@ -1724,19 +2398,33 @@ final class WorkoutRouteShareViewController: UIViewController {
         } else {
             isMapBackground = false
         }
+        let isCollageBackground: Bool
+        if case .collage = previewBackground {
+            isCollageBackground = true
+        } else {
+            isCollageBackground = false
+        }
 
         mapStyleToolButton.isHidden = !isMapBackground
-        deleteToolButton.isHidden = selectedPreviewModule == nil
+        collageToolButton.isHidden = true
+        collageStyleToolButton.isHidden = !isCollageBackground
+        deleteToolButton.isHidden = true
         addRouteToolButton.isHidden = isMapBackground || isRouteModuleEnabled
         addMetricsToolButton.isHidden = isMetricsModuleEnabled
+        livePhotoToolButton.isHidden = !(isCollageBackground && !selectedCollageLivePhotoSources().isEmpty)
+        configureCollageToolButton()
+        configureLivePhotoToolButton()
 
         let visibleButtonCount = [
             colorToolButton,
             aspectRatioToolButton,
             mapStyleToolButton,
+            collageToolButton,
+            collageStyleToolButton,
             deleteToolButton,
             addRouteToolButton,
-            addMetricsToolButton
+            addMetricsToolButton,
+            livePhotoToolButton
         ].filter { !$0.isHidden }.count
         toolsContainerWidthConstraint?.update(offset: RouteShareToolBarView.preferredWidth(for: visibleButtonCount))
         UIView.animate(withDuration: 0.18) {
@@ -1810,8 +2498,8 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     @objc private func sharePreviewImage() {
-        if let livePhotoAsset = selectedLivePhotoAsset() {
-            exportAndShareLivePhoto(asset: livePhotoAsset)
+        if let livePhotoSource = selectedLivePhotoExportSource() {
+            exportAndShareLivePhoto(source: livePhotoSource)
             return
         }
 
@@ -1839,42 +2527,35 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
     }
 
-    private func selectedLivePhotoAsset() -> PHAsset? {
-        guard case .photo(let index) = previewBackground,
-              photoItems.indices.contains(index),
-              case .routeMedia(let mediaItem) = photoItems[index],
-              mediaItem.isLivePhoto else {
+    private func selectedLivePhotoExportSource() -> LivePhotoExportSource? {
+        switch previewBackground {
+        case .photo(let index):
+            guard photoItems.indices.contains(index),
+                  case .routeMedia(let mediaItem) = photoItems[index],
+                  mediaItem.isLivePhoto else {
+                return nil
+            }
+            return .photo(mediaItem.asset)
+        case .collage:
+            let livePhotoSources = selectedCollageLivePhotoSources().prefix(1).map { source in
+                CollageLivePhotoExportSource(asset: source.asset, tileIndex: source.tileIndex)
+            }
+            guard !livePhotoSources.isEmpty else {
+                return nil
+            }
+            return .collage(livePhotoSources)
+        case .map:
             return nil
         }
-
-        return mediaItem.asset
     }
 
-    private func exportAndShareLivePhoto(asset: PHAsset) {
+    private func exportAndShareLivePhoto(source: LivePhotoExportSource) {
         selectedPreviewModule = nil
         updatePreviewSelection()
         showExportLoading(text: AppLocalization.text(.livePhotoSaving))
         view.layoutIfNeeded()
         let outputSize = RouteSharePreviewRenderer.outputPixelSize(for: previewView.bounds.size)
-        let overlayImage = RouteSharePreviewRenderer.overlayImage(
-            from: previewView,
-            backgroundViews: [
-                mapContainerView,
-                previewImageView,
-                previewLivePhotoView,
-                previewPlaceholderView
-            ],
-            outputSize: outputSize,
-            setSelectionChromeHidden: setSelectionChromeHidden,
-            restoreSelection: updatePreviewSelection
-        )
-
-        livePhotoExporter.export(
-            asset: asset,
-            overlayImage: overlayImage,
-            outputSize: outputSize,
-            backgroundTransform: currentBackgroundRenderTransform(outputSize: outputSize)
-        ) { [weak self] result in
+        let completion: (Result<RouteShareLivePhotoExport, Error>) -> Void = { [weak self] result in
             guard let self else {
                 return
             }
@@ -1892,13 +2573,60 @@ final class WorkoutRouteShareViewController: UIViewController {
                     case .success:
                         showSavedToPhotosAlert()
                     case .failure(let error):
-                        showAlert(title: AppLocalization.text(.share), message: error.localizedDescription)
+                        showAlert(title: AppLocalization.text(.share), message: detailedErrorMessage(error))
                     }
                 }
             case .failure(let error):
                 hideExportLoading()
-                showAlert(title: AppLocalization.text(.share), message: error.localizedDescription)
+                showAlert(title: AppLocalization.text(.share), message: detailedErrorMessage(error))
             }
+        }
+
+        switch source {
+        case .photo(let asset):
+            let overlayImage = RouteSharePreviewRenderer.overlayImage(
+                from: previewView,
+                backgroundViews: [
+                    mapContainerView,
+                    previewImageView,
+                    previewLivePhotoView,
+                    collageView,
+                    previewPlaceholderView
+                ],
+                outputSize: outputSize,
+                setSelectionChromeHidden: setSelectionChromeHidden,
+                restoreSelection: updatePreviewSelection
+            )
+            livePhotoExporter.export(
+                asset: asset,
+                overlayImage: overlayImage,
+                outputSize: outputSize,
+                backgroundTransform: currentBackgroundRenderTransform(outputSize: outputSize),
+                includesAudio: true,
+                completion: completion
+            )
+        case .collage(let sources):
+            guard let source = sources.first else {
+                completion(.failure(RouteShareLivePhotoExportError.missingResources))
+                return
+            }
+
+            let overlayImage = collageLivePhotoOverlayImage(
+                hidingTilesAt: [source.tileIndex],
+                outputSize: outputSize
+            )
+            livePhotoExporter.export(
+                asset: source.asset,
+                overlayImage: overlayImage,
+                outputSize: outputSize,
+                backgroundTransform: collageLivePhotoBackgroundTransform(
+                    asset: source.asset,
+                    tileIndex: source.tileIndex,
+                    outputSize: outputSize
+                ),
+                includesAudio: true,
+                completion: completion
+            )
         }
     }
 
@@ -1920,6 +2648,115 @@ final class WorkoutRouteShareViewController: UIViewController {
             ),
             rotation: backgroundMediaRotation
         )
+    }
+
+    private func collageLivePhotoOverlayImage(
+        hidingTilesAt tileIndices: [Int],
+        outputSize: CGSize
+    ) -> UIImage {
+        let previewBackgroundColor = previewView.backgroundColor
+        let collageBackgroundColor = collageView.backgroundColor
+        let tileHiddenStates = tileIndices.map { tileIndex in
+            (tileIndex, collageView.isTileHiddenForRendering(at: tileIndex))
+        }
+        let livePhotoWasHidden = collageView.isLivePhotoPlaybackHiddenForRendering
+
+        collageView.backgroundColor = .clear
+        previewView.backgroundColor = .clear
+        setSelectionChromeHidden(true)
+        preparePreviewForExportCapture()
+
+        tileIndices.forEach { tileIndex in
+            collageView.setTileHiddenForRendering(at: tileIndex, hidden: true)
+        }
+        collageView.setLivePhotoPlaybackHiddenForRendering(true)
+        CATransaction.flush()
+        defer {
+            tileHiddenStates.forEach { tileIndex, wasHidden in
+                collageView.setTileHiddenForRendering(at: tileIndex, hidden: wasHidden)
+            }
+            collageView.setLivePhotoPlaybackHiddenForRendering(livePhotoWasHidden)
+            collageView.backgroundColor = collageBackgroundColor
+            previewView.backgroundColor = previewBackgroundColor
+            setSelectionChromeHidden(false)
+            updatePreviewSelection()
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: outputSize, format: format).image { _ in
+            previewView.drawHierarchy(
+                in: CGRect(origin: .zero, size: outputSize),
+                afterScreenUpdates: false
+            )
+        }
+    }
+
+    private func preparePreviewForExportCapture() {
+        previewView.setNeedsLayout()
+        previewView.layoutIfNeeded()
+        previewView.layer.setNeedsDisplay()
+        previewView.layer.displayIfNeeded()
+        CATransaction.flush()
+    }
+
+    private func collageLivePhotoBackgroundTransform(
+        asset: PHAsset,
+        tileIndex: Int,
+        outputSize: CGSize
+    ) -> RouteShareBackgroundRenderTransform {
+        guard previewView.bounds.width > 0,
+              let renderInfo = collageView.renderInfoForTile(at: tileIndex) else {
+            return RouteShareBackgroundRenderTransform(scale: 1, translation: .zero, rotation: 0)
+        }
+
+        let outputScale = outputSize.width / previewView.bounds.width
+        let tileFrameInPreview = collageView.convert(renderInfo.tileFrame, to: previewView)
+        let tileFrame = CGRect(
+            x: tileFrameInPreview.minX * outputScale,
+            y: tileFrameInPreview.minY * outputScale,
+            width: tileFrameInPreview.width * outputScale,
+            height: tileFrameInPreview.height * outputScale
+        )
+        let sourceSize = CGSize(width: asset.pixelWidth, height: asset.pixelHeight)
+        let tileBaseSize = aspectFillSize(for: sourceSize, in: tileFrame.size)
+        let outputBaseSize = aspectFillSize(for: sourceSize, in: outputSize)
+        guard outputBaseSize.width > 0,
+              outputBaseSize.height > 0 else {
+            return RouteShareBackgroundRenderTransform(scale: 1, translation: .zero, rotation: 0)
+        }
+
+        let liveScale = (tileBaseSize.width * renderInfo.cropScale) / outputBaseSize.width
+        let liveCenter = CGPoint(
+            x: tileFrame.midX + renderInfo.cropTranslation.x * outputScale,
+            y: tileFrame.midY + renderInfo.cropTranslation.y * outputScale
+        )
+        return RouteShareBackgroundRenderTransform(
+            scale: liveScale,
+            translation: CGPoint(
+                x: liveCenter.x - outputSize.width / 2,
+                y: liveCenter.y - outputSize.height / 2
+            ),
+            rotation: renderInfo.cropRotation
+        )
+    }
+
+    private func collageLivePhotoClippingPath(
+        tileIndex: Int,
+        outputSize: CGSize
+    ) -> UIBezierPath? {
+        guard previewView.bounds.width > 0,
+              let renderInfo = collageView.renderInfoForTile(at: tileIndex),
+              let path = renderInfo.tilePath.copy() as? UIBezierPath else {
+            return nil
+        }
+
+        let outputScale = outputSize.width / previewView.bounds.width
+        let collageOrigin = collageView.convert(CGPoint.zero, to: previewView)
+        path.apply(CGAffineTransform(translationX: collageOrigin.x, y: collageOrigin.y))
+        path.apply(CGAffineTransform(scaleX: outputScale, y: outputScale))
+        return path
     }
 
     private func showExportLoading(text: String) {
@@ -1959,16 +2796,25 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func setSelectionChromeHidden(_ hidden: Bool) {
-        routeSelectionBorderLayer.isHidden = hidden
-        routeDeleteCornerButton.isHidden = hidden
-        metricsSelectionBorderLayer.isHidden = hidden
-        metricsDeleteCornerButton.isHidden = hidden
+        isExportChromeHidden = hidden
+        if hidden {
+            [routeSelectionBorderLayer, metricsSelectionBorderLayer].forEach { borderLayer in
+                borderLayer.isHidden = true
+                borderLayer.removeFromSuperlayer()
+            }
+            [routeDeleteCornerButton, metricsDeleteCornerButton].forEach { deleteButton in
+                deleteButton.isHidden = true
+            }
+        } else {
+            updatePreviewSelection()
+        }
+        collageView.setCropSelectionChromeHidden(hidden)
     }
 }
 
 extension WorkoutRouteShareViewController: UICollectionViewDataSource {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        photoItems.count + 2
+        photoItems.count + 2 + (isCollageEntranceVisible ? 1 : 0)
     }
 
     func collectionView(
@@ -1984,7 +2830,9 @@ extension WorkoutRouteShareViewController: UICollectionViewDataSource {
             return cell
         }
 
-        if indexPath.item == 0 {
+        let item = photoBrowserItem(at: indexPath.item)
+        switch item {
+        case .map:
             let isSelected: Bool
             if case .map = previewBackground {
                 isSelected = true
@@ -1992,31 +2840,136 @@ extension WorkoutRouteShareViewController: UICollectionViewDataSource {
                 isSelected = false
             }
             cell.configureMap(isSelected: isSelected)
-        } else if indexPath.item == photoItems.count + 1 {
+        case .collage:
+            let isSelected: Bool
+            if case .collage = previewBackground {
+                isSelected = true
+            } else {
+                isSelected = false
+            }
+            cell.configureCollage(isSelected: isSelected)
+        case .add:
             cell.configureAdd()
-        } else {
-            let photoIndex = indexPath.item - 1
-            let item = photoItems[photoIndex]
-            switch item {
+        case .photo(let photoIndex):
+            let photoItem = photoItems[photoIndex]
+            let isSelected = isPhotoSelectedInBrowser(at: photoIndex)
+            switch photoItem {
             case .routeMedia(let mediaItem):
-                cell.configure(asset: mediaItem.asset, isSelected: selectedPhotoIndex == photoIndex)
+                cell.configure(asset: mediaItem.asset, isSelected: isSelected)
             case .uploaded(let image):
-                cell.configure(image: image, isSelected: selectedPhotoIndex == photoIndex)
+                cell.configure(image: image, isSelected: isSelected)
             }
         }
+        cell.setDisabled(isPhotoBrowserItemDisabled(item))
 
         return cell
+    }
+
+    private enum PhotoBrowserItem {
+        case map
+        case collage
+        case photo(Int)
+        case add
+    }
+
+    private var isCollageEntranceVisible: Bool {
+        photoItems.count >= 2
+    }
+
+    private func photoBrowserItem(at item: Int) -> PhotoBrowserItem {
+        if item == 0 {
+            return .map
+        }
+
+        if isCollageEntranceVisible {
+            if item == 1 {
+                return .collage
+            }
+
+            let photoIndex = item - 2
+            return photoItems.indices.contains(photoIndex) ? .photo(photoIndex) : .add
+        }
+
+        let photoIndex = item - 1
+        return photoItems.indices.contains(photoIndex) ? .photo(photoIndex) : .add
+    }
+
+    private func isPhotoBrowserItemDisabled(_ item: PhotoBrowserItem) -> Bool {
+        if case .collage = previewBackground,
+           case .photo(let photoIndex) = item {
+            return isCollageLivePhotoDisabled(at: photoIndex)
+        }
+
+        return false
+    }
+
+    private func isPhotoSelectedInBrowser(at index: Int) -> Bool {
+        if case .collage = previewBackground {
+            return collagePhotoIndices.contains(index)
+        }
+
+        return selectedPhotoIndex == index
+    }
+
+    private func updateVisiblePhotoBrowserCellStates() {
+        for indexPath in photoCollectionView.indexPathsForVisibleItems {
+            guard let cell = photoCollectionView.cellForItem(at: indexPath) as? RouteSharePhotoCell else {
+                continue
+            }
+
+            let item = photoBrowserItem(at: indexPath.item)
+            let isSelected: Bool
+            switch item {
+            case .map:
+                if case .map = previewBackground {
+                    isSelected = true
+                } else {
+                    isSelected = false
+                }
+            case .collage:
+                if case .collage = previewBackground {
+                    isSelected = true
+                } else {
+                    isSelected = false
+                }
+            case .photo(let index):
+                isSelected = isPhotoSelectedInBrowser(at: index)
+            case .add:
+                isSelected = false
+            }
+
+            cell.setSelectionHighlighted(isSelected)
+            cell.setDisabled(isPhotoBrowserItemDisabled(item))
+        }
     }
 }
 
 extension WorkoutRouteShareViewController: UICollectionViewDelegate {
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        if indexPath.item == 0 {
-            selectMapBackground()
-        } else if indexPath.item == photoItems.count + 1 {
+        let item = photoBrowserItem(at: indexPath.item)
+        guard !isPhotoBrowserItemDisabled(item) else {
+            if case .collage = previewBackground,
+               case .photo(let photoIndex) = item,
+               photoItems.indices.contains(photoIndex),
+               photoItems[photoIndex].isLivePhoto {
+                showCollageSingleLivePhotoLimitToast()
+            }
+            return
+        }
+
+        switch item {
+        case .map:
+            toggleMapBackground()
+        case .collage:
+            toggleCollageBackground()
+        case .add:
             presentPhotoPicker()
-        } else {
-            selectPhoto(at: indexPath.item - 1)
+        case .photo(let photoIndex):
+            if case .collage = previewBackground {
+                toggleCollagePhoto(at: photoIndex)
+            } else {
+                selectPhoto(at: photoIndex)
+            }
         }
     }
 }
@@ -2069,6 +3022,7 @@ extension WorkoutRouteShareViewController: PHPickerViewControllerDelegate {
                     }
                     self.photoCollectionView.reloadData()
                     self.updatePreviewPhoto()
+                    self.updateToolBarVisibility()
                 }
             }
         }
@@ -2076,6 +3030,15 @@ extension WorkoutRouteShareViewController: PHPickerViewControllerDelegate {
 }
 
 extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === navigationController?.interactivePopGestureRecognizer
+            || gestureRecognizer === interactivePopBlockerGesture {
+            return false
+        }
+
+        return true
+    }
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard gestureRecognizer.view === previewView else {
             return true
@@ -2083,7 +3046,7 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
 
         if isPreviewModuleGesture(gestureRecognizer) {
             if selectedPreviewModule != nil {
-                return !interactivePreviewElementContains(touch)
+                return !interactivePreviewElementContains(touch, includesCollageInteractions: false)
             }
 
             guard isBackgroundAdjustmentEnabled else {
@@ -2101,17 +3064,39 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
         return true
     }
 
-    private func interactivePreviewElementContains(_ touch: UITouch) -> Bool {
+    private func interactivePreviewElementContains(
+        _ touch: UITouch,
+        includesCollageInteractions: Bool = true
+    ) -> Bool {
         let touchLocation = touch.location(in: previewView)
+        if includesCollageInteractions,
+           case .collage = previewBackground,
+           !collageView.isHidden {
+            let collageLocation = touch.location(in: collageView)
+            if collageView.containsAdjustableDivider(at: collageLocation)
+                || collageView.containsAdjustableTile(at: collageLocation) {
+                return true
+            }
+        }
+
         let interactiveElementViews: [UIView] = [
-            routeModuleView,
-            metricsModuleView,
             routeDeleteCornerButton,
             metricsDeleteCornerButton,
             brandPillView
         ]
-        return interactiveElementViews.contains { elementView in
+        if interactiveElementViews.contains(where: { elementView in
             !elementView.isHidden && elementView.frame.contains(touchLocation)
+        }) {
+            return true
+        }
+
+        let moduleViews = [routeModuleView, metricsModuleView]
+        return moduleViews.contains { moduleView in
+            guard !moduleView.isHidden else {
+                return false
+            }
+            let moduleLocation = previewView.convert(touchLocation, to: moduleView)
+            return selectionChromeRect(for: moduleView).contains(moduleLocation)
         }
     }
 
@@ -2143,6 +3128,20 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
         let moduleViews = [routeModuleView, metricsModuleView]
         return moduleViews.contains { $0 === gestureView }
             && moduleViews.contains { $0 === otherGestureView }
+    }
+
+    private func detailedErrorMessage(_ error: Error) -> String {
+        #if DEBUG
+        let nsError = error as NSError
+        return """
+        \(nsError.localizedDescription)
+
+        \(nsError.domain)(\(nsError.code))
+        \(nsError.userInfo)
+        """
+        #else
+        return error.localizedDescription
+        #endif
     }
 }
 

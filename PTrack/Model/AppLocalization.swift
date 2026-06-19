@@ -35,6 +35,9 @@ enum AppTextKey: String {
     case appDefault
     case activitySummaryPrefix
     case cancel
+    case collage
+    case collageSingleLivePhotoLimit
+    case collageStyle
     case color
     case cycling
     case dark
@@ -166,6 +169,7 @@ enum AppTextKey: String {
     case durationHoursFormat
     case durationHoursMinutesFormat
     case durationMinutesFormat
+    case elevationGainFormat
 }
 
 final class AppLanguageStore {
@@ -221,6 +225,9 @@ enum AppLocalization {
             .appDefault: "默认",
             .activitySummaryPrefix: "运动",
             .cancel: "取消",
+            .collage: "拼图",
+            .collageSingleLivePhotoLimit: "拼图模式只允许加入一张 Live 图",
+            .collageStyle: "样式",
             .color: "颜色",
             .cycling: "骑行",
             .dark: "暗色",
@@ -351,7 +358,8 @@ enum AppLocalization {
             .burnedCaloriesFormat: "消耗 %.0f 大卡",
             .durationHoursFormat: "%d小时",
             .durationHoursMinutesFormat: "%d小时%d分钟",
-            .durationMinutesFormat: "%d分钟"
+            .durationMinutesFormat: "%d分钟",
+            .elevationGainFormat: "爬升 %.0f 米"
         ],
         .japanese: [
             .all: "すべて",
@@ -361,6 +369,9 @@ enum AppLocalization {
             .appDefault: "デフォルト",
             .activitySummaryPrefix: "運動",
             .cancel: "キャンセル",
+            .collage: "コラージュ",
+            .collageSingleLivePhotoLimit: "コラージュモードでは Live Photo は1枚だけ追加できます",
+            .collageStyle: "レイアウト",
             .color: "カラー",
             .cycling: "サイクリング",
             .dark: "ダーク",
@@ -491,7 +502,8 @@ enum AppLocalization {
             .burnedCaloriesFormat: "%.0f kcal 消費",
             .durationHoursFormat: "%d時間",
             .durationHoursMinutesFormat: "%d時間%d分",
-            .durationMinutesFormat: "%d分"
+            .durationMinutesFormat: "%d分",
+            .elevationGainFormat: "獲得標高 %.0f m"
         ],
         .korean: [
             .all: "전체",
@@ -501,6 +513,9 @@ enum AppLocalization {
             .appDefault: "기본",
             .activitySummaryPrefix: "운동",
             .cancel: "취소",
+            .collage: "콜라주",
+            .collageSingleLivePhotoLimit: "콜라주 모드에서는 Live Photo를 한 장만 추가할 수 있어요",
+            .collageStyle: "레이아웃",
             .color: "색상",
             .cycling: "사이클링",
             .dark: "어두운",
@@ -631,7 +646,8 @@ enum AppLocalization {
             .burnedCaloriesFormat: "%.0f kcal 소비",
             .durationHoursFormat: "%d시간",
             .durationHoursMinutesFormat: "%d시간 %d분",
-            .durationMinutesFormat: "%d분"
+            .durationMinutesFormat: "%d분",
+            .elevationGainFormat: "상승 %.0f m"
         ],
         .english: [
             .all: "All",
@@ -641,6 +657,9 @@ enum AppLocalization {
             .appDefault: "Default",
             .activitySummaryPrefix: "Activity",
             .cancel: "Cancel",
+            .collage: "Collage",
+            .collageSingleLivePhotoLimit: "Collage mode allows only one Live Photo",
+            .collageStyle: "Layout",
             .color: "Color",
             .cycling: "Cycling",
             .dark: "Dark",
@@ -771,7 +790,8 @@ enum AppLocalization {
             .burnedCaloriesFormat: "Burned %.0f kcal",
             .durationHoursFormat: "%d hr",
             .durationHoursMinutesFormat: "%d hr %d min",
-            .durationMinutesFormat: "%d min"
+            .durationMinutesFormat: "%d min",
+            .elevationGainFormat: "Gain %.0f m"
         ]
     ]
 }

@@ -12,9 +12,12 @@ final class RouteShareToolBarView: UIView {
     let colorButton = UIButton(type: .system)
     let aspectRatioButton = UIButton(type: .system)
     let mapStyleButton = UIButton(type: .system)
+    let collageButton = UIButton(type: .system)
+    let collageStyleButton = UIButton(type: .system)
     let deleteButton = UIButton(type: .system)
     let addRouteButton = UIButton(type: .system)
     let addMetricsButton = UIButton(type: .system)
+    let livePhotoButton = UIButton(type: .system)
 
     private let stackView = UIStackView()
 
@@ -37,9 +40,12 @@ final class RouteShareToolBarView: UIView {
             colorButton,
             aspectRatioButton,
             mapStyleButton,
+            collageButton,
+            collageStyleButton,
             deleteButton,
             addRouteButton,
-            addMetricsButton
+            addMetricsButton,
+            livePhotoButton
         ].filter { !$0.isHidden }.count
     }
 
@@ -58,9 +64,12 @@ final class RouteShareToolBarView: UIView {
             colorButton,
             aspectRatioButton,
             mapStyleButton,
+            collageButton,
+            collageStyleButton,
             deleteButton,
             addRouteButton,
-            addMetricsButton
+            addMetricsButton,
+            livePhotoButton
         ].forEach(stackView.addArrangedSubview)
 
         stackView.snp.makeConstraints { make in

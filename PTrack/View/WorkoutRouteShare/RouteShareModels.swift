@@ -16,6 +16,7 @@ enum RouteSharePreviewModule {
 enum RouteSharePreviewBackground {
     case map
     case photo(Int)
+    case collage
 }
 
 enum RouteShareCanvasAspectRatio: CaseIterable {

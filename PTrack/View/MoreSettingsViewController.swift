@@ -71,7 +71,7 @@ final class MoreSettingsViewController: UIViewController {
         var iconName: String {
             switch self {
             case .appLanguage:
-                return "globe"
+                return "translate"
             case .iCloudRouteSync:
                 return "icloud"
             case .appleHealth:

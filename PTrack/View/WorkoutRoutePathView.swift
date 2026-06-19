@@ -87,6 +87,17 @@ final class WorkoutRoutePathView: UIView {
         shapeLayer.lineWidth = width
     }
 
+    func renderedContentBounds() -> CGRect? {
+        guard let path = shapeLayer.path else {
+            return nil
+        }
+
+        let strokePadding = max(lineWidth / 2 + 4, 5)
+        let contentBounds = path.boundingBoxOfPath.insetBy(dx: -strokePadding, dy: -strokePadding)
+        let clippedBounds = contentBounds.intersection(bounds)
+        return clippedBounds.isNull || clippedBounds.isEmpty ? nil : clippedBounds
+    }
+
     static func prewarmSource(for workout: TrackedWorkout) {
         loadSource(for: workout, priority: .low, completion: nil)
     }

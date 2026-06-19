@@ -15,12 +15,38 @@ final class RouteShareLivePhotoExporter {
     private struct LoadedLivePhotoVideo {
         let videoTrack: AVAssetTrack
         let audioTrack: AVAssetTrack?
-        let metadataTracks: [AVAssetTrack]
-        let metadata: [AVMetadataItem]
+        let videoTimeRange: CMTimeRange
+        let audioTimeRange: CMTimeRange?
         let duration: CMTime
         let naturalSize: CGSize
         let preferredTransform: CGAffineTransform
         let nominalFrameRate: Float
+    }
+
+    private final class SampleCopyPipeline: @unchecked Sendable {
+        nonisolated(unsafe) let output: AVAssetReaderOutput
+        nonisolated(unsafe) let input: AVAssetWriterInput
+
+        nonisolated init(output: AVAssetReaderOutput, input: AVAssetWriterInput) {
+            self.output = output
+            self.input = input
+        }
+    }
+
+    private final class SampleCopyContext: @unchecked Sendable {
+        let pipelines: [SampleCopyPipeline]
+        nonisolated(unsafe) let readers: [AVAssetReader]
+        nonisolated(unsafe) let writer: AVAssetWriter
+
+        nonisolated init(
+            pipelines: [SampleCopyPipeline],
+            readers: [AVAssetReader],
+            writer: AVAssetWriter
+        ) {
+            self.pipelines = pipelines
+            self.readers = readers
+            self.writer = writer
+        }
     }
 
     func export(
@@ -28,6 +54,7 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        includesAudio: Bool = true,
         completion: @escaping (Result<RouteShareLivePhotoExport, Error>) -> Void
     ) {
         let resources = PHAssetResource.assetResources(for: asset)
@@ -69,6 +96,7 @@ final class RouteShareLivePhotoExporter {
                                     overlayImage: overlayImage,
                                     outputSize: outputSize,
                                     backgroundTransform: backgroundTransform,
+                                    includesAudio: includesAudio,
                                     contentIdentifier: contentIdentifier,
                                     sourceVideoURL: sourceVideoURL,
                                     photoURL: photoURL,
@@ -97,6 +125,7 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        includesAudio: Bool,
         contentIdentifier: String,
         sourceVideoURL: URL,
         photoURL: URL,
@@ -122,6 +151,7 @@ final class RouteShareLivePhotoExporter {
                 overlayImage: overlayImage,
                 outputSize: outputSize,
                 backgroundTransform: backgroundTransform,
+                includesAudio: includesAudio,
                 contentIdentifier: contentIdentifier
             ) { videoResult in
                 switch videoResult {
@@ -210,7 +240,7 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
-    private func writeLivePhotoJPEG(
+    nonisolated private func writeLivePhotoJPEG(
         _ image: UIImage,
         contentIdentifier: String,
         to url: URL
@@ -243,6 +273,7 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        includesAudio: Bool,
         contentIdentifier: String,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
@@ -260,6 +291,7 @@ final class RouteShareLivePhotoExporter {
                     overlayImage: overlayImage,
                     outputSize: outputSize,
                     backgroundTransform: backgroundTransform,
+                    includesAudio: includesAudio,
                     contentIdentifier: contentIdentifier,
                     completion: completion
                 )
@@ -271,16 +303,16 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
-    private func loadedLivePhotoVideo(from sourceAsset: AVAsset) async throws -> LoadedLivePhotoVideo {
+    nonisolated private func loadedLivePhotoVideo(from sourceAsset: AVAsset) async throws -> LoadedLivePhotoVideo {
         let videoTracks = try await sourceAsset.loadTracks(withMediaType: .video)
         guard let videoTrack = videoTracks.first else {
             throw RouteShareLivePhotoExportError.missingResources
         }
 
         let audioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
-        let metadataTracks = try await sourceAsset.loadTracks(withMediaType: .metadata)
-        let metadata = try await sourceAsset.load(.metadata)
         let duration = try await sourceAsset.load(.duration)
+        let videoTimeRange = try await videoTrack.load(.timeRange)
+        let audioTimeRange = try await audioTracks.first?.load(.timeRange)
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
@@ -288,9 +320,9 @@ final class RouteShareLivePhotoExporter {
         return LoadedLivePhotoVideo(
             videoTrack: videoTrack,
             audioTrack: audioTracks.first,
-            metadataTracks: metadataTracks,
-            metadata: metadata,
-            duration: duration,
+            videoTimeRange: videoTimeRange,
+            audioTimeRange: audioTimeRange,
+            duration: minTime(duration, videoTimeRange.duration),
             naturalSize: naturalSize,
             preferredTransform: preferredTransform,
             nominalFrameRate: nominalFrameRate
@@ -303,6 +335,7 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        includesAudio: Bool,
         contentIdentifier: String,
         completion: @escaping (Result<Void, Error>) -> Void
     ) async throws {
@@ -341,34 +374,24 @@ final class RouteShareLivePhotoExporter {
             at: .zero
         )
         try compositionVideoTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: loadedVideo.duration),
+            CMTimeRange(start: loadedVideo.videoTimeRange.start, duration: loadedVideo.duration),
             of: loadedVideo.videoTrack,
             at: .zero
         )
-        if let sourceAudioTrack = loadedVideo.audioTrack,
+        if includesAudio,
+           let sourceAudioTrack = loadedVideo.audioTrack,
+           let sourceAudioTimeRange = loadedVideo.audioTimeRange,
            let compositionAudioTrack = composition.addMutableTrack(
                 withMediaType: .audio,
                 preferredTrackID: kCMPersistentTrackID_Invalid
            ) {
+            let audioDuration = minTime(sourceAudioTimeRange.duration, loadedVideo.duration)
             try compositionAudioTrack.insertTimeRange(
-                CMTimeRange(start: .zero, duration: loadedVideo.duration),
+                CMTimeRange(start: sourceAudioTimeRange.start, duration: audioDuration),
                 of: sourceAudioTrack,
                 at: .zero
             )
         }
-        for metadataTrack in loadedVideo.metadataTracks {
-            if let compositionMetadataTrack = composition.addMutableTrack(
-                withMediaType: .metadata,
-                preferredTrackID: kCMPersistentTrackID_Invalid
-            ) {
-                try compositionMetadataTrack.insertTimeRange(
-                    CMTimeRange(start: .zero, duration: loadedVideo.duration),
-                    of: metadataTrack,
-                    at: .zero
-                )
-            }
-        }
-
         let videoComposition = makeVideoComposition(
             compositionVideoTrack: compositionVideoTrack,
             compositionBackgroundTrack: compositionBackgroundTrack,
@@ -381,6 +404,10 @@ final class RouteShareLivePhotoExporter {
             nominalFrameRate: loadedVideo.nominalFrameRate
         )
 
+        let renderedVideoURL = outputVideoURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("rendered-live-photo.mov")
+        try? FileManager.default.removeItem(at: renderedVideoURL)
         try? FileManager.default.removeItem(at: outputVideoURL)
         guard let exportSession = AVAssetExportSession(
             asset: composition,
@@ -391,13 +418,14 @@ final class RouteShareLivePhotoExporter {
 
         exportSession.shouldOptimizeForNetworkUse = true
         exportSession.videoComposition = videoComposition
-        exportSession.metadata = livePhotoMetadata(
-            from: loadedVideo.metadata,
-            contentIdentifier: contentIdentifier
-        )
 
         do {
-            try await exportSession.export(to: outputVideoURL, as: .mov)
+            try await exportSession.export(to: renderedVideoURL, as: .mov)
+            try await writeLivePhotoPairedVideo(
+                from: renderedVideoURL,
+                to: outputVideoURL,
+                contentIdentifier: contentIdentifier
+            )
             DispatchQueue.main.async {
                 completion(.success(()))
             }
@@ -408,7 +436,226 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
-    private func writeWhiteBackgroundVideo(
+    nonisolated private func writeLivePhotoPairedVideo(
+        from renderedVideoURL: URL,
+        to outputVideoURL: URL,
+        contentIdentifier: String
+    ) async throws {
+        try? FileManager.default.removeItem(at: outputVideoURL)
+
+        let asset = AVAsset(url: renderedVideoURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        guard let videoTrack = videoTracks.first else {
+            throw RouteShareLivePhotoExportError.missingResources
+        }
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        let videoFormatDescriptions = try await videoTrack.load(.formatDescriptions)
+
+        let reader = try AVAssetReader(asset: asset)
+        let writer = try AVAssetWriter(outputURL: outputVideoURL, fileType: .mov)
+        writer.shouldOptimizeForNetworkUse = true
+        writer.metadata = livePhotoMetadata(contentIdentifier: contentIdentifier)
+
+        let videoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: nil)
+        videoOutput.alwaysCopiesSampleData = false
+        let videoInput = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: nil,
+            sourceFormatHint: videoFormatDescriptions.first
+        )
+        videoInput.expectsMediaDataInRealTime = false
+        videoInput.transform = .identity
+        guard reader.canAdd(videoOutput), writer.canAdd(videoInput) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+        reader.add(videoOutput)
+        writer.add(videoInput)
+
+        var samplePipelines: [(AVAssetReaderOutput, AVAssetWriterInput)] = [(videoOutput, videoInput)]
+        for audioTrack in audioTracks {
+            let audioFormatDescriptions = try await audioTrack.load(.formatDescriptions)
+            let audioOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+            audioOutput.alwaysCopiesSampleData = false
+            let audioInput = AVAssetWriterInput(
+                mediaType: .audio,
+                outputSettings: nil,
+                sourceFormatHint: audioFormatDescriptions.first
+            )
+            audioInput.expectsMediaDataInRealTime = false
+            if reader.canAdd(audioOutput), writer.canAdd(audioInput) {
+                reader.add(audioOutput)
+                writer.add(audioInput)
+                samplePipelines.append((audioOutput, audioInput))
+            }
+        }
+
+        let metadataAdaptor = try makeStillImageTimeMetadataAdaptor(for: writer)
+
+        do {
+            guard writer.startWriting() else {
+                throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+            }
+            guard reader.startReading() else {
+                writer.cancelWriting()
+                throw reader.error ?? RouteShareLivePhotoExportError.renderingFailed
+            }
+
+            writer.startSession(atSourceTime: .zero)
+            try appendStillImageTimeMetadata(using: metadataAdaptor)
+            try await copySamplePipelines(samplePipelines, readers: [reader], writer: writer)
+
+            await withCheckedContinuation { continuation in
+                writer.finishWriting {
+                    continuation.resume()
+                }
+            }
+
+            if reader.status == .failed || reader.status == .cancelled {
+                throw reader.error ?? RouteShareLivePhotoExportError.renderingFailed
+            }
+            guard writer.status == .completed else {
+                throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+            }
+        } catch {
+            logAssetCopyFailure(error, reader: reader, writer: writer, context: "paired-video-write")
+            throw error
+        }
+    }
+
+    nonisolated private func makeStillImageTimeMetadataAdaptor(
+        for writer: AVAssetWriter
+    ) throws -> AVAssetWriterInputMetadataAdaptor {
+        let metadataSpecification: [String: Any] = [
+            kCMMetadataFormatDescriptionMetadataSpecificationKey_Identifier as String:
+                "mdta/com.apple.quicktime.still-image-time",
+            kCMMetadataFormatDescriptionMetadataSpecificationKey_DataType as String:
+                kCMMetadataBaseDataType_SInt8
+        ]
+        var formatDescription: CMFormatDescription?
+        let status = CMMetadataFormatDescriptionCreateWithMetadataSpecifications(
+            allocator: kCFAllocatorDefault,
+            metadataType: kCMMetadataFormatType_Boxed,
+            metadataSpecifications: [metadataSpecification] as CFArray,
+            formatDescriptionOut: &formatDescription
+        )
+        guard status == noErr, let formatDescription else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        let metadataInput = AVAssetWriterInput(
+            mediaType: .metadata,
+            outputSettings: nil,
+            sourceFormatHint: formatDescription
+        )
+        metadataInput.expectsMediaDataInRealTime = false
+        guard writer.canAdd(metadataInput) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+        writer.add(metadataInput)
+        return AVAssetWriterInputMetadataAdaptor(assetWriterInput: metadataInput)
+    }
+
+    nonisolated private func appendStillImageTimeMetadata(
+        using metadataAdaptor: AVAssetWriterInputMetadataAdaptor
+    ) throws {
+        let metadataInput = metadataAdaptor.assetWriterInput
+        while !metadataInput.isReadyForMoreMediaData {
+            Thread.sleep(forTimeInterval: 0.002)
+        }
+
+        let stillImageTimeItem = AVMutableMetadataItem()
+        stillImageTimeItem.keySpace = .quickTimeMetadata
+        stillImageTimeItem.key = "com.apple.quicktime.still-image-time" as NSString
+        stillImageTimeItem.value = 0 as NSNumber
+        stillImageTimeItem.dataType = kCMMetadataBaseDataType_SInt8 as String
+        let metadataGroup = AVTimedMetadataGroup(
+            items: [stillImageTimeItem],
+            timeRange: CMTimeRange(start: .zero, duration: CMTime(value: 1, timescale: 100))
+        )
+        guard metadataAdaptor.append(metadataGroup) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+        metadataInput.markAsFinished()
+    }
+
+    nonisolated private func copySamplePipelines(
+        _ samplePipelines: [(AVAssetReaderOutput, AVAssetWriterInput)],
+        readers: [AVAssetReader],
+        writer: AVAssetWriter
+    ) async throws {
+        let context = SampleCopyContext(
+            pipelines: samplePipelines.map { output, input in
+                SampleCopyPipeline(output: output, input: input)
+            },
+            readers: readers,
+            writer: writer
+        )
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let group = DispatchGroup()
+            let stateQueue = DispatchQueue(label: "com.ptrack.live-photo.sample-copy.state")
+            var firstError: Error?
+
+            func recordFailure(_ error: Error) {
+                stateQueue.sync {
+                    guard firstError == nil else {
+                        return
+                    }
+                    firstError = error
+                    context.readers.forEach { $0.cancelReading() }
+                    context.writer.cancelWriting()
+                }
+            }
+
+            for (index, pipeline) in context.pipelines.enumerated() {
+                let queue = DispatchQueue(label: "com.ptrack.live-photo.sample-copy.\(index)")
+                group.enter()
+                queue.async {
+                    defer {
+                        group.leave()
+                    }
+
+                    while true {
+                        if let failedReader = context.readers.first(where: { $0.status == .failed || $0.status == .cancelled }) {
+                            recordFailure(failedReader.error ?? RouteShareLivePhotoExportError.renderingFailed)
+                            return
+                        }
+                        if context.writer.status == .failed || context.writer.status == .cancelled {
+                            recordFailure(context.writer.error ?? RouteShareLivePhotoExportError.renderingFailed)
+                            return
+                        }
+
+                        guard pipeline.input.isReadyForMoreMediaData else {
+                            Thread.sleep(forTimeInterval: 0.002)
+                            continue
+                        }
+
+                        if let sampleBuffer = pipeline.output.copyNextSampleBuffer() {
+                            guard pipeline.input.append(sampleBuffer) else {
+                                recordFailure(context.writer.error ?? RouteShareLivePhotoExportError.renderingFailed)
+                                return
+                            }
+                        } else {
+                            pipeline.input.markAsFinished()
+                            return
+                        }
+                    }
+                }
+            }
+
+            group.notify(queue: .global(qos: .userInitiated)) {
+                stateQueue.sync {
+                    if let firstError {
+                        continuation.resume(throwing: firstError)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
+    nonisolated private func writeWhiteBackgroundVideo(
         to url: URL,
         outputSize: CGSize,
         duration: CMTime,
@@ -477,7 +724,7 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
-    private func makeWhitePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+    nonisolated private func makeWhitePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(
             kCFAllocatorDefault,
@@ -511,7 +758,39 @@ final class RouteShareLivePhotoExporter {
         return pixelBuffer
     }
 
-    private func makeVideoComposition(
+    nonisolated private func minTime(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {
+        CMTimeCompare(lhs, rhs) <= 0 ? lhs : rhs
+    }
+
+    nonisolated private func logAssetCopyFailure(
+        _ error: Error,
+        reader: AVAssetReader,
+        writer: AVAssetWriter,
+        context: String
+    ) {
+        let readerError = reader.error as NSError?
+        let writerError = writer.error as NSError?
+        print(
+            """
+            RouteShareLivePhotoExporter \(context) failed:
+            thrown=\(detailedErrorDescription(error))
+            readerStatus=\(reader.status.rawValue)
+            readerError=\(readerError.map(detailedNSErrorDescription) ?? "nil")
+            writerStatus=\(writer.status.rawValue)
+            writerError=\(writerError.map(detailedNSErrorDescription) ?? "nil")
+            """
+        )
+    }
+
+    nonisolated private func detailedErrorDescription(_ error: Error) -> String {
+        detailedNSErrorDescription(error as NSError)
+    }
+
+    nonisolated private func detailedNSErrorDescription(_ error: NSError) -> String {
+        "\(error.domain)(\(error.code)) \(error.localizedDescription) userInfo=\(error.userInfo)"
+    }
+
+    nonisolated private func makeVideoComposition(
         compositionVideoTrack: AVCompositionTrack,
         compositionBackgroundTrack: AVCompositionTrack,
         duration: CMTime,
@@ -575,7 +854,7 @@ final class RouteShareLivePhotoExporter {
         return videoComposition
     }
 
-    private func aspectFillTransform(
+    nonisolated private func aspectFillTransform(
         naturalSize: CGSize,
         preferredTransform: CGAffineTransform,
         outputSize: CGSize,
@@ -605,37 +884,19 @@ final class RouteShareLivePhotoExporter {
             .concatenating(CGAffineTransform(
                 translationX: outputSize.width / 2 + backgroundTransform.translation.x,
                 y: outputSize.height / 2 + backgroundTransform.translation.y
-            ))
+        ))
     }
 
-    private func livePhotoMetadata(
-        from metadata: [AVMetadataItem],
-        contentIdentifier: String
-    ) -> [AVMetadataItem] {
-        var updatedMetadata = metadata.filter { !isContentIdentifierMetadataItem($0) }
+    nonisolated private func livePhotoMetadata(contentIdentifier: String) -> [AVMetadataItem] {
         let contentIdentifierItem = AVMutableMetadataItem()
         contentIdentifierItem.keySpace = .quickTimeMetadata
         contentIdentifierItem.key = "com.apple.quicktime.content.identifier" as NSString
         contentIdentifierItem.value = contentIdentifier as NSString
         contentIdentifierItem.dataType = kCMMetadataBaseDataType_UTF8 as String
-        updatedMetadata.append(contentIdentifierItem)
-        return updatedMetadata
+        return [contentIdentifierItem]
     }
 
-    private func isContentIdentifierMetadataItem(_ item: AVMetadataItem) -> Bool {
-        if item.identifier?.rawValue.contains("com.apple.quicktime.content.identifier") == true {
-            return true
-        }
-        if let key = item.key as? String {
-            return key == "com.apple.quicktime.content.identifier"
-        }
-        if let key = item.key as? NSString {
-            return key as String == "com.apple.quicktime.content.identifier"
-        }
-        return false
-    }
-
-    private func drawAdjustedAspectFillImage(
+    nonisolated private func drawAdjustedAspectFillImage(
         _ image: UIImage,
         in bounds: CGRect,
         backgroundTransform: RouteShareBackgroundRenderTransform,
@@ -662,7 +923,7 @@ final class RouteShareLivePhotoExporter {
         context.restoreGState()
     }
 
-    private func aspectFillRect(for imageSize: CGSize, in bounds: CGRect) -> CGRect {
+    nonisolated private func aspectFillRect(for imageSize: CGSize, in bounds: CGRect) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return bounds
         }

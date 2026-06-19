@@ -28,6 +28,9 @@ enum RouteSharePhotoLibrarySaver {
                     if success {
                         completion(.success(()))
                     } else {
+                        if let error {
+                            print("RouteSharePhotoLibrarySaver saveImage failed: \(detailedErrorDescription(error))")
+                        }
                         completion(.failure(error ?? RouteShareLivePhotoExportError.photoLibrarySaveFailed))
                     }
                 }
@@ -56,10 +59,18 @@ enum RouteSharePhotoLibrarySaver {
                     if success {
                         completion(.success(()))
                     } else {
+                        if let error {
+                            print("RouteSharePhotoLibrarySaver saveLivePhoto failed: \(detailedErrorDescription(error))")
+                        }
                         completion(.failure(error ?? RouteShareLivePhotoExportError.photoLibrarySaveFailed))
                     }
                 }
             }
         }
+    }
+
+    private static func detailedErrorDescription(_ error: Error) -> String {
+        let nsError = error as NSError
+        return "\(nsError.domain)(\(nsError.code)) \(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
     }
 }
