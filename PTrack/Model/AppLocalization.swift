@@ -56,8 +56,11 @@ enum AppTextKey: String {
     case healthAuthorizationProgress
     case healthAuthorizationSettingsRequiredMessage
     case healthAuthorizationSettingsRequiredTitle
+    case healthAuthorizationTemporarilyUnavailable
     case healthDataReadAuthorized
     case healthDataUnavailable
+    case homeDataLoadingMessage
+    case homeNoWorkoutDataMessage
     case appleHealthDataSourceSubtitle
     case exportGPX
     case gpxExportFailed
@@ -246,8 +249,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "正在请求 Apple 健康体能训练、路线和运动指标读取权限...",
             .healthAuthorizationSettingsRequiredMessage: "请在系统设置或健康 App 中为 Movinn 打开体能训练、路线和运动指标读取权限。",
             .healthAuthorizationSettingsRequiredTitle: "需要 Apple 健康权限",
+            .healthAuthorizationTemporarilyUnavailable: "Apple 健康暂时还没准备好，请稍后重试。",
             .healthDataReadAuthorized: "已授权读取数据",
             .healthDataUnavailable: "当前设备不支持健康数据。",
+            .homeDataLoadingMessage: "数据加载中，请稍后...",
+            .homeNoWorkoutDataMessage: "没有查到你的数据，快出门运动吧！",
             .appleHealthDataSourceSubtitle: "读取 Apple 健康中记录的数据。",
             .exportGPX: "导出 GPX",
             .gpxExportFailed: "GPX 导出失败",
@@ -390,8 +396,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "Appleヘルスケアのワークアウト、ルート、運動指標の読み取り権限を要求しています...",
             .healthAuthorizationSettingsRequiredMessage: "システム設定またはヘルスケア App で、Movinn のワークアウト、ルート、運動指標の読み取り権限を有効にしてください。",
             .healthAuthorizationSettingsRequiredTitle: "Appleヘルスケアの権限が必要です",
+            .healthAuthorizationTemporarilyUnavailable: "Appleヘルスケアはまだ準備中です。少し時間をおいてもう一度お試しください。",
             .healthDataReadAuthorized: "データ読み取りは許可されています",
             .healthDataUnavailable: "このデバイスはヘルスケアデータに対応していません。",
+            .homeDataLoadingMessage: "データを読み込んでいます。しばらくお待ちください...",
+            .homeNoWorkoutDataMessage: "データが見つかりませんでした。外へ運動に出かけましょう！",
             .appleHealthDataSourceSubtitle: "Appleヘルスケアに記録されたデータを読み取ります。",
             .exportGPX: "GPXを書き出す",
             .gpxExportFailed: "GPXの書き出しに失敗しました",
@@ -534,8 +543,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "Apple 건강의 운동, 경로, 운동 지표 읽기 권한을 요청하는 중...",
             .healthAuthorizationSettingsRequiredMessage: "시스템 설정 또는 건강 앱에서 Movinn의 운동, 경로, 운동 지표 읽기 권한을 켜 주세요.",
             .healthAuthorizationSettingsRequiredTitle: "Apple 건강 권한 필요",
+            .healthAuthorizationTemporarilyUnavailable: "Apple 건강이 아직 준비되지 않았어요. 잠시 후 다시 시도해 주세요.",
             .healthDataReadAuthorized: "데이터 읽기 권한이 허용되었습니다",
             .healthDataUnavailable: "이 기기는 건강 데이터를 지원하지 않습니다.",
+            .homeDataLoadingMessage: "데이터를 불러오는 중입니다. 잠시만 기다려 주세요...",
+            .homeNoWorkoutDataMessage: "데이터를 찾지 못했어요. 밖으로 나가 운동해 볼까요!",
             .appleHealthDataSourceSubtitle: "Apple 건강에 기록된 데이터를 읽습니다.",
             .exportGPX: "GPX 내보내기",
             .gpxExportFailed: "GPX 내보내기 실패",
@@ -678,8 +690,11 @@ enum AppLocalization {
             .healthAuthorizationProgress: "Requesting Apple Health workout, route, and metric read permissions...",
             .healthAuthorizationSettingsRequiredMessage: "Enable workout, route, and metric read permissions for Movinn in system Settings or the Health app.",
             .healthAuthorizationSettingsRequiredTitle: "Apple Health Permission Required",
+            .healthAuthorizationTemporarilyUnavailable: "Apple Health is not ready yet. Please try again in a moment.",
             .healthDataReadAuthorized: "Data read access is authorized",
             .healthDataUnavailable: "Health data is not available on this device.",
+            .homeDataLoadingMessage: "Loading data, please wait...",
+            .homeNoWorkoutDataMessage: "No workout data found. Time to head out!",
             .appleHealthDataSourceSubtitle: "Read data recorded in Apple Health.",
             .exportGPX: "Export GPX",
             .gpxExportFailed: "GPX export failed",

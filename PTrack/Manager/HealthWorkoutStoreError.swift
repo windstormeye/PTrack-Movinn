@@ -10,6 +10,7 @@ import Foundation
 enum HealthWorkoutStoreError: LocalizedError {
     case healthDataUnavailable
     case authorizationDenied
+    case authorizationTemporarilyUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -17,6 +18,8 @@ enum HealthWorkoutStoreError: LocalizedError {
             return AppLocalization.text(.healthDataUnavailable)
         case .authorizationDenied:
             return AppLocalization.text(.healthAuthorizationDenied)
+        case .authorizationTemporarilyUnavailable:
+            return AppLocalization.text(.healthAuthorizationTemporarilyUnavailable)
         }
     }
 }

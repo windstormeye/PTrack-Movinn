@@ -10,7 +10,7 @@ import Foundation
 import HealthKit
 
 final class HealthWorkoutStore {
-    private let healthStore = HKHealthStore()
+    private lazy var healthStore = HKHealthStore()
     private let defaults: UserDefaults
 
     var progressHandler: ((String) -> Void)?
@@ -25,6 +25,8 @@ final class HealthWorkoutStore {
         static let authorizationRequested = "studio.pj.PTrack.health.authorizationRequested"
         static let authorizationNeedsAttention = "studio.pj.PTrack.health.authorizationNeedsAttention"
     }
+
+    private static let sourceLookupRetryDelays: [TimeInterval] = [0.35, 0.9, 1.6]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -171,12 +173,46 @@ final class HealthWorkoutStore {
         }
 
         let readTypes = Self.readTypes
+        requestAuthorization(readTypes: readTypes, attempt: 0, completion: completion)
+    }
 
-        print("PTrack HealthKit: requesting authorization on main thread: \(Thread.isMainThread), read type count: \(readTypes.count)")
-        progressHandler?(AppLocalization.text(.healthAuthorizationProgress))
+    private func requestAuthorization(
+        readTypes: Set<HKObjectType>,
+        attempt: Int,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        healthStore = HKHealthStore()
+
+        print(
+            "PTrack HealthKit: requesting authorization on main thread: \(Thread.isMainThread), read type count: \(readTypes.count), attempt: \(attempt + 1)"
+        )
+        if attempt == 0 {
+            progressHandler?(AppLocalization.text(.healthAuthorizationProgress))
+        }
         healthStore.requestAuthorization(toShare: nil, read: readTypes) { success, error in
             print("PTrack HealthKit: authorization request completed, success: \(success), error: \(String(describing: error))")
             if let error {
+                if self.shouldRetryAuthorization(after: error, attempt: attempt) {
+                    let delay = Self.sourceLookupRetryDelays[attempt]
+                    print(
+                        "PTrack HealthKit: source lookup not ready after reinstall, retrying authorization in \(delay)s"
+                    )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.requestAuthorization(
+                            readTypes: readTypes,
+                            attempt: attempt + 1,
+                            completion: completion
+                        )
+                    }
+                    return
+                }
+
+                if Self.isAuthorizationSourceLookupError(error) {
+                    self.markAuthorizationNotDetermined()
+                    completion(.failure(HealthWorkoutStoreError.authorizationTemporarilyUnavailable))
+                    return
+                }
+
                 self.updateAuthorizationState(for: error)
                 completion(.failure(error))
             } else if success {
@@ -187,6 +223,21 @@ final class HealthWorkoutStore {
                 completion(.failure(HealthWorkoutStoreError.authorizationDenied))
             }
         }
+    }
+
+    private func shouldRetryAuthorization(after error: Error, attempt: Int) -> Bool {
+        Self.isAuthorizationSourceLookupError(error)
+            && Self.sourceLookupRetryDelays.indices.contains(attempt)
+    }
+
+    private static func isAuthorizationSourceLookupError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == HKError.errorDomain,
+              nsError.code == HKError.Code.errorInvalidArgument.rawValue else {
+            return false
+        }
+
+        return nsError.localizedDescription.localizedCaseInsensitiveContains("Failed to look up source")
     }
 
     func loadTrackedWorkouts(

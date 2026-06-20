@@ -37,7 +37,6 @@ class ViewController: UIViewController {
     private var isCacheLoadInProgress = false
     private var isHealthSyncInProgress = false
     private var isStravaSyncInProgress = false
-    private var isHealthAuthorizationRequestedFromEmptyState = false
     private var isPullRefreshArmedInCurrentDrag = false
     private var collectionView: UICollectionView!
     private let routeGridView = WorkoutRouteGridView()
@@ -609,7 +608,20 @@ class ViewController: UIViewController {
 
     private func updateEmptyDataSourceVisibility() {
         emptyDataSourceView.updateAuthorizationState(appleHealth: store.authorizationState)
-        emptyDataSourceView.isHidden = isRouteBookModeActive || !workouts.isEmpty || hasReadableDataSourceAuthorization
+
+        guard !isRouteBookModeActive, workouts.isEmpty else {
+            emptyDataSourceView.isHidden = true
+            return
+        }
+
+        if isDataSourceSyncInProgress {
+            emptyDataSourceView.setMode(.loading)
+        } else if hasReadableDataSourceAuthorization {
+            emptyDataSourceView.setMode(.noData)
+        } else {
+            emptyDataSourceView.setMode(.authorization)
+        }
+        emptyDataSourceView.isHidden = false
     }
 
     private func registerLanguageObserver() {
@@ -839,7 +851,6 @@ class ViewController: UIViewController {
                 print("PTrack HealthKit: authorization failed: \(error)")
                 Task { @MainActor in
                     self.isHealthSyncInProgress = false
-                    self.isHealthAuthorizationRequestedFromEmptyState = false
                     self.updateHeaderReadAuthorizationState()
                     self.updateEmptyDataSourceVisibility()
                     self.presentHealthAuthorizationError(error)
@@ -1288,19 +1299,11 @@ class ViewController: UIViewController {
     }
 
     private func handleLoadResult(_ result: Result<Int, Error>) {
-        let wasRequestedFromEmptyState = isHealthAuthorizationRequestedFromEmptyState
-        isHealthAuthorizationRequestedFromEmptyState = false
         isHealthSyncInProgress = false
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
             print("PTrack HealthKit: route query completed, loaded routes: \(count)")
-            if shouldTreatEmptyHealthImportAsNeedsAttention(
-                loadedCount: count,
-                wasRequestedFromEmptyState: wasRequestedFromEmptyState
-            ) {
-                store.markAuthorizationNeedsAttention()
-            }
             newWorkoutBadgeStore.markInitialSyncCompleted()
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")
@@ -1310,20 +1313,6 @@ class ViewController: UIViewController {
         if didFlushPendingWorkouts {
             scheduleCacheSave(delay: 0)
         }
-    }
-
-    private func shouldTreatEmptyHealthImportAsNeedsAttention(
-        loadedCount: Int,
-        wasRequestedFromEmptyState: Bool
-    ) -> Bool {
-        guard loadedCount == 0,
-              workouts.isEmpty,
-              pendingWorkouts.isEmpty,
-              !StravaManager.shared.hasStoredAuthorization else {
-            return false
-        }
-
-        return wasRequestedFromEmptyState || store.authorizationState == .authorized
     }
 
     private func showHeatmap() {
@@ -1460,7 +1449,6 @@ class ViewController: UIViewController {
             return
         }
 
-        isHealthAuthorizationRequestedFromEmptyState = true
         requestHealthAuthorizationAndLoadWorkouts()
     }
 
@@ -1543,6 +1531,8 @@ class ViewController: UIViewController {
             return AppLocalization.text(.healthDataUnavailable)
         case .authorizationDenied:
             return AppLocalization.text(.healthAuthorizationDenied)
+        case .authorizationTemporarilyUnavailable:
+            return AppLocalization.text(.healthAuthorizationTemporarilyUnavailable)
         }
     }
 
@@ -2139,11 +2129,19 @@ private final class RouteBookUserLocationMarkerView: UIView {
     }
 }
 
+private enum HomeDataSourceEmptyMode {
+    case authorization
+    case loading
+    case noData
+}
+
 private final class HomeDataSourceEmptyView: UIView {
     var onAppleHealthTap: (() -> Void)?
     var onStravaTap: (() -> Void)?
 
+    private var mode: HomeDataSourceEmptyMode = .authorization
     private let stackView = UIStackView()
+    private let messageLabel = UILabel()
     private let appleHealthCard = HomeDataSourceCardView(style: .appleHealth)
     private let stravaCard = HomeDataSourceCardView(style: .strava)
     private let privacyLabel = UILabel()
@@ -2172,6 +2170,16 @@ private final class HomeDataSourceEmptyView: UIView {
         privacyLabel.attributedText = privacyStatementAttributedText(
             AppLocalization.text(.movinnLocalDataPrivacyStatement)
         )
+        updateMessageText()
+    }
+
+    func setMode(_ mode: HomeDataSourceEmptyMode) {
+        guard self.mode != mode else {
+            return
+        }
+
+        self.mode = mode
+        applyMode()
     }
 
     func updateAuthorizationState(appleHealth state: HealthWorkoutStore.AuthorizationState) {
@@ -2181,6 +2189,24 @@ private final class HomeDataSourceEmptyView: UIView {
         case .notDetermined, .needsAttention:
             appleHealthCard.setStatusIndicatorColor(nil)
         }
+    }
+
+    private func updateMessageText() {
+        switch mode {
+        case .authorization:
+            messageLabel.text = nil
+        case .loading:
+            messageLabel.text = AppLocalization.text(.homeDataLoadingMessage)
+        case .noData:
+            messageLabel.text = AppLocalization.text(.homeNoWorkoutDataMessage)
+        }
+    }
+
+    private func applyMode() {
+        stackView.isHidden = mode != .authorization
+        messageLabel.isHidden = mode == .authorization
+        isUserInteractionEnabled = mode == .authorization
+        updateMessageText()
     }
 
     private func privacyStatementAttributedText(_ text: String) -> NSAttributedString {
@@ -2212,6 +2238,12 @@ private final class HomeDataSourceEmptyView: UIView {
         privacyLabel.numberOfLines = 0
         privacyLabel.textAlignment = .left
 
+        messageLabel.textColor = .secondaryLabel
+        messageLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        messageLabel.numberOfLines = 0
+        messageLabel.textAlignment = .center
+        messageLabel.isHidden = true
+
         appleHealthCard.addAction(UIAction { [weak self] _ in
             self?.onAppleHealthTap?()
         }, for: .touchUpInside)
@@ -2220,6 +2252,7 @@ private final class HomeDataSourceEmptyView: UIView {
         }, for: .touchUpInside)
 
         addSubview(stackView)
+        addSubview(messageLabel)
         stackView.addArrangedSubview(appleHealthCard)
         stackView.addArrangedSubview(stravaCard)
         stackView.setCustomSpacing(16, after: stravaCard)
@@ -2228,6 +2261,11 @@ private final class HomeDataSourceEmptyView: UIView {
         stackView.snp.makeConstraints { make in
             make.top.bottom.equalToSuperview()
             make.leading.trailing.equalToSuperview()
+        }
+
+        messageLabel.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview()
+            make.centerY.equalToSuperview()
         }
 
         appleHealthCard.snp.makeConstraints { make in

@@ -553,6 +553,8 @@ final class MoreSettingsViewController: UIViewController {
             return AppLocalization.text(.healthDataUnavailable)
         case .authorizationDenied:
             return AppLocalization.text(.healthAuthorizationDenied)
+        case .authorizationTemporarilyUnavailable:
+            return AppLocalization.text(.healthAuthorizationTemporarilyUnavailable)
         }
     }
 }
