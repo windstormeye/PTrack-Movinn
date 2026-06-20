@@ -387,7 +387,7 @@ class ViewController: UIViewController {
 
         let hasUnseenRoute = SharedRouteImportInbox.hasUnseenRoute
         let routeCollectionAction = UIAction(
-            title: AppLocalization.text(.routeCollection),
+            title: AppLocalization.text(.routeCollectionMenuTitle),
             image: routeCollectionMenuImage(hasUnseenRoute: hasUnseenRoute)
         ) { [weak self] _ in
             self?.showRouteCollection()
@@ -446,12 +446,13 @@ class ViewController: UIViewController {
     }
 
     private func routeCollectionMenuImage(hasUnseenRoute: Bool) -> UIImage? {
+        let image = UIImage(systemName: "point.bottomleft.forward.to.point.topright.scurvepath")
+
         guard hasUnseenRoute else {
-            return UIImage(systemName: "square.and.arrow.down")
+            return image
         }
 
-        return UIImage(systemName: "square.and.arrow.down.fill")?
-            .withTintColor(AppColors.movinnGreen, renderingMode: .alwaysOriginal)
+        return image?.withTintColor(AppColors.movinnGreen, renderingMode: .alwaysOriginal)
     }
 
     @objc private func handleHeaderMoreButtonTap() {

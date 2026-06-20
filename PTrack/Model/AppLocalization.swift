@@ -113,6 +113,7 @@ enum AppTextKey: String {
     case routeBookLocationPermissionRequiredTitle
     case route
     case routeCollection
+    case routeCollectionMenuTitle
     case routeCollectionEmptyMessage
     case routeCollectionImportSuccess
     case routeCollectionImporting
@@ -306,6 +307,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "需要位置权限",
             .route: "轨迹",
             .routeCollection: "导入路线",
+            .routeCollectionMenuTitle: "路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
             .routeCollectionImportSuccess: "已导入 GPX 路线",
             .routeCollectionImporting: "正在导入 GPX",
@@ -453,6 +455,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "位置情報の許可が必要です",
             .route: "ルート",
             .routeCollection: "ルート読み込み",
+            .routeCollectionMenuTitle: "ルート",
             .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
             .routeCollectionImportSuccess: "GPX ルートを読み込みました",
             .routeCollectionImporting: "GPX を読み込み中",
@@ -600,6 +603,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "위치 권한 필요",
             .route: "경로",
             .routeCollection: "경로 가져오기",
+            .routeCollectionMenuTitle: "경로",
             .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
             .routeCollectionImportSuccess: "GPX 경로를 가져왔습니다",
             .routeCollectionImporting: "GPX 가져오는 중",
@@ -747,6 +751,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "Location Permission Required",
             .route: "Route",
             .routeCollection: "Imported Routes",
+            .routeCollectionMenuTitle: "Routes",
             .routeCollectionEmptyMessage: "No imported routes yet",
             .routeCollectionImportSuccess: "GPX route imported",
             .routeCollectionImporting: "Importing GPX",

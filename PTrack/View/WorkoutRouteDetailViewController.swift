@@ -246,7 +246,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         let startNavigationMenu = UIMenu(
-            title: AppLocalization.text(.startNavigation),
+            title: AppLocalization.text(.navigation),
             image: UIImage(systemName: "location.north.line"),
             children: [
                 openStartAction,
@@ -294,7 +294,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         var menuChildren: [UIMenuElement] = [
-            exportGPXAction,
             shareAction
         ]
         if PhotoLibraryAuthorizationManager.authorizationState == .needsAttention {
@@ -306,6 +305,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             image: UIImage(systemName: "map"),
             children: mapStyleActions
         ))
+        menuChildren.append(exportGPXAction)
 
         return UIMenu(
             title: "",
