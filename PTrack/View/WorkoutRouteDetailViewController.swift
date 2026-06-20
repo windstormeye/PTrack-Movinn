@@ -24,6 +24,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private struct PreparedRoute {
         let coordinates: [CLLocationCoordinate2D]
         let routeCoordinates: [RouteCoordinate]
+        let startCoordinate: CLLocationCoordinate2D
+        let endCoordinate: CLLocationCoordinate2D
         let replayDistances: [CLLocationDistance]
         let replayAltitudes: [Double?]
         let elevationSamples: [RouteElevationSample]
@@ -32,6 +34,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     let workout: TrackedWorkout
     private let presentationMode: PresentationMode
+    private let providedMergeSourceWorkouts: [TrackedWorkout]?
     private let mediaStore = RouteMediaStore()
     private let mapContainerView = AppMapContainerView()
     private var mapView: MKMapView { mapContainerView.mapView }
@@ -108,9 +111,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return calories
     }
 
-    init(workout: TrackedWorkout, presentationMode: PresentationMode = .workout) {
+    init(
+        workout: TrackedWorkout,
+        presentationMode: PresentationMode = .workout,
+        mergeSourceWorkouts: [TrackedWorkout]? = nil
+    ) {
         self.workout = workout
         self.presentationMode = presentationMode
+        providedMergeSourceWorkouts = mergeSourceWorkouts
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -263,6 +271,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
         exportGPXAction.attributes = isExportingGPX ? [.disabled] : []
 
+        let mergeRouteAction = UIAction(
+            title: AppLocalization.text(.routeMerge),
+            image: UIImage(systemName: "arrow.trianglehead.merge") ?? UIImage(systemName: "arrow.merge")
+        ) { [weak self] _ in
+            self?.presentRouteMergeSelection()
+        }
+
         let shareAction = UIAction(
             title: AppLocalization.text(.share),
             image: UIImage(systemName: "square.and.arrow.up.on.square")
@@ -305,12 +320,78 @@ final class WorkoutRouteDetailViewController: UIViewController {
             image: UIImage(systemName: "map"),
             children: mapStyleActions
         ))
-        menuChildren.append(exportGPXAction)
+        var toolActions: [UIMenuElement] = []
+        if !workout.isMergedRouteCollectionSource {
+            toolActions.append(mergeRouteAction)
+        }
+        toolActions.append(exportGPXAction)
+
+        menuChildren.append(UIMenu(
+            title: AppLocalization.text(.tools),
+            image: UIImage(systemName: "wrench.and.screwdriver"),
+            children: toolActions
+        ))
 
         return UIMenu(
             title: "",
             children: menuChildren
         )
+    }
+
+    private func presentRouteMergeSelection() {
+        let selectionViewController = RouteMergeSelectionViewController(
+            workouts: routeMergeSourceWorkouts(),
+            currentWorkout: workout
+        )
+        selectionViewController.onMergeCompleted = { [weak self] _ in
+            guard let self else {
+                return
+            }
+
+            self.dismiss(animated: true) {
+                self.presentRouteMergeCompletedAlert()
+            }
+        }
+
+        let navigationController = UINavigationController(rootViewController: selectionViewController)
+        navigationController.modalPresentationStyle = .pageSheet
+        if let sheetPresentationController = navigationController.sheetPresentationController {
+            sheetPresentationController.detents = [.large()]
+            sheetPresentationController.selectedDetentIdentifier = .large
+            sheetPresentationController.prefersGrabberVisible = true
+            sheetPresentationController.prefersScrollingExpandsWhenScrolledToEdge = true
+            sheetPresentationController.preferredCornerRadius = 28
+        }
+        present(navigationController, animated: true)
+    }
+
+    private func routeMergeSourceWorkouts() -> [TrackedWorkout] {
+        if let providedMergeSourceWorkouts, !providedMergeSourceWorkouts.isEmpty {
+            return providedMergeSourceWorkouts
+        }
+
+        return WorkoutCacheStore().load()
+    }
+
+    private func presentRouteMergeCompletedAlert() {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.routeMergeCompletedTitle),
+            message: AppLocalization.text(.routeMergeCompletedMessage),
+            preferredStyle: .alert
+        )
+        alertController.addAction(UIAlertAction(title: AppLocalization.text(.cancel), style: .cancel))
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.routeMergeViewRoutes),
+            style: .default
+        ) { [weak self] _ in
+            self?.showRouteCollection()
+        })
+        present(alertController, animated: true)
+    }
+
+    private func showRouteCollection() {
+        let routeCollectionViewController = RouteCollectionViewController()
+        navigationController?.pushViewController(routeCollectionViewController, animated: true)
     }
 
     private func showRouteShare() {
@@ -430,44 +511,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func navigationWorkoutDateText() -> String {
-        let calendar = Calendar.current
-        let workoutDay = calendar.startOfDay(for: workout.startDate)
-        let today = calendar.startOfDay(for: Date())
-        let dayDifference = calendar.dateComponents([.day], from: workoutDay, to: today).day
-
-        switch dayDifference {
-        case 0:
-            return AppLocalization.text(.today)
-        case 1:
-            return AppLocalization.text(.yesterday)
-        case 2:
-            return AppLocalization.text(.dayBeforeYesterday)
-        default:
-            return formattedNavigationWorkoutDate()
-        }
-    }
-
-    private func formattedNavigationWorkoutDate() -> String {
-        let language = AppLanguageStore.shared.language
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
-
-        switch language {
-        case .chinese:
-            formatter.locale = Locale(identifier: "zh_Hans")
-            formatter.dateFormat = "yyyy 年 M 月 d 日"
-        case .japanese:
-            formatter.locale = Locale(identifier: "ja_JP")
-            formatter.dateFormat = "yyyy年M月d日"
-        case .korean:
-            formatter.locale = Locale(identifier: "ko_KR")
-            formatter.dateFormat = "yyyy년 M월 d일"
-        case .english:
-            formatter.locale = Locale(identifier: "en_US")
-            formatter.dateFormat = "MMM d, yyyy"
-        }
-
-        return formatter.string(from: workout.startDate)
+        workout.navigationDateText
     }
 
     private func navigationDisplayTitle(for location: WorkoutRouteResolvedLocation) -> String {
@@ -715,9 +759,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
         let coordinate: CLLocationCoordinate2D?
         switch kind {
         case .start:
-            coordinate = coordinates.first ?? fallbackCoordinates.first
+            coordinate = Self.displayEndpointCoordinate(workout.routeCollectionMergeStartCoordinate)
+                ?? coordinates.first
+                ?? fallbackCoordinates.first
         case .end:
-            coordinate = coordinates.last ?? fallbackCoordinates.last
+            coordinate = Self.displayEndpointCoordinate(workout.routeCollectionMergeEndCoordinate)
+                ?? coordinates.last
+                ?? fallbackCoordinates.last
         }
 
         guard let coordinate else {
@@ -1076,6 +1124,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return PreparedRoute(
             coordinates: coordinates,
             routeCoordinates: routeCoordinates,
+            startCoordinate: displayEndpointCoordinate(workout.routeCollectionMergeStartCoordinate)
+                ?? coordinates[0],
+            endCoordinate: displayEndpointCoordinate(workout.routeCollectionMergeEndCoordinate)
+                ?? coordinates[coordinates.count - 1],
             replayDistances: replayDistances,
             replayAltitudes: replayAltitudes,
             elevationSamples: elevationSamples,
@@ -1093,8 +1145,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         mapView.addOverlay(polyline, level: .aboveLabels)
 
         mapView.addAnnotations([
-            RouteEndpointAnnotation(coordinate: coordinates[0], kind: .start),
-            RouteEndpointAnnotation(coordinate: coordinates[coordinates.count - 1], kind: .end)
+            RouteEndpointAnnotation(coordinate: preparedRoute.startCoordinate, kind: .start),
+            RouteEndpointAnnotation(coordinate: preparedRoute.endCoordinate, kind: .end)
         ])
 
         setRouteLoadingVisible(false)
@@ -1349,6 +1401,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         return distances
+    }
+
+    private static func displayEndpointCoordinate(_ coordinate: CLLocationCoordinate2D?) -> CLLocationCoordinate2D? {
+        guard let coordinate, CLLocationCoordinate2DIsValid(coordinate) else {
+            return nil
+        }
+
+        return CoordinateTransformer.displayCoordinate(for: coordinate)
     }
 
     private func replayState(for progress: CGFloat) -> ReplayState? {

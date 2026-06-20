@@ -7,6 +7,11 @@
 
 import Foundation
 
+struct WorkoutCacheSummary: Codable, Equatable {
+    let workoutCount: Int
+    let totalDistanceMeters: Double
+}
+
 final class WorkoutCacheStore {
     private let directoryURL: URL
     private let manifestFileURL: URL
@@ -31,6 +36,10 @@ final class WorkoutCacheStore {
         return []
     }
 
+    func loadSummary() -> WorkoutCacheSummary? {
+        loadManifest()?.summary
+    }
+
     func save(_ workouts: [TrackedWorkout]) {
         do {
             try FileManager.default.createDirectory(at: workoutsDirectoryURL, withIntermediateDirectories: true)
@@ -53,8 +62,9 @@ final class WorkoutCacheStore {
 
             let removedWorkoutFileCount = removeStaleWorkoutFiles(currentFileNames: currentFileNames)
             let manifest = WorkoutCacheManifest(
-                version: 1,
-                workoutIDs: sortedWorkouts.map(\.id)
+                version: 2,
+                workoutIDs: sortedWorkouts.map(\.id),
+                summary: Self.summary(for: sortedWorkouts)
             )
             let manifestData = try JSONEncoder().encode(manifest)
             try manifestData.write(to: manifestFileURL, options: [.atomic])
@@ -101,8 +111,9 @@ final class WorkoutCacheStore {
             }
 
             let manifest = WorkoutCacheManifest(
-                version: 1,
-                workoutIDs: sortedWorkouts.map(\.id)
+                version: 2,
+                workoutIDs: sortedWorkouts.map(\.id),
+                summary: Self.summary(for: sortedWorkouts)
             )
             let manifestData = try JSONEncoder().encode(manifest)
             try manifestData.write(to: manifestFileURL, options: [.atomic])
@@ -114,6 +125,21 @@ final class WorkoutCacheStore {
         } catch {
             print("PTrack Cache: failed to incrementally save cached workouts: \(error)")
             return false
+        }
+    }
+
+    func saveSummary(for workouts: [TrackedWorkout]) {
+        do {
+            let sortedWorkouts = sorted(workouts)
+            let manifest = WorkoutCacheManifest(
+                version: 2,
+                workoutIDs: sortedWorkouts.map(\.id),
+                summary: Self.summary(for: sortedWorkouts)
+            )
+            let manifestData = try JSONEncoder().encode(manifest)
+            try manifestData.write(to: manifestFileURL, options: [.atomic])
+        } catch {
+            print("PTrack Cache: failed to save workout summary: \(error)")
         }
     }
 
@@ -266,6 +292,13 @@ final class WorkoutCacheStore {
         workouts.sorted { $0.startDate > $1.startDate }
     }
 
+    private static func summary(for workouts: [TrackedWorkout]) -> WorkoutCacheSummary {
+        WorkoutCacheSummary(
+            workoutCount: workouts.count,
+            totalDistanceMeters: workouts.reduce(0) { $0 + $1.distanceMeters }
+        )
+    }
+
     private static func formattedByteCount(_ byteCount: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
     }
@@ -274,4 +307,5 @@ final class WorkoutCacheStore {
 private struct WorkoutCacheManifest: Codable {
     let version: Int
     let workoutIDs: [String]
+    let summary: WorkoutCacheSummary?
 }

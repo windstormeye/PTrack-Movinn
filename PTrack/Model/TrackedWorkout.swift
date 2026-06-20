@@ -167,6 +167,10 @@ struct TrackedWorkout: Codable {
 
     var routeDataSourceTitle: String {
         if isRouteCollectionSource {
+            if isMergedRouteCollectionSource {
+                return AppLocalization.text(.routeMerge)
+            }
+
             return AppLocalization.text(.routeCollection)
         }
 
@@ -260,6 +264,47 @@ struct TrackedWorkout: Codable {
         let endFormatter = DateFormatter()
         endFormatter.dateFormat = Calendar.current.isDate(startDate, inSameDayAs: endDate) ? "HH:mm" : "yyyy-MM-dd HH:mm"
         return "\(formatter.string(from: startDate)) - \(endFormatter.string(from: endDate))"
+    }
+
+    var navigationDateText: String {
+        let calendar = Calendar.current
+        let workoutDay = calendar.startOfDay(for: startDate)
+        let today = calendar.startOfDay(for: Date())
+        let dayDifference = calendar.dateComponents([.day], from: workoutDay, to: today).day
+
+        switch dayDifference {
+        case 0:
+            return AppLocalization.text(.today)
+        case 1:
+            return AppLocalization.text(.yesterday)
+        case 2:
+            return AppLocalization.text(.dayBeforeYesterday)
+        default:
+            return formattedNavigationDateText()
+        }
+    }
+
+    private func formattedNavigationDateText() -> String {
+        let language = AppLanguageStore.shared.language
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+
+        switch language {
+        case .chinese:
+            formatter.locale = Locale(identifier: "zh_Hans")
+            formatter.dateFormat = "yyyy 年 M 月 d 日"
+        case .japanese:
+            formatter.locale = Locale(identifier: "ja_JP")
+            formatter.dateFormat = "yyyy年M月d日"
+        case .korean:
+            formatter.locale = Locale(identifier: "ko_KR")
+            formatter.dateFormat = "yyyy년 M월 d일"
+        case .english:
+            formatter.locale = Locale(identifier: "en_US")
+            formatter.dateFormat = "MMM d, yyyy"
+        }
+
+        return formatter.string(from: startDate)
     }
 
     var durationText: String {

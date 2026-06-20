@@ -13,6 +13,9 @@ final class WorkoutRouteCell: UICollectionViewCell {
 
     private let imageView = UIImageView()
     private let pathView = WorkoutRoutePathView()
+    private let timeTagLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 2, left: 5, bottom: 2, right: 5))
+    private let selectionCheckmarkEffectView = UIVisualEffectView(effect: nil)
+    private let selectionCheckmarkIconView = UIImageView()
     private let newBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
     private var representedID: String?
     private var currentWorkout: TrackedWorkout?
@@ -37,6 +40,10 @@ final class WorkoutRouteCell: UICollectionViewCell {
         renderedSize = .zero
         currentShowsMap = true
         imageView.image = nil
+        contentView.alpha = 1
+        timeTagLabel.text = nil
+        timeTagLabel.isHidden = true
+        selectionCheckmarkEffectView.isHidden = true
         setShowsNewBadge(false)
     }
 
@@ -55,7 +62,10 @@ final class WorkoutRouteCell: UICollectionViewCell {
         with workout: TrackedWorkout,
         columnCount: CGFloat,
         showsMap: Bool,
-        showsNewBadge: Bool
+        showsNewBadge: Bool,
+        timeTagText: String? = nil,
+        showsSelectionCheckmark: Bool = false,
+        isEnabled: Bool = true
     ) {
         let isNewWorkout = representedID != workout.id
         let needsSnapshot = representedID != workout.id
@@ -73,6 +83,9 @@ final class WorkoutRouteCell: UICollectionViewCell {
         updateBackgroundVisibility(showsMap: showsMap)
         newBadgeLabel.text = AppLocalization.text(workout.isRouteCollectionSource ? .newRoute : .newActivity)
         setShowsNewBadge(showsNewBadge)
+        configureTimeTag(timeTagText)
+        contentView.alpha = isEnabled ? 1 : 0.32
+        setShowsSelectionCheckmark(showsSelectionCheckmark, isEnabled: isEnabled)
 
         guard showsMap else {
             imageView.image = nil
@@ -90,6 +103,48 @@ final class WorkoutRouteCell: UICollectionViewCell {
         self.showsNewBadge = showsNewBadge
         newBadgeLabel.isHidden = !showsNewBadge
         layer.zPosition = showsNewBadge ? 10 : 0
+    }
+
+    func setShowsSelectionCheckmark(
+        _ showsSelectionCheckmark: Bool,
+        isEnabled: Bool = true,
+        animated: Bool = false
+    ) {
+        let isVisible = showsSelectionCheckmark && isEnabled
+        let updateVisibility = {
+            self.selectionCheckmarkEffectView.alpha = isVisible ? 1 : 0
+            self.selectionCheckmarkEffectView.isHidden = !isVisible
+            self.selectionCheckmarkIconView.tintAdjustmentMode = .normal
+            self.selectionCheckmarkIconView.tintColor = self.selectionCheckmarkTintColor()
+        }
+
+        guard animated else {
+            UIView.performWithoutAnimation {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                updateVisibility()
+                CATransaction.commit()
+            }
+            return
+        }
+
+        if isVisible {
+            selectionCheckmarkEffectView.isHidden = false
+        }
+
+        UIView.animate(
+            withDuration: 0.12,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction]
+        ) {
+            updateVisibility()
+        } completion: { _ in
+            self.selectionCheckmarkEffectView.isHidden = !isVisible
+        }
+    }
+
+    private func selectionCheckmarkTintColor() -> UIColor {
+        return AppColors.movinnGreen
     }
 
     private func renderSnapshot(for workout: TrackedWorkout) {
@@ -122,6 +177,12 @@ final class WorkoutRouteCell: UICollectionViewCell {
         backgroundColor = .clear
     }
 
+    private func configureTimeTag(_ text: String?) {
+        let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        timeTagLabel.text = trimmedText
+        timeTagLabel.isHidden = trimmedText?.isEmpty != false
+    }
+
     private func configureViews() {
         backgroundColor = .clear
         clipsToBounds = false
@@ -133,6 +194,17 @@ final class WorkoutRouteCell: UICollectionViewCell {
         imageView.contentMode = .scaleAspectFill
         imageView.backgroundColor = .clear
         pathView.isHidden = true
+
+        timeTagLabel.isHidden = true
+        timeTagLabel.textColor = UIColor.black.withAlphaComponent(0.82)
+        timeTagLabel.font = .systemFont(ofSize: 8, weight: .bold)
+        timeTagLabel.backgroundColor = UIColor.white.withAlphaComponent(0.82)
+        timeTagLabel.layer.cornerRadius = 5
+        timeTagLabel.layer.masksToBounds = true
+        timeTagLabel.layer.zPosition = 20
+        timeTagLabel.isUserInteractionEnabled = false
+
+        configureSelectionCheckmarkView()
 
         newBadgeLabel.translatesAutoresizingMaskIntoConstraints = true
         newBadgeLabel.isHidden = true
@@ -147,6 +219,9 @@ final class WorkoutRouteCell: UICollectionViewCell {
 
         contentView.addSubview(imageView)
         contentView.addSubview(pathView)
+        contentView.addSubview(timeTagLabel)
+        contentView.addSubview(selectionCheckmarkEffectView)
+        selectionCheckmarkEffectView.contentView.addSubview(selectionCheckmarkIconView)
         addSubview(newBadgeLabel)
 
         imageView.snp.makeConstraints { make in
@@ -155,6 +230,54 @@ final class WorkoutRouteCell: UICollectionViewCell {
 
         pathView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
+        }
+
+        timeTagLabel.snp.makeConstraints { make in
+            make.top.trailing.equalToSuperview().inset(6)
+        }
+
+        selectionCheckmarkEffectView.snp.makeConstraints { make in
+            make.trailing.bottom.equalToSuperview().inset(6)
+            make.width.height.equalTo(26)
+        }
+
+        selectionCheckmarkIconView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.width.height.equalTo(16)
+        }
+    }
+
+    private func configureSelectionCheckmarkView() {
+        selectionCheckmarkEffectView.isHidden = true
+        selectionCheckmarkEffectView.layer.cornerRadius = 13
+        selectionCheckmarkEffectView.layer.masksToBounds = true
+        selectionCheckmarkEffectView.layer.zPosition = 20
+        selectionCheckmarkEffectView.isUserInteractionEnabled = false
+
+        selectionCheckmarkIconView.contentMode = .scaleAspectFit
+        selectionCheckmarkIconView.tintAdjustmentMode = .normal
+        selectionCheckmarkIconView.tintColor = selectionCheckmarkTintColor()
+        selectionCheckmarkIconView.isUserInteractionEnabled = false
+
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = false
+            effect.tintColor = UIColor.white.withAlphaComponent(0.06)
+            selectionCheckmarkEffectView.effect = effect
+            selectionCheckmarkEffectView.backgroundColor = .clear
+            selectionCheckmarkEffectView.contentView.backgroundColor = .clear
+            selectionCheckmarkIconView.image = UIImage(
+                systemName: "checkmark",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .bold)
+            )
+        } else {
+            selectionCheckmarkEffectView.effect = nil
+            selectionCheckmarkEffectView.backgroundColor = UIColor.black.withAlphaComponent(0.62)
+            selectionCheckmarkEffectView.contentView.backgroundColor = .clear
+            selectionCheckmarkIconView.image = UIImage(
+                systemName: "checkmark.circle.fill",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .bold)
+            )
         }
     }
 

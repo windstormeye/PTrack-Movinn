@@ -115,10 +115,21 @@ enum AppTextKey: String {
     case routeCollection
     case routeCollectionMenuTitle
     case routeCollectionEmptyMessage
+    case routeCollectionImportSectionTitle
     case routeCollectionImportSuccess
     case routeCollectionImporting
+    case routeCollectionMergeSectionTitle
     case routeHeatmap
     case routeLoading
+    case routeMerge
+    case routeMergeCompletedMessage
+    case routeMergeCompletedTitle
+    case routeMergeDefaultTitle
+    case routeMergeFailed
+    case routeMergeLoading
+    case routeMergeMultipleTitleFormat
+    case routeMergeNoRoutes
+    case routeMergeViewRoutes
     case running
     case satellite
     case share
@@ -155,6 +166,7 @@ enum AppTextKey: String {
     case totalWorkoutDistance
     case totalWorkoutTime
     case trailRunning
+    case tools
     case today
     case uiSettings
     case unknownDistance
@@ -309,10 +321,21 @@ enum AppLocalization {
             .routeCollection: "导入路线",
             .routeCollectionMenuTitle: "路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
+            .routeCollectionImportSectionTitle: "导入",
             .routeCollectionImportSuccess: "已导入 GPX 路线",
             .routeCollectionImporting: "正在导入 GPX",
+            .routeCollectionMergeSectionTitle: "合并",
             .routeHeatmap: "轨迹热图",
             .routeLoading: "正在加载轨迹",
+            .routeMerge: "合并路线",
+            .routeMergeCompletedMessage: "合并完成，可以去路线页面里查看。",
+            .routeMergeCompletedTitle: "路线已合并",
+            .routeMergeDefaultTitle: "合并路线",
+            .routeMergeFailed: "合并路线失败",
+            .routeMergeLoading: "正在合并路线",
+            .routeMergeMultipleTitleFormat: "%@ 等 %d 段",
+            .routeMergeNoRoutes: "请选择需要合并的路线。",
+            .routeMergeViewRoutes: "去看看",
             .running: "跑步",
             .satellite: "卫星",
             .share: "分享",
@@ -349,6 +372,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "总里程",
             .totalWorkoutTime: "总时间",
             .trailRunning: "越野跑",
+            .tools: "工具",
             .today: "今天",
             .uiSettings: "功能设置",
             .unknownDistance: "未知距离",
@@ -457,10 +481,21 @@ enum AppLocalization {
             .routeCollection: "ルート読み込み",
             .routeCollectionMenuTitle: "ルート",
             .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
+            .routeCollectionImportSectionTitle: "読み込み",
             .routeCollectionImportSuccess: "GPX ルートを読み込みました",
             .routeCollectionImporting: "GPX を読み込み中",
+            .routeCollectionMergeSectionTitle: "結合",
             .routeHeatmap: "軌跡ヒートマップ",
             .routeLoading: "ルートを読み込み中",
+            .routeMerge: "ルートを結合",
+            .routeMergeCompletedMessage: "結合が完了しました。ルート画面で確認できます。",
+            .routeMergeCompletedTitle: "ルートを結合しました",
+            .routeMergeDefaultTitle: "結合ルート",
+            .routeMergeFailed: "ルートの結合に失敗しました",
+            .routeMergeLoading: "ルートを結合中",
+            .routeMergeMultipleTitleFormat: "%@ ほか %d 区間",
+            .routeMergeNoRoutes: "結合するルートを選択してください。",
+            .routeMergeViewRoutes: "見に行く",
             .running: "ランニング",
             .satellite: "衛星",
             .share: "共有",
@@ -497,6 +532,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "合計距離",
             .totalWorkoutTime: "合計時間",
             .trailRunning: "トレイルランニング",
+            .tools: "ツール",
             .today: "今日",
             .uiSettings: "機能設定",
             .unknownDistance: "不明な距離",
@@ -605,10 +641,21 @@ enum AppLocalization {
             .routeCollection: "경로 가져오기",
             .routeCollectionMenuTitle: "경로",
             .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
+            .routeCollectionImportSectionTitle: "가져오기",
             .routeCollectionImportSuccess: "GPX 경로를 가져왔습니다",
             .routeCollectionImporting: "GPX 가져오는 중",
+            .routeCollectionMergeSectionTitle: "병합",
             .routeHeatmap: "경로 히트맵",
             .routeLoading: "경로 불러오는 중",
+            .routeMerge: "경로 병합",
+            .routeMergeCompletedMessage: "병합이 완료되었습니다. 경로 화면에서 확인할 수 있어요.",
+            .routeMergeCompletedTitle: "경로 병합 완료",
+            .routeMergeDefaultTitle: "병합 경로",
+            .routeMergeFailed: "경로 병합 실패",
+            .routeMergeLoading: "경로 병합 중",
+            .routeMergeMultipleTitleFormat: "%@ 외 %d개 구간",
+            .routeMergeNoRoutes: "병합할 경로를 선택해 주세요.",
+            .routeMergeViewRoutes: "보러가기",
             .running: "달리기",
             .satellite: "위성",
             .share: "공유",
@@ -645,6 +692,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "총 거리",
             .totalWorkoutTime: "총 시간",
             .trailRunning: "트레일 러닝",
+            .tools: "도구",
             .today: "오늘",
             .uiSettings: "기능 설정",
             .unknownDistance: "알 수 없는 거리",
@@ -753,10 +801,21 @@ enum AppLocalization {
             .routeCollection: "Imported Routes",
             .routeCollectionMenuTitle: "Routes",
             .routeCollectionEmptyMessage: "No imported routes yet",
+            .routeCollectionImportSectionTitle: "Imported",
             .routeCollectionImportSuccess: "GPX route imported",
             .routeCollectionImporting: "Importing GPX",
+            .routeCollectionMergeSectionTitle: "Merged",
             .routeHeatmap: "Route Heatmap",
             .routeLoading: "Loading Route",
+            .routeMerge: "Merge Routes",
+            .routeMergeCompletedMessage: "The route has been merged. You can view it on the Routes page.",
+            .routeMergeCompletedTitle: "Route Merged",
+            .routeMergeDefaultTitle: "Merged Route",
+            .routeMergeFailed: "Route merge failed",
+            .routeMergeLoading: "Merging Routes",
+            .routeMergeMultipleTitleFormat: "%@ and %d segments",
+            .routeMergeNoRoutes: "Select the routes you want to merge.",
+            .routeMergeViewRoutes: "View Routes",
             .running: "Running",
             .satellite: "Satellite",
             .share: "Share",
@@ -793,6 +852,7 @@ enum AppLocalization {
             .totalWorkoutDistance: "Total Mileage",
             .totalWorkoutTime: "Total Time",
             .trailRunning: "Trail Running",
+            .tools: "Tools",
             .today: "Today",
             .uiSettings: "Feature Settings",
             .unknownDistance: "Unknown Distance",

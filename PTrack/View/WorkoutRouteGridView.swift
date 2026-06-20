@@ -9,7 +9,14 @@ import UIKit
 
 struct WorkoutRouteGridItem {
     enum Content {
-        case route(TrackedWorkout, showsMap: Bool, showsNewBadge: Bool)
+        case route(
+            TrackedWorkout,
+            showsMap: Bool,
+            showsNewBadge: Bool,
+            timeTagText: String?,
+            isSelected: Bool,
+            isEnabled: Bool
+        )
         case loading(id: UUID, title: String)
     }
 
@@ -18,9 +25,21 @@ struct WorkoutRouteGridItem {
     static func route(
         _ workout: TrackedWorkout,
         showsMap: Bool,
-        showsNewBadge: Bool = false
+        showsNewBadge: Bool = false,
+        timeTagText: String? = nil,
+        isSelected: Bool = false,
+        isEnabled: Bool = true
     ) -> WorkoutRouteGridItem {
-        WorkoutRouteGridItem(content: .route(workout, showsMap: showsMap, showsNewBadge: showsNewBadge))
+        WorkoutRouteGridItem(
+            content: .route(
+                workout,
+                showsMap: showsMap,
+                showsNewBadge: showsNewBadge,
+                timeTagText: timeTagText,
+                isSelected: isSelected,
+                isEnabled: isEnabled
+            )
+        )
     }
 
     static func loading(id: UUID, title: String) -> WorkoutRouteGridItem {
@@ -33,6 +52,10 @@ final class WorkoutRouteGridView: UIView {
 
     var numberOfItemsProvider: () -> Int = { 0 }
     var itemProvider: (Int) -> WorkoutRouteGridItem? = { _ in nil }
+    var numberOfSectionsProvider: () -> Int = { 1 }
+    var numberOfItemsInSectionProvider: ((Int) -> Int)?
+    var sectionItemProvider: ((IndexPath) -> WorkoutRouteGridItem?)?
+    var sectionTitleProvider: ((Int) -> String?)?
     var onSelectRoute: ((TrackedWorkout, IndexPath, WorkoutRouteCell?) -> Void)?
     var onScroll: ((UIScrollView) -> Void)?
     var onEndDragging: ((UIScrollView, Bool) -> Void)?
@@ -101,6 +124,11 @@ final class WorkoutRouteGridView: UIView {
         columnSnapTargetCount = columns
     }
 
+    func configureSectionHeaders(height: CGFloat) {
+        gridLayout.sectionHeaderHeight = height
+        collectionView.collectionViewLayout.invalidateLayout()
+    }
+
     func reloadData() {
         collectionView.reloadData()
     }
@@ -118,6 +146,11 @@ final class WorkoutRouteGridView: UIView {
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.register(WorkoutRouteCell.self, forCellWithReuseIdentifier: WorkoutRouteCell.reuseIdentifier)
         collectionView.register(
+            WorkoutRouteGridSectionHeaderView.self,
+            forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
+            withReuseIdentifier: WorkoutRouteGridSectionHeaderView.reuseIdentifier
+        )
+        collectionView.register(
             WorkoutRouteGridLoadingCell.self,
             forCellWithReuseIdentifier: WorkoutRouteGridLoadingCell.reuseIdentifier
         )
@@ -134,17 +167,40 @@ final class WorkoutRouteGridView: UIView {
     }
 
     private func item(at indexPath: IndexPath) -> WorkoutRouteGridItem? {
-        guard indexPath.item >= 0, indexPath.item < numberOfItemsProvider() else {
+        guard indexPath.section >= 0,
+              indexPath.section < numberOfSectionsProvider(),
+              indexPath.item >= 0,
+              indexPath.item < numberOfItems(in: indexPath.section) else {
             return nil
+        }
+
+        if let sectionItemProvider {
+            return sectionItemProvider(indexPath)
         }
 
         return itemProvider(indexPath.item)
     }
+
+    private func numberOfItems(in section: Int) -> Int {
+        guard section >= 0, section < numberOfSectionsProvider() else {
+            return 0
+        }
+
+        if let numberOfItemsInSectionProvider {
+            return numberOfItemsInSectionProvider(section)
+        }
+
+        return section == 0 ? numberOfItemsProvider() : 0
+    }
 }
 
 extension WorkoutRouteGridView: UICollectionViewDataSource {
+    func numberOfSections(in collectionView: UICollectionView) -> Int {
+        numberOfSectionsProvider()
+    }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        numberOfItemsProvider()
+        numberOfItems(in: section)
     }
 
     func collectionView(
@@ -159,7 +215,7 @@ extension WorkoutRouteGridView: UICollectionViewDataSource {
         }
 
         switch item.content {
-        case .route(let workout, let showsMap, let showsNewBadge):
+        case .route(let workout, let showsMap, let showsNewBadge, let timeTagText, let isSelected, let isEnabled):
             let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: WorkoutRouteCell.reuseIdentifier,
                 for: indexPath
@@ -169,7 +225,10 @@ extension WorkoutRouteGridView: UICollectionViewDataSource {
                     with: workout,
                     columnCount: columnCount,
                     showsMap: showsMap,
-                    showsNewBadge: showsNewBadge
+                    showsNewBadge: showsNewBadge,
+                    timeTagText: timeTagText,
+                    showsSelectionCheckmark: isSelected && isEnabled,
+                    isEnabled: isEnabled
                 )
             }
             return cell
@@ -184,6 +243,22 @@ extension WorkoutRouteGridView: UICollectionViewDataSource {
             }
             return cell
         }
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        viewForSupplementaryElementOfKind kind: String,
+        at indexPath: IndexPath
+    ) -> UICollectionReusableView {
+        let view = collectionView.dequeueReusableSupplementaryView(
+            ofKind: kind,
+            withReuseIdentifier: WorkoutRouteGridSectionHeaderView.reuseIdentifier,
+            for: indexPath
+        )
+        if let view = view as? WorkoutRouteGridSectionHeaderView {
+            view.configure(title: sectionTitleProvider?(indexPath.section))
+        }
+        return view
     }
 }
 
@@ -202,7 +277,7 @@ extension WorkoutRouteGridView: UICollectionViewDelegate {
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         guard let item = item(at: indexPath),
-              case .route(let workout, _, _) = item.content else {
+              case .route(let workout, _, _, _, _, true) = item.content else {
             return
         }
 
@@ -215,7 +290,7 @@ extension WorkoutRouteGridView: UICollectionViewDelegate {
         point: CGPoint
     ) -> UIContextMenuConfiguration? {
         guard let item = item(at: indexPath),
-              case .route(let workout, _, _) = item.content else {
+              case .route(let workout, _, _, _, _, true) = item.content else {
             return nil
         }
 
@@ -227,7 +302,7 @@ extension WorkoutRouteGridView: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
         for indexPath in indexPaths {
             guard let item = item(at: indexPath),
-                  case .route(let workout, let showsMap, _) = item.content else {
+                  case .route(let workout, let showsMap, _, _, _, _) = item.content else {
                 continue
             }
 
@@ -251,7 +326,7 @@ extension WorkoutRouteGridView: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, cancelPrefetchingForItemsAt indexPaths: [IndexPath]) {
         for indexPath in indexPaths {
             guard let item = item(at: indexPath),
-                  case .route(let workout, let showsMap, _) = item.content,
+                  case .route(let workout, let showsMap, _, _, _, _) = item.content,
                   !showsMap else {
                 continue
             }
@@ -405,7 +480,8 @@ private extension WorkoutRouteGridView {
 
     func restorePinchAnchor(toVisiblePoint visiblePoint: CGPoint) {
         guard let pinchAnchorIndexPath,
-              pinchAnchorIndexPath.item < numberOfItemsProvider(),
+              pinchAnchorIndexPath.section < collectionView.numberOfSections,
+              pinchAnchorIndexPath.item < collectionView.numberOfItems(inSection: pinchAnchorIndexPath.section),
               let attributes = collectionView.collectionViewLayout.layoutAttributesForItem(at: pinchAnchorIndexPath) else {
             return
         }
@@ -432,6 +508,40 @@ private extension WorkoutRouteGridView {
             x: min(max(offset.x, minimumX), maximumX),
             y: min(max(offset.y, minimumY), maximumY)
         )
+    }
+}
+
+private final class WorkoutRouteGridSectionHeaderView: UICollectionReusableView {
+    static let reuseIdentifier = "WorkoutRouteGridSectionHeaderView"
+
+    private let titleLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    func configure(title: String?) {
+        titleLabel.text = title
+    }
+
+    private func configureViews() {
+        titleLabel.textColor = .secondaryLabel
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textAlignment = .left
+
+        addSubview(titleLabel)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
+        ])
     }
 }
 

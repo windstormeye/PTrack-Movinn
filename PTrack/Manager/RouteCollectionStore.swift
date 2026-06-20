@@ -382,7 +382,7 @@ enum SharedRouteImportInbox {
         return TrackedWorkout(
             routeCollectionID: UUID().uuidString,
             title: parsedRoute.title?.nilIfBlank ?? fallbackTitle,
-            sourceName: "GPX",
+            sourceName: TrackedWorkout.routeCollectionImportSourceName,
             sourceURL: fileURL,
             importedAt: importedAt,
             coordinates: parsedRoute.coordinates
@@ -417,30 +417,41 @@ enum SharedRouteImportInbox {
 }
 
 extension TrackedWorkout {
+    nonisolated static let routeCollectionImportSourceName = "GPX"
+    nonisolated static let routeCollectionMergeSourceName = "Route Merge"
+
     nonisolated init(
         routeCollectionID: String,
         title: String,
         sourceName: String,
         sourceURL: URL?,
         importedAt: Date,
-        coordinates rawCoordinates: [RouteCoordinate]
+        coordinates rawCoordinates: [RouteCoordinate],
+        distanceMeters distanceMetersOverride: Double? = nil,
+        durationSeconds durationSecondsOverride: TimeInterval? = nil,
+        startDate startDateOverride: Date? = nil,
+        activityTypeRawValue activityTypeRawValueOverride: UInt? = nil,
+        additionalMetadata: [String: TrackedMetadataValue] = [:]
     ) {
         let sampledCoordinates = RouteSampler.downsample(rawCoordinates, limit: 1_200)
-        let startDate = rawCoordinates.first?.timestamp ?? importedAt
-        let endDate = rawCoordinates.last?.timestamp
-        let distanceMeters = Self.routeCollectionDistanceMeters(for: rawCoordinates)
-        let durationSeconds = endDate.map { max($0.timeIntervalSince(startDate), 0) }
-        let metadata = Self.routeCollectionMetadata(
+        let startDate = startDateOverride ?? rawCoordinates.first?.timestamp ?? importedAt
+        let computedEndDate = rawCoordinates.last?.timestamp
+        let computedDurationSeconds = computedEndDate.map { max($0.timeIntervalSince(startDate), 0) }
+        let durationSeconds = durationSecondsOverride ?? computedDurationSeconds
+        let endDate = durationSeconds.map { startDate.addingTimeInterval($0) } ?? computedEndDate
+        let distanceMeters = distanceMetersOverride ?? Self.routeCollectionDistanceMeters(for: rawCoordinates)
+        var metadata = Self.routeCollectionMetadata(
             id: routeCollectionID,
             title: title,
             sourceName: sourceName,
             sourceURL: sourceURL,
             importedAt: importedAt
         )
+        metadata.merge(additionalMetadata) { _, newValue in newValue }
 
         id = "route-collection-\(routeCollectionID)"
         healthDataVersion = Self.currentHealthDataVersion
-        activityTypeRawValue = HKWorkoutActivityType.other.rawValue
+        activityTypeRawValue = activityTypeRawValueOverride ?? HKWorkoutActivityType.other.rawValue
         self.startDate = startDate
         self.endDate = endDate
         self.durationSeconds = durationSeconds
@@ -469,12 +480,52 @@ extension TrackedWorkout {
             || sourceRevision?.bundleIdentifier == "studio.pj.app.PTrack.routeCollection"
     }
 
+    var isMergedRouteCollectionSource: Bool {
+        routeCollectionSourceName == Self.routeCollectionMergeSourceName
+    }
+
+    var routeCollectionSourceName: String? {
+        metadata?["routeCollection.sourceName"]?.stringValue ?? sourceRevision?.productType
+    }
+
     var routeCollectionTitle: String? {
         metadata?["routeCollection.title"]?.stringValue?.nilIfBlank
     }
 
     var routeCollectionImportedAt: Date? {
         metadata?["routeCollection.importedAt"]?.dateValue
+    }
+
+    var routeCollectionMergeStartCoordinate: CLLocationCoordinate2D? {
+        routeCollectionMergeCoordinate(
+            latitudeKey: "routeCollection.merge.startLatitude",
+            longitudeKey: "routeCollection.merge.startLongitude"
+        )
+    }
+
+    var routeCollectionMergeEndCoordinate: CLLocationCoordinate2D? {
+        routeCollectionMergeCoordinate(
+            latitudeKey: "routeCollection.merge.endLatitude",
+            longitudeKey: "routeCollection.merge.endLongitude"
+        )
+    }
+
+    var routeCollectionMergePhotoDateRanges: [(start: Date, end: Date)] {
+        guard isMergedRouteCollectionSource,
+              let startValues = metadata?["routeCollection.merge.segmentStartDates"]?.numberArrayValue,
+              let endValues = metadata?["routeCollection.merge.segmentEndDates"]?.numberArrayValue else {
+            return []
+        }
+
+        return zip(startValues, endValues).compactMap { startValue, endValue in
+            let startDate = Date(timeIntervalSince1970: startValue)
+            let endDate = Date(timeIntervalSince1970: endValue)
+            guard endDate >= startDate else {
+                return nil
+            }
+
+            return (startDate, endDate)
+        }
     }
 
     private nonisolated static func routeCollectionMetadata(
@@ -499,6 +550,23 @@ extension TrackedWorkout {
         }
 
         return metadata
+    }
+
+    private func routeCollectionMergeCoordinate(
+        latitudeKey: String,
+        longitudeKey: String
+    ) -> CLLocationCoordinate2D? {
+        guard let latitude = metadata?[latitudeKey]?.doubleValue,
+              let longitude = metadata?[longitudeKey]?.doubleValue else {
+            return nil
+        }
+
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        guard CLLocationCoordinate2DIsValid(coordinate) else {
+            return nil
+        }
+
+        return coordinate
     }
 
     private nonisolated static func routeCollectionDistanceMeters(for coordinates: [RouteCoordinate]) -> Double {

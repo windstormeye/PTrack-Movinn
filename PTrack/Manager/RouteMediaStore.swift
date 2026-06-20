@@ -137,9 +137,32 @@ final class RouteMediaStore {
     }
 
     private func fetchCandidateAssets(for workout: TrackedWorkout) -> [PHAsset] {
+        let mergedRouteDateRanges = workout.routeCollectionMergePhotoDateRanges
+        guard mergedRouteDateRanges.isEmpty else {
+            return fetchCandidateAssets(in: mergedRouteDateRanges)
+        }
+
         let startDate = workout.startDate
         let endDate = (workout.endDate ?? workout.startDate.addingTimeInterval(workout.durationSeconds ?? 0))
+        return fetchCandidateAssets(in: [(startDate, endDate)])
+    }
 
+    private func fetchCandidateAssets(in dateRanges: [(start: Date, end: Date)]) -> [PHAsset] {
+        var assets: [PHAsset] = []
+        var seenAssetIDs = Set<String>()
+
+        for dateRange in dateRanges {
+            assets.append(contentsOf: fetchCandidateAssets(from: dateRange.start, to: dateRange.end).filter { asset in
+                seenAssetIDs.insert(asset.localIdentifier).inserted
+            })
+        }
+
+        return assets.sorted { lhs, rhs in
+            (lhs.creationDate ?? .distantPast) < (rhs.creationDate ?? .distantPast)
+        }
+    }
+
+    private func fetchCandidateAssets(from startDate: Date, to endDate: Date) -> [PHAsset] {
         let fetchOptions = PHFetchOptions()
         fetchOptions.includeHiddenAssets = false
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]

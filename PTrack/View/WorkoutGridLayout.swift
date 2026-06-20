@@ -20,8 +20,11 @@ final class WorkoutGridLayout: UICollectionViewLayout {
     var sectionInset = UIEdgeInsets(top: 0, left: 12, bottom: 16, right: 12)
     var itemAspectRatio: CGFloat = 0.74
     var minimumItemHeight: CGFloat = 72
+    var sectionHeaderHeight: CGFloat = 0
 
     private var cachedAttributes: [UICollectionViewLayoutAttributes] = []
+    private var cachedItemAttributes: [IndexPath: UICollectionViewLayoutAttributes] = [:]
+    private var cachedHeaderAttributes: [IndexPath: UICollectionViewLayoutAttributes] = [:]
     private var cachedContentSize = CGSize.zero
 
     override var collectionViewContentSize: CGSize {
@@ -32,13 +35,19 @@ final class WorkoutGridLayout: UICollectionViewLayout {
         super.prepare()
         guard let collectionView else {
             cachedAttributes = []
+            cachedItemAttributes = [:]
+            cachedHeaderAttributes = [:]
             cachedContentSize = .zero
             return
         }
 
-        let itemCount = collectionView.numberOfItems(inSection: 0)
-        guard itemCount > 0 else {
+        let totalItemCount = (0..<collectionView.numberOfSections).reduce(0) { total, section in
+            total + collectionView.numberOfItems(inSection: section)
+        }
+        guard totalItemCount > 0 else {
             cachedAttributes = []
+            cachedItemAttributes = [:]
+            cachedHeaderAttributes = [:]
             cachedContentSize = CGSize(width: collectionView.bounds.width, height: 0)
             return
         }
@@ -52,20 +61,60 @@ final class WorkoutGridLayout: UICollectionViewLayout {
         let upperMetrics = metrics(for: upperColumns, collectionWidth: collectionView.bounds.width)
 
         var attributes: [UICollectionViewLayoutAttributes] = []
-        attributes.reserveCapacity(itemCount)
+        var itemAttributesByIndexPath: [IndexPath: UICollectionViewLayoutAttributes] = [:]
+        var headerAttributesByIndexPath: [IndexPath: UICollectionViewLayoutAttributes] = [:]
+        attributes.reserveCapacity(totalItemCount + collectionView.numberOfSections)
 
-        for item in 0..<itemCount {
-            let indexPath = IndexPath(item: item, section: 0)
-            let itemAttributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
-            let lowerFrame = frame(forItemAt: item, metrics: lowerMetrics)
-            let upperFrame = frame(forItemAt: item, metrics: upperMetrics)
-            itemAttributes.frame = interpolate(from: lowerFrame, to: upperFrame, progress: progress)
-            attributes.append(itemAttributes)
+        var sectionOriginY: CGFloat = 0
+        for section in 0..<collectionView.numberOfSections {
+            let itemCount = collectionView.numberOfItems(inSection: section)
+            guard itemCount > 0 else {
+                continue
+            }
+
+            if sectionHeaderHeight > 0 {
+                let indexPath = IndexPath(item: 0, section: section)
+                let headerAttributes = UICollectionViewLayoutAttributes(
+                    forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader,
+                    with: indexPath
+                )
+                headerAttributes.frame = CGRect(
+                    x: 0,
+                    y: sectionOriginY,
+                    width: collectionView.bounds.width,
+                    height: sectionHeaderHeight
+                )
+                headerAttributes.zIndex = 1
+                headerAttributesByIndexPath[indexPath] = headerAttributes
+                attributes.append(headerAttributes)
+                sectionOriginY += sectionHeaderHeight
+            }
+
+            var lastFrame = CGRect.zero
+            for item in 0..<itemCount {
+                let indexPath = IndexPath(item: item, section: section)
+                let itemAttributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
+                let lowerFrame = frame(forItemAt: item, metrics: lowerMetrics, sectionOriginY: sectionOriginY)
+                let upperFrame = frame(forItemAt: item, metrics: upperMetrics, sectionOriginY: sectionOriginY)
+                itemAttributes.frame = interpolate(from: lowerFrame, to: upperFrame, progress: progress)
+                itemAttributesByIndexPath[indexPath] = itemAttributes
+                attributes.append(itemAttributes)
+                lastFrame = itemAttributes.frame
+            }
+
+            sectionOriginY = lastFrame.maxY + sectionInset.bottom
         }
 
-        cachedAttributes = attributes
-        let contentHeight = attributes.last.map { $0.frame.maxY + sectionInset.bottom } ?? 0
-        cachedContentSize = CGSize(width: collectionView.bounds.width, height: contentHeight)
+        cachedAttributes = attributes.sorted {
+            if $0.frame.minY != $1.frame.minY {
+                return $0.frame.minY < $1.frame.minY
+            }
+
+            return $0.frame.minX < $1.frame.minX
+        }
+        cachedItemAttributes = itemAttributesByIndexPath
+        cachedHeaderAttributes = headerAttributesByIndexPath
+        cachedContentSize = CGSize(width: collectionView.bounds.width, height: sectionOriginY)
     }
 
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
@@ -93,10 +142,18 @@ final class WorkoutGridLayout: UICollectionViewLayout {
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
-        guard indexPath.item >= 0, indexPath.item < cachedAttributes.count else {
+        cachedItemAttributes[indexPath]
+    }
+
+    override func layoutAttributesForSupplementaryView(
+        ofKind elementKind: String,
+        at indexPath: IndexPath
+    ) -> UICollectionViewLayoutAttributes? {
+        guard elementKind == UICollectionView.elementKindSectionHeader else {
             return nil
         }
-        return cachedAttributes[indexPath.item]
+
+        return cachedHeaderAttributes[indexPath]
     }
 
     override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
@@ -116,11 +173,11 @@ final class WorkoutGridLayout: UICollectionViewLayout {
         return Metrics(columns: columns, itemSize: CGSize(width: width, height: height))
     }
 
-    private func frame(forItemAt item: Int, metrics: Metrics) -> CGRect {
+    private func frame(forItemAt item: Int, metrics: Metrics, sectionOriginY: CGFloat) -> CGRect {
         let row = item / metrics.columns
         let column = item % metrics.columns
         let x = sectionInset.left + CGFloat(column) * (metrics.itemSize.width + itemSpacing)
-        let y = sectionInset.top + CGFloat(row) * (metrics.itemSize.height + lineSpacing)
+        let y = sectionOriginY + sectionInset.top + CGFloat(row) * (metrics.itemSize.height + lineSpacing)
         return CGRect(origin: CGPoint(x: x, y: y), size: metrics.itemSize)
     }
 
@@ -153,4 +210,5 @@ final class WorkoutGridLayout: UICollectionViewLayout {
 
         return lowerBound
     }
+
 }

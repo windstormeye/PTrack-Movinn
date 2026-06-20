@@ -10,6 +10,17 @@ import SnapKit
 import UIKit
 import UniformTypeIdentifiers
 
+private enum RouteCollectionSectionKind {
+    case imported
+    case merged
+}
+
+private struct RouteCollectionSection {
+    let kind: RouteCollectionSectionKind
+    let title: String
+    let routes: [TrackedWorkout]
+}
+
 final class RouteCollectionViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
@@ -22,6 +33,7 @@ final class RouteCollectionViewController: UIViewController {
     private let routeGridView = WorkoutRouteGridView()
     private var collectionView: UICollectionView!
     private var routes: [TrackedWorkout] = []
+    private var routeSections: [RouteCollectionSection] = []
     private var loadingIDs: [UUID] = []
 
     deinit {
@@ -116,15 +128,26 @@ final class RouteCollectionViewController: UIViewController {
             minimumColumns: 2,
             maximumColumns: 6
         )
-        routeGridView.numberOfItemsProvider = { [weak self] in
+        routeGridView.configureSectionHeaders(height: 32)
+        routeGridView.numberOfSectionsProvider = { [weak self] in
             guard let self else {
                 return 0
             }
 
-            return self.loadingIDs.count + self.routes.count
+            return self.routeSections.count
         }
-        routeGridView.itemProvider = { [weak self] index in
-            self?.gridItem(at: index)
+        routeGridView.numberOfItemsInSectionProvider = { [weak self] section in
+            self?.numberOfItems(in: section) ?? 0
+        }
+        routeGridView.sectionTitleProvider = { [weak self] section in
+            guard let self, section >= 0, section < self.routeSections.count else {
+                return nil
+            }
+
+            return self.routeSections[section].title
+        }
+        routeGridView.sectionItemProvider = { [weak self] indexPath in
+            self?.gridItem(at: indexPath)
         }
         routeGridView.onSelectRoute = { [weak self] workout, _, _ in
             self?.showRouteDetail(workout)
@@ -244,10 +267,11 @@ final class RouteCollectionViewController: UIViewController {
     }
 
     private func updateLocalizedText() {
-        let routeCollectionTitle = AppLocalization.text(.routeCollection)
+        let routeCollectionTitle = AppLocalization.text(.routeCollectionMenuTitle)
         title = routeCollectionTitle
         navigationTitleLabel.text = routeCollectionTitle
         emptyLabel.text = AppLocalization.text(.routeCollectionEmptyMessage)
+        rebuildRouteSections()
         updateICloudSyncSubtitle()
         collectionView?.reloadData()
     }
@@ -284,36 +308,78 @@ final class RouteCollectionViewController: UIViewController {
             }
         }
         routes = store.load()
+        rebuildRouteSections()
         collectionView?.reloadData()
         updateEmptyState()
         updateICloudSyncSubtitle()
     }
 
     private func updateEmptyState() {
-        emptyLabel.isHidden = !routes.isEmpty || !loadingIDs.isEmpty
+        emptyLabel.isHidden = !routeSections.isEmpty
     }
 
-    private func gridItem(at index: Int) -> WorkoutRouteGridItem? {
-        guard index >= 0 else {
+    private func rebuildRouteSections() {
+        let importedRoutes = routes.filter { !$0.isMergedRouteCollectionSource }
+        let mergedRoutes = routes.filter(\.isMergedRouteCollectionSource)
+        var sections: [RouteCollectionSection] = []
+
+        if !loadingIDs.isEmpty || !importedRoutes.isEmpty {
+            sections.append(RouteCollectionSection(
+                kind: .imported,
+                title: AppLocalization.text(.routeCollectionImportSectionTitle),
+                routes: importedRoutes
+            ))
+        }
+
+        if !mergedRoutes.isEmpty {
+            sections.append(RouteCollectionSection(
+                kind: .merged,
+                title: AppLocalization.text(.routeCollectionMergeSectionTitle),
+                routes: mergedRoutes
+            ))
+        }
+
+        routeSections = sections
+    }
+
+    private func numberOfItems(in section: Int) -> Int {
+        guard section >= 0, section < routeSections.count else {
+            return 0
+        }
+
+        switch routeSections[section].kind {
+        case .imported:
+            return loadingIDs.count + routeSections[section].routes.count
+        case .merged:
+            return routeSections[section].routes.count
+        }
+    }
+
+    private func gridItem(at indexPath: IndexPath) -> WorkoutRouteGridItem? {
+        guard indexPath.section >= 0,
+              indexPath.section < routeSections.count,
+              indexPath.item >= 0 else {
             return nil
         }
 
-        if index < loadingIDs.count {
+        let section = routeSections[indexPath.section]
+        if section.kind == .imported, indexPath.item < loadingIDs.count {
             return WorkoutRouteGridItem.loading(
-                id: loadingIDs[index],
+                id: loadingIDs[indexPath.item],
                 title: AppLocalization.text(.routeCollectionImporting)
             )
         }
 
-        let routeIndex = index - loadingIDs.count
-        guard routeIndex < routes.count else {
+        let routeIndex = section.kind == .imported ? indexPath.item - loadingIDs.count : indexPath.item
+        guard routeIndex >= 0, routeIndex < section.routes.count else {
             return nil
         }
 
+        let route = section.routes[routeIndex]
         return WorkoutRouteGridItem.route(
-            routes[routeIndex],
+            route,
             showsMap: false,
-            showsNewBadge: SharedRouteImportInbox.hasNewRouteBadge(for: routes[routeIndex])
+            showsNewBadge: SharedRouteImportInbox.hasNewRouteBadge(for: route)
         )
     }
 
@@ -324,7 +390,7 @@ final class RouteCollectionViewController: UIViewController {
 
         let detailViewController = WorkoutRouteDetailViewController(
             workout: workout,
-            presentationMode: .routeCollection
+            presentationMode: workout.isMergedRouteCollectionSource ? .workout : .routeCollection
         )
         navigationController?.pushViewController(detailViewController, animated: true)
     }
@@ -436,6 +502,7 @@ final class RouteCollectionViewController: UIViewController {
     private func deleteRoute(_ workout: TrackedWorkout) {
         SharedRouteImportInbox.clearNewRouteBadge(for: workout)
         routes = store.delete(workout)
+        rebuildRouteSections()
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -461,6 +528,7 @@ final class RouteCollectionViewController: UIViewController {
 
         let loadingID = UUID()
         loadingIDs.insert(loadingID, at: 0)
+        rebuildRouteSections()
         collectionView.reloadData()
         updateEmptyState()
 
@@ -486,6 +554,7 @@ final class RouteCollectionViewController: UIViewController {
             if !importedRoutes.isEmpty {
                 store.append(importedRoutes)
                 routes = store.load()
+                rebuildRouteSections()
             }
 
             removeLoadingCell(id: loadingID)
@@ -505,6 +574,7 @@ final class RouteCollectionViewController: UIViewController {
         }
 
         loadingIDs.remove(at: index)
+        rebuildRouteSections()
         collectionView.reloadData()
     }
 }
