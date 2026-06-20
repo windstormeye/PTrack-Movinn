@@ -19,6 +19,11 @@ private func sportsCareerWeekCalendar(from calendar: Calendar) -> Calendar {
 }
 
 final class SportsCareerViewController: UIViewController {
+    enum PresentationStyle {
+        case pushed
+        case heatmapSheet
+    }
+
     private enum Section: Int, CaseIterable {
         case summary
         case weekly
@@ -42,7 +47,10 @@ final class SportsCareerViewController: UIViewController {
         }
     }
 
+    static let heatmapSheetCollapsedHeight: CGFloat = 90
+
     private let workouts: [TrackedWorkout]
+    private let presentationStyle: PresentationStyle
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private var collectionView: UICollectionView!
@@ -50,11 +58,14 @@ final class SportsCareerViewController: UIViewController {
     private var statisticsLoadToken = UUID()
     private var hasPlayedAppearanceAnimation = false
     private var monthlyWorkoutSelectionIndexesByDateKey: [String: Int] = [:]
+    var onSelectWorkout: ((TrackedWorkout) -> Void)?
 
     private let navigationBackgroundHeight: CGFloat = 124
+    private let sheetContentTopInset: CGFloat = 30
 
-    init(workouts: [TrackedWorkout]) {
+    init(workouts: [TrackedWorkout], presentationStyle: PresentationStyle = .pushed) {
         self.workouts = workouts
+        self.presentationStyle = presentationStyle
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -77,8 +88,10 @@ final class SportsCareerViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        navigationController?.setNavigationBarHidden(false, animated: animated)
-        configureNavigationBar()
+        if presentationStyle == .pushed {
+            navigationController?.setNavigationBarHidden(false, animated: animated)
+            configureNavigationBar()
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -88,12 +101,14 @@ final class SportsCareerViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateNavigationBackgroundMask()
+        if presentationStyle == .pushed {
+            updateNavigationBackgroundMask()
+        }
         collectionView.collectionViewLayout.invalidateLayout()
     }
 
     private func configureNavigationItem() {
-        title = AppLocalization.text(.sportsCareer)
+        title = presentationStyle == .pushed ? AppLocalization.text(.sportsCareer) : nil
         navigationItem.largeTitleDisplayMode = .never
         edgesForExtendedLayout = [.top, .bottom]
     }
@@ -114,7 +129,8 @@ final class SportsCareerViewController: UIViewController {
     }
 
     private func configureViews() {
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = presentationStyle == .pushed ? .systemBackground : .clear
+        view.isOpaque = presentationStyle == .pushed
 
         let layout = UICollectionViewFlowLayout()
         layout.minimumLineSpacing = 6
@@ -122,11 +138,11 @@ final class SportsCareerViewController: UIViewController {
         layout.sectionHeadersPinToVisibleBounds = false
 
         collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
-        collectionView.backgroundColor = .systemBackground
+        collectionView.backgroundColor = presentationStyle == .pushed ? .systemBackground : .clear
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.contentInset = UIEdgeInsets(
-            top: navigationBackgroundHeight + 18,
+            top: presentationStyle == .pushed ? navigationBackgroundHeight + 18 : sheetContentTopInset,
             left: 0,
             bottom: 28,
             right: 0
@@ -134,6 +150,7 @@ final class SportsCareerViewController: UIViewController {
         collectionView.scrollIndicatorInsets = collectionView.contentInset
         collectionView.alpha = 0
         collectionView.transform = CGAffineTransform(translationX: 0, y: 28)
+        collectionView.isUserInteractionEnabled = true
         collectionView.dataSource = self
         collectionView.delegate = self
         collectionView.register(CareerSummaryCell.self, forCellWithReuseIdentifier: CareerSummaryCell.reuseIdentifier)
@@ -158,15 +175,19 @@ final class SportsCareerViewController: UIViewController {
         navigationBackgroundView.layer.mask = navigationBackgroundMask
 
         view.addSubview(collectionView)
-        view.addSubview(navigationBackgroundView)
+        if presentationStyle == .pushed {
+            view.addSubview(navigationBackgroundView)
+        }
 
         collectionView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
 
-        navigationBackgroundView.snp.makeConstraints { make in
-            make.top.leading.trailing.equalToSuperview()
-            make.height.equalTo(navigationBackgroundHeight)
+        if presentationStyle == .pushed {
+            navigationBackgroundView.snp.makeConstraints { make in
+                make.top.leading.trailing.equalToSuperview()
+                make.height.equalTo(navigationBackgroundHeight)
+            }
         }
     }
 
@@ -180,8 +201,50 @@ final class SportsCareerViewController: UIViewController {
     }
 
     @objc private func handleLanguageDidChange() {
-        title = AppLocalization.text(.sportsCareer)
+        title = presentationStyle == .pushed ? AppLocalization.text(.sportsCareer) : nil
         reloadStatisticsAsync()
+    }
+
+    func resetHeatmapSheetContentOffset() {
+        guard presentationStyle == .heatmapSheet,
+              isViewLoaded else {
+            return
+        }
+
+        let topOffset = -collectionView.adjustedContentInset.top
+        collectionView.setContentOffset(CGPoint(x: 0, y: topOffset), animated: false)
+    }
+
+    func setHeatmapSheetContentVisible(_ isVisible: Bool, animated: Bool) {
+        guard presentationStyle == .heatmapSheet else {
+            return
+        }
+
+        guard isViewLoaded else {
+            return
+        }
+
+        if !isVisible {
+            resetHeatmapSheetContentOffset()
+        }
+
+        let changes = {
+            self.collectionView.alpha = 1
+            self.collectionView.transform = .identity
+        }
+        collectionView.isUserInteractionEnabled = true
+
+        guard animated else {
+            changes()
+            return
+        }
+
+        UIView.animate(
+            withDuration: 0.24,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: changes
+        )
     }
 
     private func reloadStatisticsAsync() {
@@ -224,7 +287,6 @@ final class SportsCareerViewController: UIViewController {
         hasPlayedAppearanceAnimation = true
         collectionView.layoutIfNeeded()
         animateVisibleMetricCells()
-
         UIView.animate(
             withDuration: 0.42,
             delay: 0,
@@ -306,6 +368,11 @@ final class SportsCareerViewController: UIViewController {
         let currentIndex = monthlyWorkoutSelectionIndexesByDateKey[key, default: 0]
         let selectedWorkout = workouts[currentIndex % workouts.count]
         monthlyWorkoutSelectionIndexesByDateKey[key] = (currentIndex + 1) % workouts.count
+
+        if let onSelectWorkout {
+            onSelectWorkout(selectedWorkout)
+            return
+        }
 
         let detailViewController = WorkoutRouteDetailViewController(workout: selectedWorkout)
         navigationController?.pushViewController(detailViewController, animated: true)
@@ -1263,7 +1330,7 @@ private final class CareerSummaryMetricView: UIView {
         }
 
         valueLabel.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(24)
+            make.top.equalToSuperview().offset(16)
             make.leading.trailing.equalToSuperview()
             make.height.equalTo(32)
         }

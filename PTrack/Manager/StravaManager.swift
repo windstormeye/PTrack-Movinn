@@ -62,6 +62,7 @@ final class StravaManager: NSObject {
         excludingStravaActivityIDs: Set<Int64> = [],
         pageLimit: Int? = nil,
         perPage: Int = 200,
+        onNewDataDetected: ((Int) async -> Void)? = nil,
         onTrackedWorkout: ((TrackedWorkout) async -> Void)? = nil
     ) async throws -> [TrackedWorkout] {
         _ = try await authorize(presentationContextProvider: presentationContextProvider)
@@ -70,6 +71,7 @@ final class StravaManager: NSObject {
             excludingStravaActivityIDs: excludingStravaActivityIDs,
             pageLimit: pageLimit,
             perPage: perPage,
+            onNewDataDetected: onNewDataDetected,
             onTrackedWorkout: onTrackedWorkout
         )
         NotificationCenter.default.post(name: Self.trackedWorkoutsDidImportNotification, object: workouts)
@@ -81,6 +83,7 @@ final class StravaManager: NSObject {
         excludingStravaActivityIDs: Set<Int64> = [],
         pageLimit: Int? = nil,
         perPage: Int = 200,
+        onNewDataDetected: ((Int) async -> Void)? = nil,
         onTrackedWorkout: ((TrackedWorkout) async -> Void)? = nil
     ) async throws -> [TrackedWorkout] {
         log(
@@ -104,6 +107,9 @@ final class StravaManager: NSObject {
         log(
             "filtered activities, route candidates: \(supportedActivities.count), unsupported: \(unsupportedCount), without route hint: \(withoutRouteHintCount), already cached: \(alreadyCachedCount)"
         )
+        if !supportedActivities.isEmpty {
+            await onNewDataDetected?(supportedActivities.count)
+        }
 
         var trackedWorkouts: [TrackedWorkout] = []
         trackedWorkouts.reserveCapacity(supportedActivities.count)

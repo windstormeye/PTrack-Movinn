@@ -34,6 +34,7 @@ enum AppTextKey: String {
     case appleHealth
     case appDefault
     case activitySummaryPrefix
+    case newDataSyncing
     case cancel
     case collage
     case collageSingleLivePhotoLimit
@@ -240,6 +241,7 @@ enum AppLocalization {
             .appleHealth: "苹果健康",
             .appDefault: "默认",
             .activitySummaryPrefix: "运动",
+            .newDataSyncing: "新数据同步中",
             .cancel: "取消",
             .collage: "拼图",
             .collageSingleLivePhotoLimit: "拼图模式只允许加入一张 Live 图",
@@ -400,6 +402,7 @@ enum AppLocalization {
             .appleHealth: "Appleヘルスケア",
             .appDefault: "デフォルト",
             .activitySummaryPrefix: "運動",
+            .newDataSyncing: "新しいデータを同期中",
             .cancel: "キャンセル",
             .collage: "コラージュ",
             .collageSingleLivePhotoLimit: "コラージュモードでは Live Photo は1枚だけ追加できます",
@@ -560,6 +563,7 @@ enum AppLocalization {
             .appleHealth: "Apple 건강",
             .appDefault: "기본",
             .activitySummaryPrefix: "운동",
+            .newDataSyncing: "새 데이터 동기화 중",
             .cancel: "취소",
             .collage: "콜라주",
             .collageSingleLivePhotoLimit: "콜라주 모드에서는 Live Photo를 한 장만 추가할 수 있어요",
@@ -720,6 +724,7 @@ enum AppLocalization {
             .appleHealth: "Apple Health",
             .appDefault: "Default",
             .activitySummaryPrefix: "Activity",
+            .newDataSyncing: "Syncing new data",
             .cancel: "Cancel",
             .collage: "Collage",
             .collageSingleLivePhotoLimit: "Collage mode allows only one Live Photo",

@@ -243,6 +243,7 @@ final class HealthWorkoutStore {
     func loadTrackedWorkouts(
         after startDate: Date?,
         excludingIDs excludedIDs: Set<String>,
+        onNewDataDetected: ((Int) -> Void)? = nil,
         onTrackedWorkout: @escaping (TrackedWorkout) -> Void,
         completion: @escaping (Result<Int, Error>) -> Void
     ) {
@@ -280,6 +281,9 @@ final class HealthWorkoutStore {
             let workouts = ((samples as? [HKWorkout]) ?? [])
                 .filter { !excludedIDs.contains($0.uuid.uuidString) }
             print("PTrack HealthKit: found \(workouts.count) new cycling/hiking/walking/running workouts")
+            if !workouts.isEmpty {
+                onNewDataDetected?(workouts.count)
+            }
             self.progressHandler?("找到 \(workouts.count) 条运动记录，正在逐条读取轨迹...")
             self.loadRoutes(
                 for: workouts,

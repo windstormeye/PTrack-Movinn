@@ -71,6 +71,18 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var addMetricsToolButton: UIButton { toolBarView.addMetricsButton }
     private var livePhotoToolButton: UIButton { toolBarView.livePhotoButton }
     private let exportLoadingView = RouteShareExportLoadingView()
+    private lazy var exportBarButtonItem = UIBarButtonItem(
+        image: UIImage(systemName: "checkmark"),
+        style: .done,
+        target: self,
+        action: #selector(sharePreviewImage)
+    )
+    private lazy var resetBarButtonItem = UIBarButtonItem(
+        image: UIImage(systemName: "arrow.counterclockwise"),
+        style: .plain,
+        target: self,
+        action: #selector(resetShareCanvas)
+    )
     private var toolsContainerWidthConstraint: Constraint?
     private weak var previewBackgroundTapGesture: UITapGestureRecognizer?
     private weak var previewBackgroundDoubleTapGesture: UITapGestureRecognizer?
@@ -238,13 +250,10 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func configureNavigationItem() {
         view.backgroundColor = .systemBackground
         navigationItem.largeTitleDisplayMode = .never
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: UIImage(systemName: "checkmark"),
-            style: .done,
-            target: self,
-            action: #selector(sharePreviewImage)
-        )
-        navigationItem.rightBarButtonItem?.tintColor = AppColors.movinnGreen
+        exportBarButtonItem.tintColor = AppColors.movinnGreen
+        resetBarButtonItem.tintColor = .black
+        resetBarButtonItem.isEnabled = true
+        navigationItem.rightBarButtonItems = [exportBarButtonItem, resetBarButtonItem]
         edgesForExtendedLayout = [.top, .bottom]
     }
 
@@ -261,7 +270,59 @@ final class WorkoutRouteShareViewController: UIViewController {
         navigationController?.navigationBar.isTranslucent = true
         navigationController?.navigationBar.barStyle = .default
         navigationController?.navigationBar.tintColor = .label
-        navigationItem.rightBarButtonItem?.tintColor = AppColors.movinnGreen
+        exportBarButtonItem.tintColor = AppColors.movinnGreen
+        resetBarButtonItem.tintColor = .black
+    }
+
+    @objc private func resetShareCanvas() {
+        let currentBackground = previewBackground
+
+        clearPreviewSelections()
+        cancelCollageLivePhotoRequest()
+        collageView.stopLivePhotoPlayback()
+        collageView.resetCropAdjustments()
+
+        selectedCanvasAspectRatio = .followPhoto
+        selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
+        collagePhotoIndices = defaultCollagePhotoIndices()
+        selectedCollageStyleIndex = 0
+        selectedCollageLayout = collageLayoutForCurrentStyle(photoCount: collageSlotCount())
+        representedPreviewPhotoID = nil
+
+        switch currentBackground {
+        case .map:
+            selectedPhotoIndex = nil
+            lastSelectedPhotoIndexForAspectRatio = nil
+            selectedCanvasAspectRatio = .portrait3x4
+            previewBackground = .map
+        case .collage where photoItems.count >= 2:
+            selectedPhotoIndex = nil
+            lastSelectedPhotoIndexForAspectRatio = nil
+            previewBackground = .collage
+        case .photo, .collage:
+            selectedPhotoIndex = photoItems.isEmpty ? nil : 0
+            lastSelectedPhotoIndexForAspectRatio = selectedPhotoIndex
+            previewBackground = photoItems.isEmpty ? .map : .photo(0)
+        }
+
+        applyDefaultColorsForCurrentBackground()
+
+        isRouteModuleEnabled = true
+        isMetricsModuleEnabled = true
+        isBackgroundAdjustmentEnabled = false
+        hasManualMapAdjustment = false
+        selectedPreviewModule = nil
+
+        AppMapStyle.apply(selectedMapStyle, to: mapView)
+        AppMapStyle.setToneOverlay(mapToneOverlay, visible: selectedMapStyle == .appDefault, on: mapView)
+        configureMapStyleButton()
+        configureAspectRatioToolButton()
+
+        photoCollectionView.reloadData()
+        updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
+        updatePreviewPhoto()
+        updatePreviewSelection()
+        updateToolBarVisibility()
     }
 
     private func configureInteractivePopBlockerGesture() {
@@ -2760,12 +2821,14 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func showExportLoading(text: String) {
-        navigationItem.rightBarButtonItem?.isEnabled = false
+        exportBarButtonItem.isEnabled = false
+        resetBarButtonItem.isEnabled = false
         exportLoadingView.show(text: text, in: view)
     }
 
     private func hideExportLoading() {
-        navigationItem.rightBarButtonItem?.isEnabled = true
+        exportBarButtonItem.isEnabled = true
+        resetBarButtonItem.isEnabled = true
         exportLoadingView.hide()
     }
 

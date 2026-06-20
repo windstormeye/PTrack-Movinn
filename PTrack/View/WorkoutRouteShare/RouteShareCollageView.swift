@@ -217,6 +217,15 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         updateCropSelectionPath()
     }
 
+    func resetCropAdjustments() {
+        activeCropIndex = nil
+        cropAdjustments.removeAll()
+        tileImageViews.indices.forEach { index in
+            applyCropTransform(at: index)
+        }
+        updateCropSelectionPath()
+    }
+
     func playLivePhotos(
         _ playbacks: [RouteShareCollageLivePhotoPlayback],
         playbackDuration: TimeInterval
@@ -296,7 +305,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
               let tilePath = paths[index].copy() as? UIBezierPath else {
             return nil
         }
-        let adjustment = clampedCropAdjustment(cropAdjustment(at: index), at: index)
+        let adjustment = clampedCropAdjustment(cropAdjustment(at: index))
         return RouteShareCollageTileRenderInfo(
             tileFrame: tileContainerViews[index].frame,
             tilePath: tilePath,
@@ -586,7 +595,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         guard items.indices.contains(index) else {
             return
         }
-        cropAdjustments[items[index].id] = clampedCropAdjustment(adjustment, at: index)
+        cropAdjustments[items[index].id] = clampedCropAdjustment(adjustment)
         applyCropTransform(at: index)
     }
 
@@ -596,7 +605,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
             return
         }
 
-        let adjustment = clampedCropAdjustment(cropAdjustment(at: index), at: index)
+        let adjustment = clampedCropAdjustment(cropAdjustment(at: index))
         tileImageViews[index].transform = CGAffineTransform(
             translationX: adjustment.translation.x,
             y: adjustment.translation.y
@@ -676,45 +685,11 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    private func clampedCropAdjustment(_ adjustment: CropAdjustment, at index: Int) -> CropAdjustment {
+    private func clampedCropAdjustment(_ adjustment: CropAdjustment) -> CropAdjustment {
         var clamped = adjustment
         clamped.scale = min(max(clamped.scale, 1), 3)
         clamped.rotation = normalizedRotation(clamped.rotation)
-        clamped.translation = clampedCropTranslation(
-            proposed: clamped.translation,
-            scale: clamped.scale,
-            rotation: clamped.rotation,
-            at: index
-        )
         return clamped
-    }
-
-    private func clampedCropTranslation(
-        proposed: CGPoint,
-        scale: CGFloat,
-        rotation: CGFloat,
-        at index: Int
-    ) -> CGPoint {
-        guard tileContainerViews.indices.contains(index) else {
-            return proposed
-        }
-
-        let tileSize = tileContainerViews[index].bounds.size
-        guard tileSize.width > 0, tileSize.height > 0 else {
-            return .zero
-        }
-
-        let baseSize = tileImageViews.indices.contains(index)
-            ? tileImageViews[index].bounds.size
-            : tileSize
-        let scaledSize = CGSize(width: baseSize.width * scale, height: baseSize.height * scale)
-        let rotatedSize = rotatedBoundingSize(for: scaledSize, rotation: rotation)
-        let maxX = max((rotatedSize.width - tileSize.width) / 2, 0)
-        let maxY = max((rotatedSize.height - tileSize.height) / 2, 0)
-        return CGPoint(
-            x: min(max(proposed.x, -maxX), maxX),
-            y: min(max(proposed.y, -maxY), maxY)
-        )
     }
 
     private func aspectFillSize(for contentSize: CGSize, in containerSize: CGSize) -> CGSize {
@@ -727,15 +702,6 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
         let scale = max(containerSize.width / contentSize.width, containerSize.height / contentSize.height)
         return CGSize(width: contentSize.width * scale, height: contentSize.height * scale)
-    }
-
-    private func rotatedBoundingSize(for size: CGSize, rotation: CGFloat) -> CGSize {
-        let sine = abs(sin(rotation))
-        let cosine = abs(cos(rotation))
-        return CGSize(
-            width: size.width * cosine + size.height * sine,
-            height: size.width * sine + size.height * cosine
-        )
     }
 
     private func normalizedRotation(_ rotation: CGFloat) -> CGFloat {

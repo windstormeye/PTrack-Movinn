@@ -177,7 +177,35 @@ enum RouteCollectionMerger {
             numberArrayValue: segmentEndDates
         )
 
+        let mergedElevationGainMeters = workouts.reduce(0) { total, workout in
+            total + (workout.displayElevationGainMeters ?? elevationGainMeters(for: workout.routeDetailCoordinates))
+        }
+        if mergedElevationGainMeters > 0 {
+            metadata["routeCollection.merge.elevationGainMeters"] = TrackedMetadataValue(
+                type: "number",
+                doubleValue: mergedElevationGainMeters
+            )
+        }
+
         return metadata
+    }
+
+    private static func elevationGainMeters(for coordinates: [RouteCoordinate]) -> Double {
+        let altitudes = coordinates.compactMap(\.altitudeMeters)
+        guard altitudes.count > 1 else {
+            return 0
+        }
+
+        var gain: Double = 0
+        var previousAltitude = altitudes[0]
+        for altitude in altitudes.dropFirst() {
+            let delta = altitude - previousAltitude
+            if delta > 0 {
+                gain += delta
+            }
+            previousAltitude = altitude
+        }
+        return gain
     }
 
     private static func mergedTitle(for workouts: [TrackedWorkout]) -> String {

@@ -38,6 +38,8 @@ class ViewController: UIViewController {
     private var isCacheLoadInProgress = false
     private var isHealthSyncInProgress = false
     private var isStravaSyncInProgress = false
+    private var isHealthNewDataSyncInProgress = false
+    private var isStravaNewDataSyncInProgress = false
     private var isCacheLoadShowingLoadingIndicator = false
     private var isHealthSyncShowingLoadingIndicator = false
     private var isStravaSyncShowingLoadingIndicator = false
@@ -383,13 +385,6 @@ class ViewController: UIViewController {
     }
 
     private func makeHeaderMoreMenu() -> UIMenu {
-        let sportsCareerAction = UIAction(
-            title: AppLocalization.text(.sportsCareer),
-            image: UIImage(systemName: "chart.bar")
-        ) { [weak self] _ in
-            self?.showSportsCareer()
-        }
-
         let hasUnseenRoute = SharedRouteImportInbox.hasUnseenRoute
         let routeCollectionAction = UIAction(
             title: AppLocalization.text(.routeCollectionMenuTitle),
@@ -413,7 +408,7 @@ class ViewController: UIViewController {
             self?.showMoreSettings()
         }
 
-        return UIMenu(children: [sportsCareerAction, routeCollectionAction, heatmapAction, moreAction])
+        return UIMenu(children: [routeCollectionAction, heatmapAction, moreAction])
     }
 
     private func updateHeaderMoreButtonMode() {
@@ -518,6 +513,55 @@ class ViewController: UIViewController {
         updateEmptyDataSourceVisibility()
     }
 
+    private func showCacheLoadLoadingIndicatorIfNeeded() {
+        guard isCacheLoadInProgress, !isCacheLoadShowingLoadingIndicator else {
+            return
+        }
+
+        isCacheLoadShowingLoadingIndicator = true
+        beginLoadingOperation()
+    }
+
+    private func showHealthSyncLoadingIndicatorIfNeeded() {
+        guard isHealthSyncInProgress, !isHealthSyncShowingLoadingIndicator else {
+            return
+        }
+
+        isHealthSyncShowingLoadingIndicator = true
+        beginLoadingOperation()
+    }
+
+    private func showStravaSyncLoadingIndicatorIfNeeded() {
+        guard isStravaSyncInProgress, !isStravaSyncShowingLoadingIndicator else {
+            return
+        }
+
+        isStravaSyncShowingLoadingIndicator = true
+        beginLoadingOperation()
+    }
+
+    private var isNewDataSyncInProgress: Bool {
+        isHealthNewDataSyncInProgress || isStravaNewDataSyncInProgress
+    }
+
+    private func setHealthNewDataSyncInProgress(_ isInProgress: Bool) {
+        guard isHealthNewDataSyncInProgress != isInProgress else {
+            return
+        }
+
+        isHealthNewDataSyncInProgress = isInProgress
+        updateTotalDistanceText()
+    }
+
+    private func setStravaNewDataSyncInProgress(_ isInProgress: Bool) {
+        guard isStravaNewDataSyncInProgress != isInProgress else {
+            return
+        }
+
+        isStravaNewDataSyncInProgress = isInProgress
+        updateTotalDistanceText()
+    }
+
     private var hasReadableDataSourceAuthorization: Bool {
         store.authorizationState == .authorized || StravaManager.shared.hasStoredAuthorization
     }
@@ -529,7 +573,9 @@ class ViewController: UIViewController {
     }
 
     private func updateLoadingIndicatorVisibility() {
-        if activeLoadingOperationCount > 0, hasReadableDataSourceAuthorization, !isRouteBookModeActive {
+        if (activeLoadingOperationCount > 0 || isNewDataSyncInProgress),
+           hasReadableDataSourceAuthorization,
+           !isRouteBookModeActive {
             loadingIndicator.startAnimating()
         } else {
             loadingIndicator.stopAnimating()
@@ -572,8 +618,7 @@ class ViewController: UIViewController {
     }
 
     func updatePullRefreshTracking(for scrollView: UIScrollView) {
-        guard scrollView.isDragging,
-              !isDataSourceSyncInProgress else {
+        guard scrollView.isDragging else {
             isPullRefreshArmedInCurrentDrag = false
             return
         }
@@ -583,15 +628,14 @@ class ViewController: UIViewController {
     }
 
     func performPullRefreshIfNeeded() {
-        guard isPullRefreshArmedInCurrentDrag,
-              !isDataSourceSyncInProgress else {
+        guard isPullRefreshArmedInCurrentDrag else {
             isPullRefreshArmedInCurrentDrag = false
             return
         }
 
         isPullRefreshArmedInCurrentDrag = false
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        synchronizeDataSourcesForAppOpen()
+        synchronizeDataSourcesForPullRefresh()
     }
 
     func finishPullRefreshTracking() {
@@ -602,7 +646,22 @@ class ViewController: UIViewController {
         isCacheLoadInProgress || isHealthSyncInProgress || isStravaSyncInProgress
     }
 
+    private func synchronizeDataSourcesForPullRefresh() {
+        if isCacheLoadInProgress {
+            showCacheLoadLoadingIndicatorIfNeeded()
+        }
+
+        synchronizeDataSourcesForAppOpen()
+    }
+
     private func updateTotalDistanceText() {
+        if isNewDataSyncInProgress {
+            totalDistanceLabel.text = AppLocalization.text(.newDataSyncing)
+            updateHeaderReadAuthorizationState()
+            updateEmptyDataSourceVisibility()
+            return
+        }
+
         let displayedTotalDistanceMeters = cachedWorkoutSummary?.totalDistanceMeters ?? totalDistanceMeters
         let displayedWorkoutCount = cachedWorkoutSummary?.workoutCount ?? workouts.count
         let totalKilometers = displayedTotalDistanceMeters / 1000
@@ -860,10 +919,14 @@ class ViewController: UIViewController {
 
     private func loadAuthorizedHealthWorkouts(showsLoadingIndicator: Bool = true) {
         guard !isHealthSyncInProgress else {
+            if showsLoadingIndicator {
+                showHealthSyncLoadingIndicatorIfNeeded()
+            }
             return
         }
 
         isHealthSyncInProgress = true
+        setHealthNewDataSyncInProgress(false)
         isHealthSyncShowingLoadingIndicator = showsLoadingIndicator
         if showsLoadingIndicator {
             beginLoadingOperation()
@@ -885,6 +948,7 @@ class ViewController: UIViewController {
             switch authorizationResult {
             case .success:
                 Task { @MainActor in
+                    self.setHealthNewDataSyncInProgress(false)
                     self.isHealthSyncShowingLoadingIndicator = true
                     self.beginLoadingOperation()
                     self.loadIncrementalHealthWorkouts()
@@ -893,6 +957,7 @@ class ViewController: UIViewController {
                 print("PTrack HealthKit: authorization failed: \(error)")
                 Task { @MainActor in
                     self.isHealthSyncInProgress = false
+                    self.setHealthNewDataSyncInProgress(false)
                     self.updateHeaderReadAuthorizationState()
                     self.updateEmptyDataSourceVisibility()
                     self.presentHealthAuthorizationError(error)
@@ -927,10 +992,14 @@ class ViewController: UIViewController {
         showsLoadingIndicator: Bool = true
     ) {
         guard !isStravaSyncInProgress else {
+            if showsLoadingIndicator {
+                showStravaSyncLoadingIndicatorIfNeeded()
+            }
             return
         }
 
         isStravaSyncInProgress = true
+        setStravaNewDataSyncInProgress(false)
         isStravaSyncShowingLoadingIndicator = showsLoadingIndicator
         if showsLoadingIndicator {
             beginLoadingOperation()
@@ -947,6 +1016,11 @@ class ViewController: UIViewController {
                 let importedWorkouts = try await StravaManager.shared.loadTrackedWorkouts(
                     after: startDate,
                     excludingStravaActivityIDs: excludingStravaActivityIDs,
+                    onNewDataDetected: { [weak self] _ in
+                        await MainActor.run {
+                            self?.setStravaNewDataSyncInProgress(true)
+                        }
+                    },
                     onTrackedWorkout: { [weak self] workout in
                         await MainActor.run {
                             guard let self else {
@@ -976,6 +1050,7 @@ class ViewController: UIViewController {
                     "PTrack Strava: import completed, loaded routes: \(importedWorkouts.count), flushed: \(didFlushPendingWorkouts)"
                 )
                 self.isStravaSyncInProgress = false
+                self.setStravaNewDataSyncInProgress(false)
                 if self.isStravaSyncShowingLoadingIndicator {
                     self.isStravaSyncShowingLoadingIndicator = false
                     self.endLoadingOperation()
@@ -990,6 +1065,7 @@ class ViewController: UIViewController {
 
                 print("PTrack Strava: import failed: \(error)")
                 self.isStravaSyncInProgress = false
+                self.setStravaNewDataSyncInProgress(false)
                 if self.isStravaSyncShowingLoadingIndicator {
                     self.isStravaSyncShowingLoadingIndicator = false
                     self.endLoadingOperation()
@@ -1055,6 +1131,11 @@ class ViewController: UIViewController {
         store.loadTrackedWorkouts(
             after: queryStartDate,
             excludingIDs: excludedIDs,
+            onNewDataDetected: { [weak self] _ in
+                Task { @MainActor in
+                    self?.setHealthNewDataSyncInProgress(true)
+                }
+            },
             onTrackedWorkout: { [weak self] trackedWorkout in
                 Task { @MainActor in
                     self?.upsertTrackedWorkout(trackedWorkout)
@@ -1361,6 +1442,7 @@ class ViewController: UIViewController {
 
     private func handleLoadResult(_ result: Result<Int, Error>) {
         isHealthSyncInProgress = false
+        setHealthNewDataSyncInProgress(false)
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
@@ -1385,12 +1467,6 @@ class ViewController: UIViewController {
         flushPendingWorkouts(force: true)
         let heatmapViewController = WorkoutRouteHeatmapViewController(workouts: workouts)
         navigationController?.pushViewController(heatmapViewController, animated: true)
-    }
-
-    private func showSportsCareer() {
-        flushPendingWorkouts(force: true)
-        let sportsCareerViewController = SportsCareerViewController(workouts: workouts)
-        navigationController?.pushViewController(sportsCareerViewController, animated: true)
     }
 
     private func showWorkoutDetail(

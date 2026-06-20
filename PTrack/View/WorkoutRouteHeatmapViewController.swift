@@ -11,6 +11,10 @@ import SnapKit
 import UIKit
 
 final class WorkoutRouteHeatmapViewController: UIViewController {
+    private static let careerCollapsedDetentIdentifier = UISheetPresentationController.Detent.Identifier(
+        "routeHeatmapCareerCollapsed"
+    )
+
     private static let routeCache: NSCache<NSString, HeatmapRouteCacheBox> = {
         let cache = NSCache<NSString, HeatmapRouteCacheBox>()
         cache.countLimit = 3
@@ -25,11 +29,25 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
+    private lazy var sportsCareerSheetViewController: SportsCareerViewController = {
+        let viewController = SportsCareerViewController(
+            workouts: workouts,
+            presentationStyle: .heatmapSheet
+        )
+        viewController.modalPresentationStyle = .pageSheet
+        viewController.isModalInPresentation = true
+        viewController.onSelectWorkout = { [weak self] workout in
+            self?.showWorkoutDetailFromSportsCareer(workout)
+        }
+        return viewController
+    }()
 
     private var preparedRoutes: [HeatmapRoute] = []
     private var visibleRoutes: [HeatmapRoute] = []
     private var loadGeneration = 0
     private var hasFittedRoutes = false
+    private var hasPresentedSportsCareerSheet = false
+    private var suppressSportsCareerSheetPresentation = false
     private var selectedFilters = HeatmapFilterStore.shared.selectedFilters()
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.heatmapStyle()
     var routesOverlayRenderer: HeatmapRoutesOverlayRenderer?
@@ -72,6 +90,24 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         configureNavigationBar()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if suppressSportsCareerSheetPresentation {
+            suppressSportsCareerSheetPresentation = false
+        } else {
+            presentSportsCareerSheetIfNeeded()
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if hasPresentedSportsCareerSheet,
+           isMovingFromParent || navigationController?.isBeingDismissed == true {
+            hasPresentedSportsCareerSheet = false
+            sportsCareerSheetViewController.dismiss(animated: false)
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -217,6 +253,56 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         )
     }
 
+    private func presentSportsCareerSheetIfNeeded() {
+        guard !hasPresentedSportsCareerSheet,
+              presentedViewController == nil,
+              view.window != nil else {
+            return
+        }
+
+        sportsCareerSheetViewController.setHeatmapSheetContentVisible(false, animated: false)
+        sportsCareerSheetViewController.resetHeatmapSheetContentOffset()
+        if let sheetPresentationController = sportsCareerSheetViewController.sheetPresentationController {
+            sheetPresentationController.detents = [
+                .custom(identifier: Self.careerCollapsedDetentIdentifier) { _ in
+                    SportsCareerViewController.heatmapSheetCollapsedHeight
+                },
+                .medium(),
+                .large()
+            ]
+            sheetPresentationController.selectedDetentIdentifier = Self.careerCollapsedDetentIdentifier
+            sheetPresentationController.largestUndimmedDetentIdentifier = .large
+            sheetPresentationController.prefersGrabberVisible = true
+            sheetPresentationController.prefersScrollingExpandsWhenScrolledToEdge = true
+            sheetPresentationController.preferredCornerRadius = 28
+            sheetPresentationController.delegate = self
+        }
+
+        hasPresentedSportsCareerSheet = true
+        present(sportsCareerSheetViewController, animated: false) { [weak self] in
+            self?.sportsCareerSheetViewController.setHeatmapSheetContentVisible(false, animated: false)
+            self?.sportsCareerSheetViewController.resetHeatmapSheetContentOffset()
+        }
+    }
+
+    private func dismissSportsCareerSheetForNavigation(_ completion: @escaping () -> Void) {
+        guard presentedViewController === sportsCareerSheetViewController else {
+            completion()
+            return
+        }
+
+        suppressSportsCareerSheetPresentation = true
+        hasPresentedSportsCareerSheet = false
+        sportsCareerSheetViewController.dismiss(animated: true, completion: completion)
+    }
+
+    private func showWorkoutDetailFromSportsCareer(_ workout: TrackedWorkout) {
+        dismissSportsCareerSheetForNavigation { [weak self] in
+            let detailViewController = WorkoutRouteDetailViewController(workout: workout)
+            self?.navigationController?.pushViewController(detailViewController, animated: true)
+        }
+    }
+
     private func prepareHeatmapRoutes() {
         loadGeneration += 1
         let generation = loadGeneration
@@ -349,7 +435,12 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         hasFittedRoutes = true
         mapView.setVisibleMapRect(
             boundingMapRect,
-            edgePadding: UIEdgeInsets(top: 96, left: 32, bottom: 72, right: 32),
+            edgePadding: UIEdgeInsets(
+                top: 96,
+                left: 32,
+                bottom: SportsCareerViewController.heatmapSheetCollapsedHeight + 28,
+                right: 32
+            ),
             animated: animated
         )
     }
@@ -630,5 +721,26 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         return (0..<targetCount).map { index in
             min(Int(round(Double(index) * step)), sourceCount - 1)
         }
+    }
+}
+
+extension WorkoutRouteHeatmapViewController: UISheetPresentationControllerDelegate {
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard presentationController.presentedViewController === sportsCareerSheetViewController else {
+            return
+        }
+
+        hasPresentedSportsCareerSheet = false
+    }
+
+    func sheetPresentationControllerDidChangeSelectedDetentIdentifier(
+        _ sheetPresentationController: UISheetPresentationController
+    ) {
+        guard sheetPresentationController.presentedViewController === sportsCareerSheetViewController else {
+            return
+        }
+
+        let isCollapsed = sheetPresentationController.selectedDetentIdentifier == Self.careerCollapsedDetentIdentifier
+        sportsCareerSheetViewController.setHeatmapSheetContentVisible(!isCollapsed, animated: true)
     }
 }

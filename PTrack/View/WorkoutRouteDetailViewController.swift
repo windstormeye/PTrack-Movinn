@@ -49,10 +49,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let gpxExportLoadingLabel = UILabel()
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
-    private let panelShadowView = UIView()
+    private let panelSheetViewController = UIViewController()
     private let panelView = UIVisualEffectView(effect: WorkoutRouteDetailViewController.makePanelGlassEffect())
     private let handleTouchView = UIView()
-    private let handleView = UIView()
     private let iconView = UIImageView()
     private let navigationTitleStackView = UIStackView()
     private let navigationTitleLabel = UILabel()
@@ -66,17 +65,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let detailStackView = UIStackView()
     private let replayRulerView = WorkoutRouteReplayRulerView()
     private let calorieRiceView = WorkoutRouteCalorieRiceView()
-    private lazy var panelPanGestureRecognizer: UIPanGestureRecognizer = {
-        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePanelPan(_:)))
-        recognizer.cancelsTouchesInView = false
-        recognizer.delegate = self
-        return recognizer
-    }()
-    private var panelHeightConstraint: Constraint?
     private var primaryContentTopConstraint: Constraint?
     private var selectedPanelDetent: PanelDetent = .minimum
     private var hasFittedRoute = false
-    private var panStartHeight: CGFloat = 0
+    private var hasPresentedPanelSheet = false
+    private var suppressPanelSheetPresentation = false
     var routeMediaItems: [RouteMediaItem] = []
     private var replayCoordinates: [CLLocationCoordinate2D] = []
     private var replayDistances: [CLLocationDistance] = []
@@ -102,6 +95,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let navigationBackgroundHeight: CGFloat = 124
     private let mapBottomExtension = AppMapContainerView.defaultBottomLogoAvoidanceOffset
     private let maximumElevationSampleCount = 120
+    private static let minimumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
+        "routeDetailMinimum"
+    )
+    private static let mediumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
+        "routeDetailMedium"
+    )
 
     private var panelCaloriesKilocalories: Double? {
         guard let calories = workout.activeEnergyBurnedKilocalories, calories > 0 else {
@@ -130,7 +129,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         if #available(iOS 26.0, *) {
             let effect = UIGlassEffect(style: .regular)
             effect.isInteractive = true
-            effect.tintColor = UIColor.white.withAlphaComponent(0.16)
+            effect.tintColor = UIColor.white.withAlphaComponent(0.06)
             return effect
         }
 
@@ -174,13 +173,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if suppressPanelSheetPresentation {
+            suppressPanelSheetPresentation = false
+        } else {
+            presentPanelSheetIfNeeded()
+        }
         startDeferredDetailLoadingIfNeeded()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateNavigationBackgroundMask()
-        updatePanelShadowPath()
         fitRouteIfNeeded()
     }
 
@@ -343,17 +346,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
             workouts: routeMergeSourceWorkouts(),
             currentWorkout: workout
         )
-        selectionViewController.onMergeCompleted = { [weak self] _ in
+        let navigationController = UINavigationController(rootViewController: selectionViewController)
+        selectionViewController.onMergeCompleted = { [weak self, weak navigationController] _ in
             guard let self else {
                 return
             }
 
-            self.dismiss(animated: true) {
+            navigationController?.dismiss(animated: true) {
                 self.presentRouteMergeCompletedAlert()
             }
         }
 
-        let navigationController = UINavigationController(rootViewController: selectionViewController)
         navigationController.modalPresentationStyle = .pageSheet
         if let sheetPresentationController = navigationController.sheetPresentationController {
             sheetPresentationController.detents = [.large()]
@@ -362,7 +365,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             sheetPresentationController.prefersScrollingExpandsWhenScrolledToEdge = true
             sheetPresentationController.preferredCornerRadius = 28
         }
-        present(navigationController, animated: true)
+        modalPresentationHost.present(navigationController, animated: true)
     }
 
     private func routeMergeSourceWorkouts() -> [TrackedWorkout] {
@@ -386,20 +389,28 @@ final class WorkoutRouteDetailViewController: UIViewController {
         ) { [weak self] _ in
             self?.showRouteCollection()
         })
-        present(alertController, animated: true)
+        modalPresentationHost.present(alertController, animated: true)
     }
 
     private func showRouteCollection() {
-        let routeCollectionViewController = RouteCollectionViewController()
-        navigationController?.pushViewController(routeCollectionViewController, animated: true)
+        dismissPanelSheetForNavigation { [weak self] in
+            let routeCollectionViewController = RouteCollectionViewController()
+            self?.navigationController?.pushViewController(routeCollectionViewController, animated: true)
+        }
     }
 
     private func showRouteShare() {
-        let shareViewController = WorkoutRouteShareViewController(
-            workout: workout,
-            initialMediaItems: routeMediaItems
-        )
-        navigationController?.pushViewController(shareViewController, animated: true)
+        dismissPanelSheetForNavigation { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let shareViewController = WorkoutRouteShareViewController(
+                workout: self.workout,
+                initialMediaItems: self.routeMediaItems
+            )
+            self.navigationController?.pushViewController(shareViewController, animated: true)
+        }
     }
 
     private func refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: Bool = true) {
@@ -439,7 +450,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
             UIApplication.shared.open(url)
         })
-        present(alertController, animated: true)
+        modalPresentationHost.present(alertController, animated: true)
     }
 
     private func makeNavigationTitleView() -> UIView {
@@ -791,13 +802,19 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func startRouteBookMode() {
         let selectedWorkout = workout
-        navigationController?.popToRootViewController(animated: true)
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(
-                name: RouteBookMode.didSelectWorkoutNotification,
-                object: self,
-                userInfo: [RouteBookMode.workoutUserInfoKey: selectedWorkout]
-            )
+        dismissPanelSheetForNavigation { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.navigationController?.popToRootViewController(animated: true)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: RouteBookMode.didSelectWorkoutNotification,
+                    object: self,
+                    userInfo: [RouteBookMode.workoutUserInfoKey: selectedWorkout]
+                )
+            }
         }
     }
 
@@ -866,7 +883,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             activityViewController.completionWithItemsHandler = { _, _, _, _ in
                 try? FileManager.default.removeItem(at: fileURL)
             }
-            present(activityViewController, animated: true)
+            modalPresentationHost.present(activityViewController, animated: true)
         case let .failure(error):
             showAlert(title: AppLocalization.text(.gpxExportFailed), message: error.localizedDescription)
         }
@@ -875,31 +892,27 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private func showAlert(title: String, message: String? = nil) {
         let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
-        present(alertController, animated: true)
+        modalPresentationHost.present(alertController, animated: true)
     }
 
     private func configurePanelView() {
         let caloriesKilocalories = panelCaloriesKilocalories
         let isRouteCollectionPanel = presentationMode == .routeCollection
 
-        panelShadowView.backgroundColor = .clear
-        panelShadowView.layer.cornerRadius = 32
-        panelShadowView.layer.cornerCurve = .continuous
-        panelShadowView.layer.shadowColor = UIColor.black.cgColor
-        panelShadowView.layer.shadowOpacity = 0.18
-        panelShadowView.layer.shadowRadius = 28
-        panelShadowView.layer.shadowOffset = CGSize(width: 0, height: 12)
+        panelSheetViewController.view.backgroundColor = .clear
+        panelSheetViewController.view.isOpaque = false
+        panelSheetViewController.modalPresentationStyle = .pageSheet
+        panelSheetViewController.isModalInPresentation = true
 
-        panelView.layer.cornerRadius = 32
-        panelView.layer.cornerCurve = .continuous
+        panelView.backgroundColor = .clear
+        panelView.layer.cornerRadius = 0
         panelView.layer.masksToBounds = true
-        panelView.layer.borderColor = UIColor.white.withAlphaComponent(0.46).cgColor
-        panelView.layer.borderWidth = 0.8
-        panelView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.08)
-        panelView.contentView.addGestureRecognizer(panelPanGestureRecognizer)
-
-        handleView.backgroundColor = UIColor.black.withAlphaComponent(0.24)
-        handleView.layer.cornerRadius = 2
+        panelView.layer.borderWidth = 0
+        if #available(iOS 26.0, *) {
+            panelView.contentView.backgroundColor = .clear
+        } else {
+            panelView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        }
 
         iconView.image = UIImage(systemName: workout.symbolName)
         iconView.tintColor = UIColor.black.withAlphaComponent(0.9)
@@ -949,7 +962,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         detailStackView.axis = .vertical
         detailStackView.spacing = caloriesKilocalories == nil ? 0 : calorieRiceTopSpacing
-        detailStackView.alpha = 0
+        detailStackView.alpha = 1
 
         replayRulerView.configure(totalDistanceText: replayTotalDistanceText(totalMeters: workout.distanceMeters))
         replayRulerView.addTarget(self, action: #selector(handleReplayProgressChanged(_:)), for: .valueChanged)
@@ -960,10 +973,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
             detailStackView.addArrangedSubview(calorieRiceView)
         }
 
-        view.addSubview(panelShadowView)
-        view.addSubview(panelView)
+        panelSheetViewController.view.addSubview(panelView)
         panelView.contentView.addSubview(handleTouchView)
-        handleTouchView.addSubview(handleView)
         panelView.contentView.addSubview(iconView)
         panelView.contentView.addSubview(titleStackView)
         panelView.contentView.addSubview(metricsStackView)
@@ -985,25 +996,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         panelView.snp.makeConstraints { make in
-            make.leading.trailing.equalToSuperview().inset(10)
-            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(10)
-            panelHeightConstraint = make.height.equalTo(panelHeight(for: .minimum)).constraint
-        }
-
-        panelShadowView.snp.makeConstraints { make in
-            make.edges.equalTo(panelView)
+            make.edges.equalToSuperview()
         }
 
         handleTouchView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
             make.height.equalTo(panelHandleTouchHeight)
-        }
-
-        handleView.snp.makeConstraints { make in
-            make.centerX.equalToSuperview()
-            make.top.equalToSuperview().offset(9)
-            make.width.equalTo(42)
-            make.height.equalTo(4)
         }
 
         iconView.snp.makeConstraints { make in
@@ -1047,14 +1045,54 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
         }
 
-        updatePrimaryContentScale(for: panelHeight(for: .minimum))
+        applyPanelSheetDetent(.minimum, animated: false)
     }
 
-    private func updatePanelShadowPath() {
-        panelShadowView.layer.shadowPath = UIBezierPath(
-            roundedRect: panelShadowView.bounds,
-            cornerRadius: 32
-        ).cgPath
+    private func presentPanelSheetIfNeeded() {
+        guard !hasPresentedPanelSheet,
+              presentedViewController == nil,
+              view.window != nil else {
+            return
+        }
+
+        if let sheetPresentationController = panelSheetViewController.sheetPresentationController {
+            sheetPresentationController.detents = [
+                .custom(identifier: Self.minimumPanelDetentIdentifier) { [weak self] _ in
+                    self?.panelHeight(for: .minimum) ?? 68
+                },
+                .custom(identifier: Self.mediumPanelDetentIdentifier) { [weak self] _ in
+                    self?.panelHeight(for: .medium) ?? 200
+                }
+            ]
+            sheetPresentationController.selectedDetentIdentifier = Self.minimumPanelDetentIdentifier
+            sheetPresentationController.largestUndimmedDetentIdentifier = Self.mediumPanelDetentIdentifier
+            sheetPresentationController.prefersGrabberVisible = true
+            sheetPresentationController.prefersScrollingExpandsWhenScrolledToEdge = false
+            sheetPresentationController.preferredCornerRadius = 28
+            sheetPresentationController.delegate = self
+        }
+
+        hasPresentedPanelSheet = true
+        present(panelSheetViewController, animated: false)
+    }
+
+    private var modalPresentationHost: UIViewController {
+        if presentedViewController === panelSheetViewController {
+            return panelSheetViewController
+        }
+
+        return self
+    }
+
+    private func dismissPanelSheetForNavigation(_ completion: @escaping () -> Void) {
+        guard presentedViewController === panelSheetViewController else {
+            completion()
+            return
+        }
+
+        suppressPanelSheetPresentation = true
+        hasPresentedPanelSheet = false
+        panelSheetViewController.dismiss(animated: true, completion: completion)
     }
 
     private func startDeferredDetailLoadingIfNeeded() {
@@ -1209,40 +1247,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
         mapView.addAnnotations(routeMediaItems.map(RouteMediaAnnotation.init))
     }
 
-    @objc private func handlePanelPan(_ recognizer: UIPanGestureRecognizer) {
-        switch recognizer.state {
-        case .began:
-            panStartHeight = panelCurrentHeight()
-        case .changed:
-            let translationY = recognizer.translation(in: view).y
-            let proposedHeight = min(
-                max(panStartHeight - translationY, panelHeight(for: .minimum)),
-                panelHeight(for: .medium)
-            )
-            updatePanel(height: proposedHeight, animated: false)
-        case .ended, .cancelled, .failed:
-            let velocityY = recognizer.velocity(in: view).y
-            let currentHeight = panelCurrentHeight()
-            setPanelDetent(targetPanelDetent(for: currentHeight, velocityY: velocityY), animated: true)
-        default:
-            break
-        }
-    }
-
-    private func panelCurrentHeight() -> CGFloat {
-        panelView.bounds.height > 0 ? panelView.bounds.height : panelHeight(for: selectedPanelDetent)
-    }
-
     private func panelHeight(for detent: PanelDetent) -> CGFloat {
         switch detent {
         case .minimum:
             return minimumPanelHeight
         case .medium:
-            var height = mediumPanelHeight
-            if panelCaloriesKilocalories != nil {
-                height += calorieRiceTopSpacing + calorieRiceViewHeight
-            }
-            return height
+            return mediumPanelHeight
         }
     }
 
@@ -1282,40 +1292,20 @@ final class WorkoutRouteDetailViewController: UIViewController {
         metricsStackView.transform = transform
     }
 
-    private func targetPanelDetent(for height: CGFloat, velocityY: CGFloat) -> PanelDetent {
-        let minimumHeight = panelHeight(for: .minimum)
-        let mediumHeight = panelHeight(for: .medium)
-
-        if velocityY < -220 {
-            return .medium
-        }
-
-        if velocityY > 220 {
-            return .minimum
-        }
-
-        let midpoint = (minimumHeight + mediumHeight) / 2
-        return height >= midpoint ? .medium : .minimum
-    }
-
-    private func setPanelDetent(_ detent: PanelDetent, animated: Bool) {
+    private func applyPanelSheetDetent(_ detent: PanelDetent, animated: Bool) {
         selectedPanelDetent = detent
         if detent == .minimum {
             removeReplayAnnotation()
             replayRulerView.setProgress(0)
         }
-        updatePanel(height: panelHeight(for: detent), animated: animated)
-    }
 
-    private func updatePanel(height: CGFloat, animated: Bool) {
-        let progress = panelDetailProgress(for: height)
-        panelHeightConstraint?.update(offset: height)
+        let height = panelHeight(for: detent)
         primaryContentTopConstraint?.update(offset: primaryContentTopOffset(for: height))
 
         let changes = {
-            self.detailStackView.alpha = min(max(progress, 0), 1)
+            self.detailStackView.alpha = 1
             self.updatePrimaryContentScale(for: height)
-            self.view.layoutIfNeeded()
+            self.panelSheetViewController.view.layoutIfNeeded()
         }
 
         guard animated else {
@@ -1573,13 +1563,35 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func panelDistanceText() -> String? {
+        let distanceText: String
         if workout.distanceMeters >= 1000 {
-            return String(format: "%.2f km", workout.distanceMeters / 1000)
+            distanceText = String(format: "%.1f km", workout.distanceMeters / 1000)
         } else if workout.distanceMeters > 0 {
-            return AppLocalization.format(.distanceMetersFormat, workout.distanceMeters)
+            distanceText = AppLocalization.format(.distanceMetersFormat, workout.distanceMeters)
         } else {
             return nil
         }
+
+        guard let elevationGainText = panelElevationGainText() else {
+            return distanceText
+        }
+
+        return "\(distanceText) / \(elevationGainText)"
+    }
+
+    private func panelElevationGainText() -> String? {
+        guard let elevationGainMeters = workout.displayElevationGainMeters,
+              elevationGainMeters.isFinite,
+              elevationGainMeters > 0 else {
+            return nil
+        }
+
+        let roundedElevationGain = elevationGainMeters.rounded()
+        if AppLanguageStore.shared.language == .chinese {
+            return "爬升\(Int(roundedElevationGain)) 米"
+        }
+
+        return AppLocalization.format(.elevationGainFormat, roundedElevationGain)
     }
 
     private func panelDurationText() -> String? {
@@ -1606,13 +1618,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 }
 
-extension WorkoutRouteDetailViewController: UIGestureRecognizerDelegate {
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard gestureRecognizer === panelPanGestureRecognizer else {
-            return true
+extension WorkoutRouteDetailViewController: UISheetPresentationControllerDelegate {
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard presentationController.presentedViewController === panelSheetViewController else {
+            return
         }
 
-        let rulerLocation = touch.location(in: replayRulerView)
-        return !replayRulerView.bounds.contains(rulerLocation)
+        hasPresentedPanelSheet = false
+    }
+
+    func sheetPresentationControllerDidChangeSelectedDetentIdentifier(
+        _ sheetPresentationController: UISheetPresentationController
+    ) {
+        let detent: PanelDetent = sheetPresentationController.selectedDetentIdentifier == Self.mediumPanelDetentIdentifier
+            ? .medium
+            : .minimum
+        applyPanelSheetDetent(detent, animated: true)
     }
 }

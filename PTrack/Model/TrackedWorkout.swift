@@ -322,8 +322,19 @@ struct TrackedWorkout: Codable {
         return AppLocalization.format(.durationMinutesFormat, max(minutes, 1))
     }
 
+    var displayElevationGainMeters: Double? {
+        if isMergedRouteCollectionSource,
+           let elevationGainMeters = metadata?["routeCollection.merge.elevationGainMeters"]?.doubleValue,
+           elevationGainMeters.isFinite,
+           elevationGainMeters > 0 {
+            return elevationGainMeters
+        }
+
+        return routeSummary?.elevationGainMeters
+    }
+
     var elevationGainText: String? {
-        guard let elevationGainMeters = routeSummary?.elevationGainMeters,
+        guard let elevationGainMeters = displayElevationGainMeters,
               elevationGainMeters.isFinite,
               elevationGainMeters > 0 else {
             return nil
