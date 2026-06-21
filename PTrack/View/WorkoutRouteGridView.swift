@@ -60,6 +60,7 @@ final class WorkoutRouteGridView: UIView {
     var onScroll: ((UIScrollView) -> Void)?
     var onEndDragging: ((UIScrollView, Bool) -> Void)?
     var onEndDecelerating: ((UIScrollView) -> Void)?
+    var onColumnCountResolved: ((CGFloat) -> Void)?
     var onColumnSnapFinished: (() -> Void)?
     var contextMenuConfigurationProvider: ((TrackedWorkout, IndexPath) -> UIContextMenuConfiguration?)?
 
@@ -351,6 +352,7 @@ private extension WorkoutRouteGridView {
             updateColumnCount(newColumnCount, anchoredAt: recognizer.location(in: collectionView))
         case .ended, .cancelled, .failed:
             let snappedColumnCount = clampedColumnCount(round(columnCount))
+            onColumnCountResolved?(snappedColumnCount)
             guard abs(snappedColumnCount - columnCount) > pinchUpdateThreshold else {
                 syncColumnCountWithoutAnchor(snappedColumnCount)
                 finishColumnSnap()

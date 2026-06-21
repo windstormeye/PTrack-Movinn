@@ -49,7 +49,7 @@ final class SportsCareerViewController: UIViewController {
 
     static let heatmapSheetCollapsedHeight: CGFloat = 90
 
-    private let workouts: [TrackedWorkout]
+    private var workouts: [TrackedWorkout]
     private let presentationStyle: PresentationStyle
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
     private let navigationBackgroundMask = CAGradientLayer()
@@ -247,14 +247,28 @@ final class SportsCareerViewController: UIViewController {
         )
     }
 
-    private func reloadStatisticsAsync() {
+    func updateWorkouts(_ workouts: [TrackedWorkout], animated: Bool) {
+        let incomingIDs = Set(workouts.map(\.id))
+        guard incomingIDs != Set(self.workouts.map(\.id)) else {
+            return
+        }
+
+        self.workouts = workouts
+        reloadStatisticsAsync(animatedFromPrevious: animated)
+    }
+
+    private func reloadStatisticsAsync(animatedFromPrevious: Bool = false) {
         let loadToken = UUID()
         let workouts = workouts
         let language = AppLanguageStore.shared.language
+        let previousStatistics = statistics
+        let shouldShowLoading = !animatedFromPrevious || previousStatistics == nil
         statisticsLoadToken = loadToken
-        statistics = nil
-        collectionView?.reloadData()
-        collectionView?.collectionViewLayout.invalidateLayout()
+        if shouldShowLoading {
+            statistics = nil
+            collectionView?.reloadData()
+            collectionView?.collectionViewLayout.invalidateLayout()
+        }
 
         DispatchQueue.global(qos: .userInitiated).async {
             let statistics = SportsCareerStatistics(
@@ -272,7 +286,11 @@ final class SportsCareerViewController: UIViewController {
                 self.collectionView.collectionViewLayout.invalidateLayout()
                 self.collectionView.reloadData()
 
-                if self.hasPlayedAppearanceAnimation {
+                if animatedFromPrevious,
+                   let previousStatistics,
+                   self.hasPlayedAppearanceAnimation {
+                    self.animateVisibleMetricCells(from: previousStatistics, to: statistics)
+                } else if self.hasPlayedAppearanceAnimation {
                     self.animateVisibleMetricCells()
                 }
             }
@@ -304,6 +322,22 @@ final class SportsCareerViewController: UIViewController {
                 cell.animateValuesFromZero(duration: 0.9)
             case let cell as CareerSportOverviewCell:
                 cell.animateValuesFromZero(duration: 0.9)
+            default:
+                break
+            }
+        }
+    }
+
+    private func animateVisibleMetricCells(
+        from previousStatistics: SportsCareerStatistics,
+        to statistics: SportsCareerStatistics
+    ) {
+        for cell in collectionView.visibleCells {
+            switch cell {
+            case let cell as CareerSummaryCell:
+                cell.animateValues(from: previousStatistics, to: statistics, duration: 0.55)
+            case let cell as CareerSportOverviewCell:
+                cell.animateValuesFromZero(duration: 0.55)
             default:
                 break
             }
@@ -1247,6 +1281,32 @@ private final class CareerSummaryCell: UICollectionViewCell {
         totalDurationView.animateValueFromZero(duration: duration)
     }
 
+    func animateValues(
+        from previousStatistics: SportsCareerStatistics,
+        to statistics: SportsCareerStatistics,
+        duration: TimeInterval
+    ) {
+        guard !stackView.isHidden else {
+            return
+        }
+
+        totalDistanceView.animateValue(
+            from: previousStatistics.totalDistanceMeters,
+            to: statistics.totalDistanceMeters,
+            duration: duration
+        )
+        totalCountView.animateValue(
+            from: Double(previousStatistics.totalCount),
+            to: Double(statistics.totalCount),
+            duration: duration
+        )
+        totalDurationView.animateValue(
+            from: previousStatistics.totalDurationSeconds,
+            to: statistics.totalDurationSeconds,
+            duration: duration
+        )
+    }
+
     private func configureViews() {
         contentView.backgroundColor = .clear
 
@@ -1288,6 +1348,10 @@ private final class CareerSummaryMetricView: UIView {
 
     func animateValueFromZero(duration: TimeInterval) {
         valueLabel.animateFromZero(duration: duration)
+    }
+
+    func animateValue(from startValue: Double, to endValue: Double, duration: TimeInterval) {
+        valueLabel.animate(from: startValue, to: endValue, duration: duration)
     }
 
     override init(frame: CGRect) {
@@ -3531,6 +3595,7 @@ private final class AnimatedMetricLabel: UILabel {
     private var displayLink: CADisplayLink?
     private var animationStartTime: CFTimeInterval = 0
     private var animationDuration: TimeInterval = 0
+    private var animationStartValue: Double = 0
 
     deinit {
         displayLink?.invalidate()
@@ -3553,10 +3618,16 @@ private final class AnimatedMetricLabel: UILabel {
     }
 
     func animateFromZero(duration: TimeInterval) {
+        animate(from: 0, to: finalValue, duration: duration)
+    }
+
+    func animate(from startValue: Double, to endValue: Double, duration: TimeInterval) {
         displayLink?.invalidate()
+        finalValue = endValue
+        animationStartValue = startValue
         animationDuration = duration
         animationStartTime = CACurrentMediaTime()
-        updateDisplayedValue(0)
+        updateDisplayedValue(startValue)
 
         let displayLink = CADisplayLink(target: self, selector: #selector(handleDisplayLink(_:)))
         self.displayLink = displayLink
@@ -3567,7 +3638,7 @@ private final class AnimatedMetricLabel: UILabel {
         let elapsedTime = displayLink.timestamp - animationStartTime
         let progress = min(max(elapsedTime / animationDuration, 0), 1)
         let easedProgress = 1 - pow(1 - progress, 3)
-        updateDisplayedValue(finalValue * easedProgress)
+        updateDisplayedValue(animationStartValue + (finalValue - animationStartValue) * easedProgress)
 
         guard progress >= 1 else {
             return

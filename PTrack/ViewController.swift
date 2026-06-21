@@ -15,6 +15,7 @@ import UIKit
 class ViewController: UIViewController {
     private enum DefaultsKey {
         static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
+        static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
     private let store = HealthWorkoutStore()
@@ -69,7 +70,7 @@ class ViewController: UIViewController {
     private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
     private let routeBookLocateButton = UIButton(type: .system)
     private let emptyDataSourceView = HomeDataSourceEmptyView()
-    private let columnCount: CGFloat = 3
+    private let defaultColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
     private let lineSpacing: CGFloat = 2
     private let headerBottomPadding: CGFloat = 8
@@ -148,7 +149,7 @@ class ViewController: UIViewController {
         view.backgroundColor = .systemBackground
 
         routeGridView.configureLayout(
-            columns: columnCount,
+            columns: cachedRouteGridColumnCount(),
             itemSpacing: itemSpacing,
             lineSpacing: lineSpacing,
             sectionInset: sectionInset
@@ -191,6 +192,9 @@ class ViewController: UIViewController {
             self?.finishPullRefreshTracking()
             self?.flushPendingWorkouts()
         }
+        routeGridView.onColumnCountResolved = { [weak self] columnCount in
+            self?.saveRouteGridColumnCount(columnCount)
+        }
         routeGridView.onColumnSnapFinished = { [weak self] in
             self?.flushPendingWorkouts()
         }
@@ -202,6 +206,22 @@ class ViewController: UIViewController {
         routeGridView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+    }
+
+    private func cachedRouteGridColumnCount() -> CGFloat {
+        let value = UserDefaults.standard.integer(forKey: DefaultsKey.homeRouteGridColumnCount)
+        guard value >= 2, value <= 6 else {
+            return defaultColumnCount
+        }
+
+        return CGFloat(value)
+    }
+
+    private func saveRouteGridColumnCount(_ columnCount: CGFloat) {
+        let roundedColumnCount = Int(round(columnCount))
+        let clampedColumnCount = min(max(roundedColumnCount, 2), 6)
+        UserDefaults.standard.set(clampedColumnCount, forKey: DefaultsKey.homeRouteGridColumnCount)
+        UserDefaults.standard.synchronize()
     }
 
     private func configureRouteBookMapView() {

@@ -10,7 +10,7 @@ import UIKit
 
 extension WorkoutRouteHeatmapViewController: MKMapViewDelegate {
     func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-        suspendProgressiveRouteLoading()
+        handleMapRegionWillChange(mapView)
     }
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
