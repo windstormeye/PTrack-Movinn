@@ -9,6 +9,11 @@ import SnapKit
 import UIKit
 
 final class WorkoutRouteCalorieRiceView: UIView {
+    private enum RiceLayoutMode {
+        case resting
+        case falling
+    }
+
     private let titleLabel = UILabel()
     private let gravityMotionEffect = GravityTiltMotionEffect()
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
@@ -61,6 +66,22 @@ final class WorkoutRouteCalorieRiceView: UIView {
         titleLabel.text = AppLocalization.format(.burnedCaloriesFormat, caloriesKilocalories)
         calibratedViewerOffset = nil
         rebuildRiceLabels(count: riceBowlCount(for: caloriesKilocalories))
+    }
+
+    func restartRiceFallAnimation() {
+        guard !riceBodies.isEmpty else {
+            return
+        }
+
+        guard bounds.size != .zero else {
+            needsInitialRiceLayout = true
+            setNeedsLayout()
+            return
+        }
+
+        layoutRiceLabels(mode: .falling)
+        tiltGravityY = max(tiltGravityY, restingVerticalGravity)
+        resetPhysics(initialVerticalVelocity: 26)
     }
 
     private func configureView() {
@@ -118,7 +139,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
         return min(max(rawCount, 1), 24)
     }
 
-    private func layoutRiceLabels() {
+    private func layoutRiceLabels(mode: RiceLayoutMode = .resting) {
         let clusterCenterX = bounds.width * 0.75
         let baseY = bounds.height - bodySize.height - 12
         let columnSpacing = bodySize.width * 0.66
@@ -132,18 +153,27 @@ final class WorkoutRouteCalorieRiceView: UIView {
             let rowWidth = CGFloat(rowCount - 1) * columnSpacing
             let jitterX: CGFloat = index.isMultiple(of: 2) ? -2 : 2
             let x = clusterCenterX - rowWidth / 2 + CGFloat(column) * columnSpacing + jitterX
-            let y = baseY - CGFloat(row) * rowSpacing
+            let y: CGFloat
+            let minimumY: CGFloat
+            switch mode {
+            case .resting:
+                y = baseY - CGFloat(row) * rowSpacing
+                minimumY = 30
+            case .falling:
+                y = 6 + CGFloat(row) * rowSpacing * 0.32 + CGFloat(column % 2) * 2
+                minimumY = 4
+            }
 
             body.frame = CGRect(
                 x: min(max(x, 8), max(bounds.width - bodySize.width - 8, 8)),
-                y: min(max(y, 30), max(bounds.height - bodySize.height - 8, 30)),
+                y: min(max(y, minimumY), max(bounds.height - bodySize.height - 8, minimumY)),
                 width: bodySize.width,
                 height: bodySize.height
             )
         }
     }
 
-    private func resetPhysics() {
+    private func resetPhysics(initialVerticalVelocity: CGFloat = -16) {
         animator.removeAllBehaviors()
 
         guard !riceBodies.isEmpty, bounds.size != .zero else {
@@ -174,7 +204,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
 
         for (index, body) in riceBodies.enumerated() {
             let direction: CGFloat = index.isMultiple(of: 2) ? 1 : -1
-            item.addLinearVelocity(CGPoint(x: direction * 8, y: -16), for: body)
+            item.addLinearVelocity(CGPoint(x: direction * 8, y: initialVerticalVelocity), for: body)
             item.addAngularVelocity(direction * 0.8, for: body)
         }
 

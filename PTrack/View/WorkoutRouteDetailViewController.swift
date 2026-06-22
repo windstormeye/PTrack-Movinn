@@ -86,9 +86,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var hasPreparedForPermanentDismissal = false
 
     private let minimumPanelHeight: CGFloat = 68
-    private let mediumPanelHeight: CGFloat = 200
+    private let detailContentTopSpacing: CGFloat = 24
+    private let replayRulerViewHeight: CGFloat = 98
     private let calorieRiceViewHeight: CGFloat = 88
     private let calorieRiceTopSpacing: CGFloat = 12
+    private let mediumPanelBottomPadding: CGFloat = 18
     private let panelHandleTouchHeight: CGFloat = 32
     private let primaryContentSize: CGFloat = 28
     private let expandedPrimaryContentTop: CGFloat = 33
@@ -1077,11 +1079,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         detailStackView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview().inset(18)
-            make.top.equalTo(iconView.snp.bottom).offset(24)
+            make.top.equalTo(iconView.snp.bottom).offset(detailContentTopSpacing)
         }
 
         replayRulerView.snp.makeConstraints { make in
-            make.height.equalTo(98)
+            make.height.equalTo(replayRulerViewHeight)
         }
 
         if caloriesKilocalories != nil {
@@ -1131,13 +1133,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func dismissPanelSheetForNavigation(_ completion: @escaping () -> Void) {
         guard presentedViewController === panelSheetViewController else {
+            suppressPanelSheetPresentation = false
             completion()
             return
         }
 
         suppressPanelSheetPresentation = true
         hasPresentedPanelSheet = false
-        panelSheetViewController.dismiss(animated: true, completion: completion)
+        panelSheetViewController.dismiss(animated: true) { [weak self] in
+            self?.suppressPanelSheetPresentation = false
+            completion()
+        }
     }
 
     private func startDeferredDetailLoadingIfNeeded() {
@@ -1315,8 +1321,32 @@ final class WorkoutRouteDetailViewController: UIViewController {
         case .minimum:
             return minimumPanelHeight
         case .medium:
-            return mediumPanelHeight
+            return mediumPanelContentHeight()
         }
+    }
+
+    private func mediumPanelContentHeight() -> CGFloat {
+        let detailStackBottom = expandedPrimaryContentBottomY()
+            + detailContentTopSpacing
+            + replayRulerViewHeight
+            + mediumPanelCalorieContentHeight()
+        return detailStackBottom + mediumPanelBottomPadding
+    }
+
+    private func expandedPrimaryContentBottomY() -> CGFloat {
+        if presentationMode == .routeCollection {
+            return expandedPrimaryContentTop + primaryContentSize / 2
+        }
+
+        return expandedPrimaryContentTop + primaryContentSize
+    }
+
+    private func mediumPanelCalorieContentHeight() -> CGFloat {
+        guard panelCaloriesKilocalories != nil else {
+            return 0
+        }
+
+        return calorieRiceTopSpacing + calorieRiceViewHeight
     }
 
     private func panelDetailProgress(for height: CGFloat) -> CGFloat {
@@ -1381,10 +1411,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
             delay: 0,
             usingSpringWithDamping: 0.86,
             initialSpringVelocity: 0.7,
-            options: [.allowUserInteraction, .beginFromCurrentState]
-        ) {
-            changes()
+            options: [.allowUserInteraction, .beginFromCurrentState],
+            animations: changes,
+            completion: { [weak self] _ in
+                self?.restartMediumPanelAnimationsIfNeeded(for: detent)
+            }
+        )
+    }
+
+    private func restartMediumPanelAnimationsIfNeeded(for detent: PanelDetent) {
+        guard detent == .medium,
+              panelCaloriesKilocalories != nil else {
+            return
         }
+
+        calorieRiceView.restartRiceFallAnimation()
     }
 
     @objc private func handleReplayProgressChanged(_ sender: WorkoutRouteReplayRulerView) {
