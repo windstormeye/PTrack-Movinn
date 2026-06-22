@@ -36,17 +36,25 @@ final class RouteMediaAnnotationView: MKAnnotationView {
         configureViews()
     }
 
+    deinit {
+        cancelImageRequest()
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
-        if imageRequestID != PHInvalidImageRequestID {
-            Self.imageManager.cancelImageRequest(imageRequestID)
-            imageRequestID = PHInvalidImageRequestID
-        }
+        cancelImageRequest()
 
         representedAssetID = nil
         imageView.image = nil
         badgeView.image = nil
         badgeView.isHidden = true
+    }
+
+    private func cancelImageRequest() {
+        if imageRequestID != PHInvalidImageRequestID {
+            Self.imageManager.cancelImageRequest(imageRequestID)
+            imageRequestID = PHInvalidImageRequestID
+        }
     }
 
     override func layoutSubviews() {

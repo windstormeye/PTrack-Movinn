@@ -124,6 +124,21 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         liveBadgeView.isHidden = true
     }
 
+    func prepareForDismissal() {
+        cancelRequests()
+        representedAssetID = nil
+        imageView.image = nil
+        livePhotoView.stopPlayback()
+        livePhotoView.livePhoto = nil
+        removePlayerObservers()
+        player?.pause()
+        playerLayer?.removeFromSuperlayer()
+        playerLayer = nil
+        player = nil
+        hidePlayButtonWorkItem?.cancel()
+        hidePlayButtonWorkItem = nil
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         playerLayer?.frame = videoStageView.bounds

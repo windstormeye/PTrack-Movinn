@@ -15,10 +15,16 @@ enum WorkoutRouteSnapshotRenderer {
         cache.totalCostLimit = 80 * 1024 * 1024
         return cache
     }()
+    private static let inFlightLock = NSLock()
+    private static var inFlightCompletions: [String: [(UIImage?) -> Void]] = [:]
     private static let renderQueue = DispatchQueue(label: "studio.pj.PTrack.route-render", qos: .userInitiated, attributes: .concurrent)
     private static let routeLineWidth: CGFloat = 3.6
     private static let mapPaddingRatio = 0.10
     private static let routeOnlyPaddingRatio = 0.18
+
+    static func clearMemoryCache() {
+        imageCache.removeAllObjects()
+    }
 
     static func cachedSnapshot(
         for workout: TrackedWorkout,
@@ -31,12 +37,22 @@ enum WorkoutRouteSnapshotRenderer {
         let scale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
         let cacheSizeKey = "\(Int(size.width * scale))x\(Int(size.height * scale))"
         let userInterfaceStyle = effectiveUserInterfaceStyle(for: mapStyle)
-        let cacheKey = "\(workout.id)-gcj\(CoordinateTransformer.version)-\(cacheSizeKey)-\(showsMap)-\(mapStyle.rawValue)-\(userInterfaceStyle.rawValue)" as NSString
+        let cacheKeyString = "\(workout.id)-gcj\(CoordinateTransformer.version)-\(cacheSizeKey)-\(showsMap)-\(mapStyle.rawValue)-\(userInterfaceStyle.rawValue)"
+        let cacheKey = cacheKeyString as NSString
 
         if let image = imageCache.object(forKey: cacheKey) {
             completion(image)
             return
         }
+
+        inFlightLock.lock()
+        if inFlightCompletions[cacheKeyString] != nil {
+            inFlightCompletions[cacheKeyString]?.append(completion)
+            inFlightLock.unlock()
+            return
+        }
+        inFlightCompletions[cacheKeyString] = [completion]
+        inFlightLock.unlock()
 
         makeSnapshot(
             for: workout,
@@ -50,7 +66,13 @@ enum WorkoutRouteSnapshotRenderer {
                 let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
                 imageCache.setObject(image, forKey: cacheKey, cost: cost)
             }
-            completion(image)
+
+            let completions: [(UIImage?) -> Void]
+            inFlightLock.lock()
+            completions = inFlightCompletions.removeValue(forKey: cacheKeyString) ?? []
+            inFlightLock.unlock()
+
+            completions.forEach { $0(image) }
         }
     }
 

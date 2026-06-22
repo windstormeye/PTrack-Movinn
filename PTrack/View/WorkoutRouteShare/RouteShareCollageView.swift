@@ -136,6 +136,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
     deinit {
         cancelImageRequests()
+        stopLivePhotoPlayback()
     }
 
     override func layoutSubviews() {

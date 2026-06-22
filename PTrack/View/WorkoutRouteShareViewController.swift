@@ -95,6 +95,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var hasAppliedInitialModuleLayout = false
     private var hasShownAspectRatioAdjustmentToast = false
     private var isExportChromeHidden = false
+    private var hasPreparedForPermanentDismissal = false
 
     private var photoItems: [SharePhotoItem]
     private var selectedPhotoIndex: Int?
@@ -146,6 +147,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let moduleMaximumScale: CGFloat = 3
     private let backgroundMediaMinimumScale: CGFloat = 0.35
     private let backgroundMediaMaximumScale: CGFloat = 4
+    private let routeModuleBaseSize: CGFloat = 196
     private let brandPillVisibleInset: CGFloat = 6
 
     private let navigationBackgroundHeight: CGFloat = 124
@@ -181,13 +183,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     deinit {
-        if let previewImageRequestID {
-            PHImageManager.default().cancelImageRequest(previewImageRequestID)
-        }
-        if let previewLivePhotoRequestID {
-            PHImageManager.default().cancelImageRequest(previewLivePhotoRequestID)
-        }
-        cancelCollageLivePhotoRequest()
+        prepareForPermanentDismissal()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -227,6 +223,13 @@ final class WorkoutRouteShareViewController: UIViewController {
         restoreInteractivePopGesture()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isPermanentlyLeaving {
+            prepareForPermanentDismissal()
+        }
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         disableInteractivePopGesture()
@@ -234,6 +237,51 @@ final class WorkoutRouteShareViewController: UIViewController {
             self?.disableInteractivePopGesture()
         }
         playEntranceAnimationIfNeeded()
+    }
+
+    private var isPermanentlyLeaving: Bool {
+        isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true
+    }
+
+    private func prepareForPermanentDismissal() {
+        guard !hasPreparedForPermanentDismissal else {
+            return
+        }
+
+        hasPreparedForPermanentDismissal = true
+        restoreInteractivePopGesture()
+        cancelPreviewMediaRequests()
+        cancelCollageLivePhotoRequest()
+        collageView.clear()
+        previewImageView.image = nil
+        previewLivePhotoView.stopPlayback()
+        previewLivePhotoView.livePhoto = nil
+        photoCollectionView.dataSource = nil
+        photoCollectionView.delegate = nil
+        mapView.delegate = nil
+        if !mapView.overlays.isEmpty {
+            mapView.removeOverlays(mapView.overlays)
+        }
+        if !mapView.annotations.isEmpty {
+            mapView.removeAnnotations(mapView.annotations)
+        }
+        routePolyline = nil
+        mapView.layer.removeAllAnimations()
+        mapContainerView.layer.removeAllAnimations()
+        view.layer.removeAllAnimations()
+        AppMapContainerView.retainForMetalDrain(mapContainerView)
+    }
+
+    private func cancelPreviewMediaRequests() {
+        if let previewImageRequestID {
+            PHImageManager.default().cancelImageRequest(previewImageRequestID)
+            self.previewImageRequestID = nil
+        }
+        if let previewLivePhotoRequestID {
+            PHImageManager.default().cancelImageRequest(previewLivePhotoRequestID)
+            self.previewLivePhotoRequestID = nil
+        }
+        previewLivePhotoView.stopPlayback()
     }
 
     override func viewDidLayoutSubviews() {
@@ -521,7 +569,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         routeModuleView.snp.makeConstraints { make in
             make.top.leading.equalToSuperview().inset(22)
-            make.width.height.equalTo(138)
+            make.width.height.equalTo(routeModuleBaseSize)
         }
 
         metricsModuleView.snp.makeConstraints { make in
@@ -982,7 +1030,8 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
 
         mediaStore.loadMedia(for: workout) { [weak self] result in
-            guard let self else {
+            guard let self,
+                  !self.hasPreparedForPermanentDismissal else {
                 return
             }
 
@@ -1157,6 +1206,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             options: options
         ) { [weak self] image, _ in
             guard let self,
+                  !self.hasPreparedForPermanentDismissal,
                   representedPreviewPhotoID == representedID else {
                 return
             }
@@ -1186,6 +1236,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             options: options
         ) { [weak self] livePhoto, _ in
             guard let self,
+                  !self.hasPreparedForPermanentDismissal,
                   representedPreviewPhotoID == representedID else {
                 return
             }
@@ -1219,17 +1270,19 @@ final class WorkoutRouteShareViewController: UIViewController {
         options.deliveryMode = .highQualityFormat
         options.isNetworkAccessAllowed = true
 
-        func completePlayback(
-            source: (tileIndex: Int, item: SharePhotoItem, asset: PHAsset),
-            livePhoto: PHLivePhoto?,
-            previewInfo: CollageLivePhotoPreviewInfo?
-        ) {
-            guard collageLivePhotoPlaybackToken == playbackToken,
-                  case .collage = previewBackground else {
+        let completePlayback: (
+            (tileIndex: Int, item: SharePhotoItem, asset: PHAsset),
+            PHLivePhoto?,
+            CollageLivePhotoPreviewInfo?
+        ) -> Void = { [weak self] source, livePhoto, previewInfo in
+            guard let self,
+                  !self.hasPreparedForPermanentDismissal,
+                  self.collageLivePhotoPlaybackToken == playbackToken,
+                  case .collage = self.previewBackground else {
                 return
             }
 
-            let collageItems = selectedCollageItems()
+            let collageItems = self.selectedCollageItems()
             if let livePhoto,
                collageItems.indices.contains(source.tileIndex),
                collageItems[source.tileIndex].id == source.item.id {
@@ -1252,7 +1305,7 @@ final class WorkoutRouteShareViewController: UIViewController {
                 return
             }
             let playbackDuration = orderedPlaybacks.map(\.duration).max() ?? Self.defaultLivePhotoPreviewDuration
-            collageView.playLivePhotos(orderedPlaybacks, playbackDuration: playbackDuration)
+            self.collageView.playLivePhotos(orderedPlaybacks, playbackDuration: playbackDuration)
         }
 
         sources.forEach { source in
@@ -1263,6 +1316,7 @@ final class WorkoutRouteShareViewController: UIViewController {
                 options: options
             ) { [weak self] livePhoto, info in
                 guard let self,
+                      !self.hasPreparedForPermanentDismissal,
                       collageLivePhotoPlaybackToken == playbackToken else {
                     return
                 }
@@ -1273,7 +1327,9 @@ final class WorkoutRouteShareViewController: UIViewController {
                 }
 
                 guard let livePhoto else {
-                    completePlayback(source: source, livePhoto: nil, previewInfo: nil)
+                    DispatchQueue.main.async {
+                        completePlayback(source, nil, nil)
+                    }
                     return
                 }
 
@@ -1281,10 +1337,11 @@ final class WorkoutRouteShareViewController: UIViewController {
                     let previewInfo = await Self.previewInfo(forLivePhotoAsset: source.asset)
                     await MainActor.run {
                         guard let self,
+                              !self.hasPreparedForPermanentDismissal,
                               self.collageLivePhotoPlaybackToken == playbackToken else {
                             return
                         }
-                        completePlayback(source: source, livePhoto: livePhoto, previewInfo: previewInfo)
+                        completePlayback(source, livePhoto, previewInfo)
                     }
                 }
                 collageLivePhotoFrameTasks.append(task)
@@ -1820,12 +1877,12 @@ final class WorkoutRouteShareViewController: UIViewController {
         switch module {
         case .route:
             if heightMultiplier <= 0.62 {
-                return 0.48
-            }
-            if heightMultiplier < 0.92 {
                 return 0.64
             }
-            return 1
+            if heightMultiplier < 0.92 {
+                return 0.84
+            }
+            return 1.16
         case .metrics:
             if heightMultiplier <= 0.62 {
                 return 0.66

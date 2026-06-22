@@ -24,6 +24,10 @@ final class RouteMediaBrowserViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        prepareForPermanentDismissal()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         configureNavigationItem()
@@ -33,6 +37,13 @@ final class RouteMediaBrowserViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         configureNavigationBar()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isPermanentlyLeaving {
+            prepareForPermanentDismissal()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -52,6 +63,22 @@ final class RouteMediaBrowserViewController: UIViewController {
 
     override var prefersStatusBarHidden: Bool {
         true
+    }
+
+    private var isPermanentlyLeaving: Bool {
+        isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true
+    }
+
+    private func prepareForPermanentDismissal() {
+        guard isViewLoaded else {
+            return
+        }
+
+        collectionView.visibleCells
+            .compactMap { $0 as? RouteMediaBrowserCell }
+            .forEach { $0.prepareForDismissal() }
+        collectionView.dataSource = nil
+        collectionView.delegate = nil
     }
 
     private func configureNavigationItem() {

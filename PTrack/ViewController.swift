@@ -93,6 +93,19 @@ class ViewController: UIViewController {
     deinit {
         pendingFlushWorkItem?.cancel()
         pendingCacheSaveWorkItem?.cancel()
+        stopRouteBookLocationAndHeadingUpdates()
+        routeBookLocationManager.delegate = nil
+        routeBookMapView.delegate = nil
+        routeBookMapView.showsUserLocation = false
+        if !routeBookMapView.overlays.isEmpty {
+            routeBookMapView.removeOverlays(routeBookMapView.overlays)
+        }
+        if !routeBookMapView.annotations.isEmpty {
+            routeBookMapView.removeAnnotations(routeBookMapView.annotations)
+        }
+        routeBookMapView.layer.removeAllAnimations()
+        routeBookMapContainerView.layer.removeAllAnimations()
+        AppMapContainerView.retainForMetalDrain(routeBookMapContainerView)
         NotificationCenter.default.removeObserver(self)
     }
 

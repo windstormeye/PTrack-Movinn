@@ -74,6 +74,12 @@ final class SportsCareerViewController: UIViewController {
     }
 
     deinit {
+        statisticsLoadToken = UUID()
+        onSelectWorkout = nil
+        if isViewLoaded {
+            collectionView.dataSource = nil
+            collectionView.delegate = nil
+        }
         NotificationCenter.default.removeObserver(self)
     }
 

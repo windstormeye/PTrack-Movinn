@@ -83,6 +83,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var hasStartedRouteLoading = false
     private var hasStartedDeferredDetailLoading = false
     private var isExportingGPX = false
+    private var hasPreparedForPermanentDismissal = false
 
     private let minimumPanelHeight: CGFloat = 68
     private let mediumPanelHeight: CGFloat = 200
@@ -153,6 +154,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     deinit {
+        prepareForPermanentDismissal()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -181,10 +183,52 @@ final class WorkoutRouteDetailViewController: UIViewController {
         startDeferredDetailLoadingIfNeeded()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isPermanentlyLeaving {
+            prepareForPermanentDismissal()
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateNavigationBackgroundMask()
         fitRouteIfNeeded()
+    }
+
+    private var isPermanentlyLeaving: Bool {
+        isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true
+    }
+
+    private func prepareForPermanentDismissal() {
+        guard !hasPreparedForPermanentDismissal else {
+            return
+        }
+
+        hasPreparedForPermanentDismissal = true
+        isExportingGPX = false
+        routeLoadingView.layer.removeAllAnimations()
+        gpxExportLoadingView.layer.removeAllAnimations()
+        routeLoadingIndicator.stopAnimating()
+        gpxExportLoadingIndicator.stopAnimating()
+        replayRulerView.removeTarget(self, action: nil, for: .allEvents)
+        panelSheetViewController.sheetPresentationController?.delegate = nil
+        mapView.delegate = nil
+        if !mapView.overlays.isEmpty {
+            mapView.removeOverlays(mapView.overlays)
+        }
+        if !mapView.annotations.isEmpty {
+            mapView.removeAnnotations(mapView.annotations)
+        }
+        routeMediaItems.removeAll(keepingCapacity: false)
+        replayCoordinates.removeAll(keepingCapacity: false)
+        replayDistances.removeAll(keepingCapacity: false)
+        replayAltitudes.removeAll(keepingCapacity: false)
+        routePolyline = nil
+        replayAnnotation = nil
+        mapView.layer.removeAllAnimations()
+        mapContainerView.layer.removeAllAnimations()
+        AppMapContainerView.retainForMetalDrain(mapContainerView)
     }
 
     private func configureNavigationItem() {
@@ -857,7 +901,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
 
             DispatchQueue.main.async {
-                guard let self else {
+                guard let self,
+                      !self.hasPreparedForPermanentDismissal else {
                     if case let .success(fileURL) = result {
                         try? FileManager.default.removeItem(at: fileURL)
                     }
@@ -1125,7 +1170,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
             )
 
             DispatchQueue.main.async { [weak self] in
-                guard let self else {
+                guard let self,
+                      !self.hasPreparedForPermanentDismissal else {
                     return
                 }
 
@@ -1174,6 +1220,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func applyPreparedRoute(_ preparedRoute: PreparedRoute) {
+        guard !hasPreparedForPermanentDismissal else {
+            return
+        }
+
         configureReplayRoute(with: preparedRoute)
 
         let coordinates = preparedRoute.coordinates
@@ -1190,7 +1240,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
         setRouteLoadingVisible(false)
         fitRouteIfNeeded()
         DispatchQueue.main.async { [weak self] in
-            self?.displayRouteMediaIfRouteReady()
+            guard let self,
+                  !self.hasPreparedForPermanentDismissal else {
+                return
+            }
+            self.displayRouteMediaIfRouteReady()
         }
     }
 
@@ -1218,13 +1272,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func loadRouteMedia() {
         mediaStore.loadMedia(for: workout) { [weak self] result in
-            guard let self else {
+            guard let self,
+                  !self.hasPreparedForPermanentDismissal else {
                 return
             }
 
             switch result {
             case .success(let mediaItems):
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          !self.hasPreparedForPermanentDismissal else {
+                        return
+                    }
                     self.routeMediaItems = mediaItems
                     self.displayRouteMediaIfRouteReady()
                     self.refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: false)
@@ -1237,6 +1296,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func displayRouteMediaIfRouteReady() {
+        guard !hasPreparedForPermanentDismissal else {
+            return
+        }
+
         guard routePolyline != nil,
               !hasDisplayedRouteMediaAnnotations,
               !routeMediaItems.isEmpty else {

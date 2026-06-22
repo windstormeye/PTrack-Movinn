@@ -17,7 +17,8 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private static let routeCache: NSCache<NSString, HeatmapRouteCacheBox> = {
         let cache = NSCache<NSString, HeatmapRouteCacheBox>()
-        cache.countLimit = 3
+        cache.countLimit = 2
+        cache.totalCostLimit = 450_000
         return cache
     }()
 
@@ -35,6 +36,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let cacheLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let navigationTitleLabel = UILabel()
+    private lazy var moreBarButtonItem = makeMoreBarButtonItem()
     private lazy var navigationTitleView: UIStackView = {
         let stackView = UIStackView(arrangedSubviews: [navigationTitleLabel, cacheLoadingIndicator])
         stackView.axis = .horizontal
@@ -62,25 +64,29 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private var hasUserAdjustedMapRegion = false
     private var hasPresentedSportsCareerSheet = false
     private var suppressSportsCareerSheetPresentation = false
+    private var hasPreparedForPermanentDismissal = false
     private var selectedFilters = HeatmapFilterStore.shared.selectedFilters()
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.heatmapStyle()
+    private var filterMenuActions: [HeatmapFilter: UIAction] = [:]
     var routesOverlayRenderer: HeatmapRoutesOverlayRenderer?
     private var renderedRoutesByID: [String: HeatmapRenderedRoute] = [:]
     private var renderedRouteCache: [String: HeatmapRenderedRoute] = [:]
     private var overlayUpdateWorkItem: DispatchWorkItem?
     private var progressiveOverlayWorkItem: DispatchWorkItem?
     private var heatmapDataRefreshWorkItem: DispatchWorkItem?
+    private var routePublishWorkItem: DispatchWorkItem?
     private var overlayUpdateGeneration = 0
     private var cacheLoadGeneration = 0
     private var isLoadingCachedWorkouts = false
 
-    private let routeSamplingRatio = 0.8
-    private let maximumRoutePointCount = 360
+    private let routeSamplingRatio = 1.0
+    private let maximumRoutePointCount = 220
     private let navigationBackgroundHeight: CGFloat = 124
     private let routeLoadingPaddingRatio = 0.42
-    private let routeOverlayBatchSize = 72
+    private let routeOverlayBatchSize = 36
     private let cacheLoadBatchSize = 64
-    private let maximumRenderedRouteCacheCount = 3_000
+    private let routePublishInterval: TimeInterval = 0.08
+    private let maximumRenderedRouteCacheCount = 500
 
     init(workouts: [TrackedWorkout]) {
         self.workouts = workouts
@@ -104,7 +110,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }
 
     deinit {
-        heatmapDataRefreshWorkItem?.cancel()
+        prepareForPermanentDismissal()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -126,9 +132,17 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         if hasPresentedSportsCareerSheet,
-           isMovingFromParent || navigationController?.isBeingDismissed == true {
+           isPermanentlyLeaving {
             hasPresentedSportsCareerSheet = false
+            cancelRouteRenderingWork()
             sportsCareerSheetViewController.dismiss(animated: false)
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isPermanentlyLeaving {
+            prepareForPermanentDismissal()
         }
     }
 
@@ -139,8 +153,18 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         scheduleVisibleRouteOverlayUpdate()
     }
 
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        renderedRouteCache.removeAll(keepingCapacity: false)
+        Self.routeCache.removeAllObjects()
+    }
+
     override var preferredStatusBarStyle: UIStatusBarStyle {
         .darkContent
+    }
+
+    private var isPermanentlyLeaving: Bool {
+        isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true
     }
 
     private func configureNavigationItem() {
@@ -185,7 +209,8 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }
 
     private func updateNavigationRightBarButtonItems() {
-        navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
+        moreBarButtonItem.menu = makeMoreMenu()
+        navigationItem.rightBarButtonItem = moreBarButtonItem
     }
 
     private func setCachedWorkoutLoading(_ isLoading: Bool) {
@@ -275,18 +300,47 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
     }
 
+    private func prepareForPermanentDismissal() {
+        guard !hasPreparedForPermanentDismissal else {
+            return
+        }
+
+        hasPreparedForPermanentDismissal = true
+        cacheLoadGeneration += 1
+        loadGeneration += 1
+        setCachedWorkoutLoading(false)
+        loadingIndicator.stopAnimating()
+        heatmapDataRefreshWorkItem?.cancel()
+        heatmapDataRefreshWorkItem = nil
+        cancelRouteRenderingWork()
+        renderedRoutesByID.removeAll(keepingCapacity: false)
+        renderedRouteCache.removeAll(keepingCapacity: false)
+        preparedRoutes.removeAll(keepingCapacity: false)
+        visibleRoutes.removeAll(keepingCapacity: false)
+        routesOverlay.renderedRoutes = []
+        routesOverlayRenderer = nil
+        mapView.delegate = nil
+        if !mapView.overlays.isEmpty {
+            mapView.removeOverlays(mapView.overlays)
+        }
+        if !mapView.annotations.isEmpty {
+            mapView.removeAnnotations(mapView.annotations)
+        }
+        mapView.layer.removeAllAnimations()
+        mapContainerView.layer.removeAllAnimations()
+        AppMapContainerView.retainForMetalDrain(mapContainerView)
+    }
+
     private func loadCachedWorkoutsProgressively() {
         cacheLoadGeneration += 1
         let generation = cacheLoadGeneration
         setCachedWorkoutLoading(true)
+        let cacheStore = cacheStore
+        let cacheLoadBatchSize = cacheLoadBatchSize
 
-        cacheLoadQueue.async { [weak self] in
-            guard let self else {
-                return
-            }
-
-            let cachedWorkouts = self.cacheStore.load(
-                batchSize: self.cacheLoadBatchSize,
+        cacheLoadQueue.async { [weak self, cacheStore, cacheLoadBatchSize] in
+            let cachedWorkouts = cacheStore.load(
+                batchSize: cacheLoadBatchSize,
                 onBatch: { [weak self] cachedWorkoutBatch in
                     DispatchQueue.main.async { [weak self] in
                         self?.mergeCachedWorkouts(
@@ -348,6 +402,10 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }
 
     private func scheduleHeatmapDataRefresh(resetCamera: Bool, preservesRenderedRoutes: Bool) {
+        guard !hasPreparedForPermanentDismissal else {
+            return
+        }
+
         heatmapDataRefreshWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else {
@@ -364,16 +422,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }
 
     private func makeMoreMenu() -> UIMenu {
-        let filterActions = HeatmapFilter.allCases.map { filter in
-            UIAction(
-                title: filter.title,
-                image: filter.image,
-                attributes: [.keepsMenuPresented],
-                state: selectedFilters.contains(filter) ? .on : .off
-            ) { [weak self] action in
-                self?.toggleFilter(filter, action: action)
-            }
-        }
+        let filterActions = HeatmapFilter.allCases.map(makeFilterMenuAction)
 
         let mapStyleActions = AppMapDisplayStyle.menuCases.map { style in
             UIAction(
@@ -386,11 +435,59 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
         return UIMenu(
             title: "",
+            identifier: UIMenu.Identifier("studio.pj.PTrack.heatmap.more"),
             children: [
-                UIMenu(title: AppLocalization.text(.sportType), image: UIImage(systemName: "figure.walk"), children: filterActions),
-                UIMenu(title: AppLocalization.text(.mapStyle), image: UIImage(systemName: "map"), children: mapStyleActions)
+                UIMenu(
+                    title: AppLocalization.text(.sportType),
+                    image: UIImage(systemName: "figure.walk"),
+                    identifier: UIMenu.Identifier("studio.pj.PTrack.heatmap.sportType"),
+                    children: filterActions
+                ),
+                UIMenu(
+                    title: AppLocalization.text(.mapStyle),
+                    image: UIImage(systemName: "map"),
+                    identifier: UIMenu.Identifier("studio.pj.PTrack.heatmap.mapStyle"),
+                    children: mapStyleActions
+                )
             ]
         )
+    }
+
+    private func makeFilterMenuAction(for filter: HeatmapFilter) -> UIAction {
+        if let action = filterMenuActions[filter] {
+            configureFilterMenuAction(action, for: filter)
+            return action
+        }
+
+        let action = UIAction(
+            title: filter.title,
+            image: nil,
+            identifier: filterMenuActionIdentifier(for: filter),
+            attributes: [.keepsMenuPresented],
+            state: selectedFilters.contains(filter) ? .on : .off
+        ) { [weak self] _ in
+            self?.toggleFilter(filter)
+        }
+        filterMenuActions[filter] = action
+        return action
+    }
+
+    private func configureFilterMenuAction(_ action: UIAction, for filter: HeatmapFilter) {
+        action.title = filter.title
+        action.image = nil
+        action.state = selectedFilters.contains(filter) ? .on : .off
+    }
+
+    private func filterMenuActionIdentifier(for filter: HeatmapFilter) -> UIAction.Identifier {
+        UIAction.Identifier("studio.pj.PTrack.heatmap.filter.\(filter.rawValue)")
+    }
+
+    private func updateFilterMenuActionStates() {
+        for filter in HeatmapFilter.allCases {
+            if let action = filterMenuActions[filter] {
+                configureFilterMenuAction(action, for: filter)
+            }
+        }
     }
 
     private func presentSportsCareerSheetIfNeeded() {
@@ -486,7 +583,11 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                     return
                 }
 
-                Self.routeCache.setObject(HeatmapRouteCacheBox(routes: routes), forKey: cacheKey)
+                Self.routeCache.setObject(
+                    HeatmapRouteCacheBox(routes: routes),
+                    forKey: cacheKey,
+                    cost: Self.routeCacheCost(for: routes)
+                )
                 self.preparedRoutes = routes
                 self.applySelectedFilters(
                     resetCamera: resetCamera,
@@ -560,6 +661,12 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         return "\(workouts.count)-\(maximumPointCount)-\(String(hash, radix: 16))" as NSString
     }
 
+    private static func routeCacheCost(for routes: [HeatmapRoute]) -> Int {
+        routes.reduce(0) { result, route in
+            result + route.coordinates.count
+        }
+    }
+
     private func fitRoutesIfNeeded() {
         guard !hasFittedRoutes, !visibleRoutes.isEmpty else {
             return
@@ -568,14 +675,15 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         fitMap(to: visibleRoutes, animated: false)
     }
 
-    private func toggleFilter(_ filter: HeatmapFilter, action: UIAction) {
+    private func toggleFilter(_ filter: HeatmapFilter) {
         if selectedFilters.contains(filter) {
             selectedFilters.remove(filter)
         } else {
             selectedFilters.insert(filter)
         }
 
-        action.state = selectedFilters.contains(filter) ? .on : .off
+        updateFilterMenuActionStates()
+        moreBarButtonItem.menu = makeMoreMenu()
         HeatmapFilterStore.shared.setSelectedFilters(selectedFilters)
         applySelectedFilters(resetCamera: true, preservesRenderedRoutes: false)
     }
@@ -671,19 +779,35 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         progressiveOverlayWorkItem = nil
 
         renderedRoutesByID.removeAll(keepingCapacity: true)
-        publishRenderedRoutes()
+        publishRenderedRoutes(immediate: true)
+    }
+
+    private func cancelRouteRenderingWork() {
+        overlayUpdateGeneration += 1
+        overlayUpdateWorkItem?.cancel()
+        progressiveOverlayWorkItem?.cancel()
+        routePublishWorkItem?.cancel()
+        overlayUpdateWorkItem = nil
+        progressiveOverlayWorkItem = nil
+        routePublishWorkItem = nil
     }
 
     func suspendProgressiveRouteLoading() {
         overlayUpdateGeneration += 1
         overlayUpdateWorkItem?.cancel()
         progressiveOverlayWorkItem?.cancel()
+        routePublishWorkItem?.cancel()
         overlayUpdateWorkItem = nil
         progressiveOverlayWorkItem = nil
+        routePublishWorkItem = nil
         scheduleVisibleRouteOverlayUpdate()
     }
 
     func scheduleVisibleRouteOverlayUpdate(immediate: Bool = false, preservesRenderedRoutes: Bool = false) {
+        guard !hasPreparedForPermanentDismissal else {
+            return
+        }
+
         guard !visibleRoutes.isEmpty, mapView.bounds.width > 1, mapView.bounds.height > 1 else {
             return
         }
@@ -865,8 +989,45 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }
 
     private func publishRenderedRoutes() {
+        publishRenderedRoutes(immediate: false)
+    }
+
+    private func publishRenderedRoutes(immediate: Bool) {
+        if immediate {
+            routePublishWorkItem?.cancel()
+            routePublishWorkItem = nil
+            publishRenderedRoutesNow()
+            return
+        }
+
+        guard routePublishWorkItem == nil else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.routePublishWorkItem = nil
+            self.publishRenderedRoutesNow()
+        }
+        routePublishWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + routePublishInterval, execute: workItem)
+    }
+
+    private func publishRenderedRoutesNow() {
         routesOverlay.renderedRoutes = Array(renderedRoutesByID.values)
-        routesOverlayRenderer?.setNeedsDisplay()
+        invalidateRoutesOverlayRenderer()
+    }
+
+    private func invalidateRoutesOverlayRenderer() {
+        guard mapView.bounds.width > 1, mapView.bounds.height > 1 else {
+            routesOverlayRenderer?.setNeedsDisplay()
+            return
+        }
+
+        routesOverlayRenderer?.setNeedsDisplay(routeLoadingMapRect())
     }
 
     private func routeLoadingMapRect() -> MKMapRect {
@@ -881,26 +1042,32 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
         switch longitudeDelta {
         case 8...:
-            return min(maximumRoutePointCount, 88)
+            return min(maximumRoutePointCount, 96)
         case 2..<8:
-            return min(maximumRoutePointCount, 144)
+            return min(maximumRoutePointCount, 132)
         case 0.7..<2:
-            return min(maximumRoutePointCount, 220)
+            return min(maximumRoutePointCount, 168)
+        case 0.15..<0.7:
+            return min(maximumRoutePointCount, 200)
         default:
             return maximumRoutePointCount
         }
     }
 
-    private func maximumActiveRouteOverlayCount(for pointLimit: Int) -> Int {
-        switch pointLimit {
-        case ..<100:
-            return 2_200
-        case ..<180:
-            return 1_500
-        case ..<260:
-            return 950
+    private func maximumActiveRouteOverlayCount(for _: Int) -> Int {
+        let longitudeDelta = abs(mapView.region.span.longitudeDelta)
+
+        switch longitudeDelta {
+        case 8...:
+            return 1_400
+        case 2..<8:
+            return 900
+        case 0.7..<2:
+            return 560
+        case 0.15..<0.7:
+            return 340
         default:
-            return 650
+            return 180
         }
     }
 
@@ -994,8 +1161,8 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         let coordinateIndexes = sampledIndexes(sourceCount: sourceCoordinates.count, targetCount: targetCount)
         let sampledCoordinates = coordinateIndexes.map { sourceCoordinates[$0].coordinate }
         let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sampledCoordinates)
-        var mapPoints: [MKMapPoint] = []
-        mapPoints.reserveCapacity(displayCoordinates.count)
+        var validDisplayCoordinates: [CLLocationCoordinate2D] = []
+        validDisplayCoordinates.reserveCapacity(displayCoordinates.count)
         var boundingMapRect = MKMapRect.null
 
         for coordinate in displayCoordinates {
@@ -1004,17 +1171,17 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             }
 
             let point = MKMapPoint(coordinate)
-            mapPoints.append(point)
+            validDisplayCoordinates.append(coordinate)
             boundingMapRect = boundingMapRect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
         }
 
-        guard mapPoints.count > 1, !boundingMapRect.isNull else {
+        guard validDisplayCoordinates.count > 1, !boundingMapRect.isNull else {
             return nil
         }
 
         return HeatmapRoute(
             id: workout.id,
-            coordinates: displayCoordinates,
+            coordinates: validDisplayCoordinates,
             boundingMapRect: boundingMapRect,
             sportKind: workout.sportKind
         )

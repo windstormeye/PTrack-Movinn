@@ -30,18 +30,26 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         configureViews()
     }
 
+    deinit {
+        cancelImageRequest()
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
-        if let imageRequestID {
-            PHImageManager.default().cancelImageRequest(imageRequestID)
-            self.imageRequestID = nil
-        }
+        cancelImageRequest()
         representedAssetIdentifier = nil
         imageView.image = nil
         addIconView.isHidden = true
         liveIconView.isHidden = true
         disabledOverlayView.isHidden = true
         contentView.layer.borderWidth = 0
+    }
+
+    private func cancelImageRequest() {
+        if let imageRequestID {
+            PHImageManager.default().cancelImageRequest(imageRequestID)
+            self.imageRequestID = nil
+        }
     }
 
     func configure(asset: PHAsset, isSelected: Bool) {

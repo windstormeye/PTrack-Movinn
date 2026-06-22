@@ -19,6 +19,11 @@ final class RouteMediaStore {
     private static let imageManager = PHCachingImageManager()
     private static let matchingDistanceThreshold: CLLocationDistance = 200
 
+    static func clearMemoryCache() {
+        resultCache.removeAllObjects()
+        imageManager.stopCachingImagesForAllAssets()
+    }
+
     func loadMedia(
         for workout: TrackedWorkout,
         completion: @escaping (Result<[RouteMediaItem], Error>) -> Void
