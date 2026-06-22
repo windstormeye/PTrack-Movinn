@@ -83,6 +83,7 @@ enum AppTextKey: String {
     case iCloudRouteSyncFailed
     case routeCollectionICloudSyncComplete
     case routeCollectionICloudSyncProgressFormat
+    case mapBackgroundAdjustmentHint
     case mapStyle
     case livePhotoSaved
     case livePhotoSaving
@@ -290,6 +291,7 @@ enum AppLocalization {
             .iCloudRouteSyncFailed: "iCloud 同步开启失败",
             .routeCollectionICloudSyncComplete: "iCloud 同步完成",
             .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 同步中",
+            .mapBackgroundAdjustmentHint: "双击地图调整",
             .mapStyle: "地图样式",
             .livePhotoSaved: "已保存到相册",
             .livePhotoSaving: "正在生成 Live Photo",
@@ -311,7 +313,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "需要完整相册权限",
             .photoLibraryReadAuthorized: "已授权读取相册",
             .photoSaving: "正在保存图片",
-            .photoBackgroundAdjustmentHint: "双击照片空白区域可调整显示范围",
+            .photoBackgroundAdjustmentHint: "双击照片调整",
             .photoMatching: "照片匹配",
             .queryingLocation: "位置查询中",
             .routeBook: "作为路书",
@@ -451,6 +453,7 @@ enum AppLocalization {
             .iCloudRouteSyncFailed: "iCloud同期をオンにできませんでした",
             .routeCollectionICloudSyncComplete: "iCloud同期完了",
             .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud同期中",
+            .mapBackgroundAdjustmentHint: "地図をダブルタップして調整",
             .mapStyle: "地図スタイル",
             .livePhotoSaved: "写真に保存しました",
             .livePhotoSaving: "Live Photoを生成中",
@@ -472,7 +475,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "写真へのフルアクセスが必要です",
             .photoLibraryReadAuthorized: "写真の読み取りは許可されています",
             .photoSaving: "画像を保存中",
-            .photoBackgroundAdjustmentHint: "写真の空白部分をダブルタップして表示範囲を調整できます",
+            .photoBackgroundAdjustmentHint: "写真をダブルタップして調整",
             .photoMatching: "写真照合",
             .queryingLocation: "位置を検索中",
             .routeBook: "ルートブックとして使う",
@@ -612,6 +615,7 @@ enum AppLocalization {
             .iCloudRouteSyncFailed: "iCloud 동기화를 켜지 못했습니다",
             .routeCollectionICloudSyncComplete: "iCloud 동기화 완료",
             .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 동기화 중",
+            .mapBackgroundAdjustmentHint: "지도를 두 번 탭해 조정",
             .mapStyle: "지도 스타일",
             .livePhotoSaved: "사진 앱에 저장되었습니다",
             .livePhotoSaving: "Live Photo 생성 중",
@@ -633,7 +637,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "사진 전체 접근 권한 필요",
             .photoLibraryReadAuthorized: "사진 읽기 권한이 허용되었습니다",
             .photoSaving: "이미지 저장 중",
-            .photoBackgroundAdjustmentHint: "사진의 빈 영역을 두 번 탭하면 표시 범위를 조정할 수 있습니다",
+            .photoBackgroundAdjustmentHint: "사진을 두 번 탭해 조정",
             .photoMatching: "사진 매칭",
             .queryingLocation: "위치 조회 중",
             .routeBook: "루트북으로 사용",
@@ -773,6 +777,7 @@ enum AppLocalization {
             .iCloudRouteSyncFailed: "iCloud sync could not be enabled",
             .routeCollectionICloudSyncComplete: "iCloud sync complete",
             .routeCollectionICloudSyncProgressFormat: "%d/%d syncing with iCloud",
+            .mapBackgroundAdjustmentHint: "Double-tap map to adjust",
             .mapStyle: "Map Style",
             .livePhotoSaved: "Saved to Photos",
             .livePhotoSaving: "Creating Live Photo",
@@ -794,7 +799,7 @@ enum AppLocalization {
             .photoLibraryFullAccessRequiredTitle: "Full Photos Access Required",
             .photoLibraryReadAuthorized: "Photo access is authorized",
             .photoSaving: "Saving Image",
-            .photoBackgroundAdjustmentHint: "Double-tap empty photo space to adjust the visible area",
+            .photoBackgroundAdjustmentHint: "Double-tap photo to adjust",
             .photoMatching: "Photo Matching",
             .queryingLocation: "Locating",
             .routeBook: "Use as Route Book",

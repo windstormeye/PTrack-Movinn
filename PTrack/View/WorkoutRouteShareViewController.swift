@@ -93,7 +93,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var interactivePopBlockerGesture: UIScreenEdgePanGestureRecognizer?
     private var hasPlayedEntranceAnimation = false
     private var hasAppliedInitialModuleLayout = false
-    private var hasShownAspectRatioAdjustmentToast = false
+    private var hasShownInitialBackgroundAdjustmentToast = false
     private var isExportChromeHidden = false
     private var hasPreparedForPermanentDismissal = false
 
@@ -237,6 +237,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             self?.disableInteractivePopGesture()
         }
         playEntranceAnimationIfNeeded()
+        showInitialBackgroundAdjustmentToastIfNeeded()
     }
 
     private var isPermanentlyLeaving: Bool {
@@ -1754,6 +1755,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             return
         }
 
+        let wasPhotoBackground = isPhotoAdjustmentHintBackground
         if selectedPhotoIndex == index {
             lastSelectedPhotoIndexForAspectRatio = index
             if photoItems[index].isLivePhoto {
@@ -1771,6 +1773,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
         updatePreviewPhoto()
         updateToolBarVisibility()
+        if !wasPhotoBackground {
+            showBackgroundAdjustmentToast(for: .photoBackgroundAdjustmentHint)
+        }
 
     }
 
@@ -1797,6 +1802,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func selectMapBackground(usesDefaultMapAspectRatio: Bool = true) {
+        let wasMapBackground = isMapAdjustmentHintBackground
         selectedPhotoIndex = nil
         if usesDefaultMapAspectRatio {
             selectedCanvasAspectRatio = .portrait3x4
@@ -1808,6 +1814,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
         updatePreviewPhoto()
         updateToolBarVisibility()
+        if !wasMapBackground {
+            showBackgroundAdjustmentToast(for: .mapBackgroundAdjustmentHint)
+        }
     }
 
     private func toggleMapBackground() {
@@ -2497,16 +2506,45 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func applyCanvasAspectRatio(_ aspectRatio: CanvasAspectRatio) {
         selectedCanvasAspectRatio = aspectRatio
         updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
-        showAspectRatioAdjustmentToastIfNeeded()
     }
 
-    private func showAspectRatioAdjustmentToastIfNeeded() {
-        guard !hasShownAspectRatioAdjustmentToast else {
+    private var isMapAdjustmentHintBackground: Bool {
+        if case .map = previewBackground {
+            return true
+        }
+        return false
+    }
+
+    private var isPhotoAdjustmentHintBackground: Bool {
+        if case .photo = previewBackground {
+            return true
+        }
+        return false
+    }
+
+    private func showInitialBackgroundAdjustmentToastIfNeeded() {
+        guard !hasShownInitialBackgroundAdjustmentToast,
+              let textKey = currentBackgroundAdjustmentToastKey else {
             return
         }
 
-        hasShownAspectRatioAdjustmentToast = true
-        Toast.show(AppLocalization.text(.photoBackgroundAdjustmentHint), in: view)
+        hasShownInitialBackgroundAdjustmentToast = true
+        showBackgroundAdjustmentToast(for: textKey)
+    }
+
+    private var currentBackgroundAdjustmentToastKey: AppTextKey? {
+        switch previewBackground {
+        case .map:
+            return .mapBackgroundAdjustmentHint
+        case .photo:
+            return .photoBackgroundAdjustmentHint
+        case .collage:
+            return nil
+        }
+    }
+
+    private func showBackgroundAdjustmentToast(for textKey: AppTextKey) {
+        Toast.show(AppLocalization.text(textKey), in: view)
     }
 
     private func updateToolBarVisibility() {
@@ -3131,7 +3169,9 @@ extension WorkoutRouteShareViewController: PHPickerViewControllerDelegate {
 
                     let newIndex = self.photoItems.count
                     self.photoItems.append(.uploaded(image))
+                    let shouldShowPhotoAdjustmentToast: Bool
                     if self.pendingUploadedSelectionID == selectionID {
+                        let wasPhotoBackground = self.isPhotoAdjustmentHintBackground
                         self.selectedPhotoIndex = newIndex
                         self.lastSelectedPhotoIndexForAspectRatio = newIndex
                         self.previewBackground = .photo(newIndex)
@@ -3139,10 +3179,16 @@ extension WorkoutRouteShareViewController: PHPickerViewControllerDelegate {
                         self.representedPreviewPhotoID = nil
                         self.pendingUploadedSelectionID = nil
                         self.updatePreviewCanvasAspectRatio(animated: true, resetsModuleLayout: true)
+                        shouldShowPhotoAdjustmentToast = !wasPhotoBackground
+                    } else {
+                        shouldShowPhotoAdjustmentToast = false
                     }
                     self.photoCollectionView.reloadData()
                     self.updatePreviewPhoto()
                     self.updateToolBarVisibility()
+                    if shouldShowPhotoAdjustmentToast {
+                        self.showBackgroundAdjustmentToast(for: .photoBackgroundAdjustmentHint)
+                    }
                 }
             }
         }
