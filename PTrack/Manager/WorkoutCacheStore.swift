@@ -36,8 +36,42 @@ final class WorkoutCacheStore {
         return []
     }
 
+    @discardableResult
+    func loadProgressively(
+        batchSize: Int,
+        shouldContinue: () -> Bool = { true },
+        onBatch: ([TrackedWorkout]) -> Void
+    ) -> Int {
+        guard let loadedCount = loadSplitCacheProgressively(
+            batchSize: batchSize,
+            shouldContinue: shouldContinue,
+            onBatch: onBatch
+        ) else {
+            return 0
+        }
+
+        return loadedCount
+    }
+
     func loadSummary() -> WorkoutCacheSummary? {
         loadManifest()?.summary
+    }
+
+    func loadWorkout(id: String) -> TrackedWorkout? {
+        let fileURL = workoutFileURL(for: id)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+
+        do {
+            return try autoreleasepool {
+                let data = try Data(contentsOf: fileURL)
+                return try JSONDecoder().decode(TrackedWorkout.self, from: data)
+            }
+        } catch {
+            print("PTrack Cache: failed to decode workout cache file \(fileURL.lastPathComponent): \(error)")
+            return nil
+        }
     }
 
     func save(_ workouts: [TrackedWorkout]) {
@@ -147,18 +181,10 @@ final class WorkoutCacheStore {
         batchSize: Int = 0,
         onBatch: (([TrackedWorkout]) -> Void)? = nil
     ) -> [TrackedWorkout]? {
-        let manifest = loadManifest()
-        let fileURLs: [URL]
-        let shouldPublishBatches = batchSize > 0 && onBatch != nil
-
-        if let manifest {
-            fileURLs = manifest.workoutIDs.map(workoutFileURL(for:))
-        } else {
-            fileURLs = existingWorkoutFileURLs()
-            guard !fileURLs.isEmpty else {
-                return nil
-            }
+        guard let fileURLs = splitCacheWorkoutFileURLs() else {
+            return nil
         }
+        let shouldPublishBatches = batchSize > 0 && onBatch != nil
 
         var workouts: [TrackedWorkout] = []
         var batchWorkouts: [TrackedWorkout] = []
@@ -199,6 +225,76 @@ final class WorkoutCacheStore {
             "PTrack Cache: loaded \(sortedWorkouts.count) workouts, Strava: \(sortedWorkouts.compactMap(\.stravaActivityID).count), files: \(fileURLs.count), size: \(Self.formattedByteCount(totalSplitCacheByteCount())), path: \(workoutsDirectoryURL.path)"
         )
         return sortedWorkouts
+    }
+
+    private func loadSplitCacheProgressively(
+        batchSize: Int,
+        shouldContinue: () -> Bool,
+        onBatch: ([TrackedWorkout]) -> Void
+    ) -> Int? {
+        guard let fileURLs = splitCacheWorkoutFileURLs() else {
+            return nil
+        }
+
+        let resolvedBatchSize = max(batchSize, 1)
+        var loadedCount = 0
+        var batchWorkouts: [TrackedWorkout] = []
+        batchWorkouts.reserveCapacity(resolvedBatchSize)
+
+        for fileURL in fileURLs {
+            guard shouldContinue() else {
+                break
+            }
+
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                print("PTrack Cache: missing workout cache file: \(fileURL.path)")
+                continue
+            }
+
+            let workout: TrackedWorkout?
+            do {
+                workout = try autoreleasepool {
+                    let data = try Data(contentsOf: fileURL)
+                    return try JSONDecoder().decode(TrackedWorkout.self, from: data)
+                }
+            } catch {
+                print("PTrack Cache: failed to decode workout cache file \(fileURL.lastPathComponent): \(error)")
+                continue
+            }
+
+            guard let workout else {
+                continue
+            }
+
+            loadedCount += 1
+            batchWorkouts.append(workout)
+            if batchWorkouts.count >= resolvedBatchSize {
+                onBatch(batchWorkouts)
+                batchWorkouts.removeAll(keepingCapacity: true)
+            }
+        }
+
+        if shouldContinue(), !batchWorkouts.isEmpty {
+            onBatch(batchWorkouts)
+        }
+
+        print(
+            "PTrack Cache: progressively loaded \(loadedCount) workouts, files: \(fileURLs.count), size: \(Self.formattedByteCount(totalSplitCacheByteCount())), path: \(workoutsDirectoryURL.path)"
+        )
+        return loadedCount
+    }
+
+    private func splitCacheWorkoutFileURLs() -> [URL]? {
+        if let manifest = loadManifest() {
+            return manifest.workoutIDs.map(workoutFileURL(for:))
+        }
+
+        let fileURLs = existingWorkoutFileURLs()
+        guard !fileURLs.isEmpty else {
+            return nil
+        }
+
+        return fileURLs
     }
 
     private func loadManifest() -> WorkoutCacheManifest? {

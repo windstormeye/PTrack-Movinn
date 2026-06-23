@@ -21,7 +21,8 @@ final class WorkoutRoutePathView: UIView {
     private static let maximumThumbnailPointCount = 180
     private static let sourceCache: NSCache<NSString, RouteSource> = {
         let cache = NSCache<NSString, RouteSource>()
-        cache.countLimit = 4_000
+        cache.countLimit = 240
+        cache.totalCostLimit = 12 * 1024 * 1024
         return cache
     }()
     private static let sourceBuildQueue: OperationQueue = {
@@ -100,6 +101,10 @@ final class WorkoutRoutePathView: UIView {
 
     static func prewarmSource(for workout: TrackedWorkout) {
         loadSource(for: workout, priority: .low, completion: nil)
+    }
+
+    static func clearMemoryCache() {
+        sourceCache.removeAllObjects()
     }
 
     static func cancelPrewarmSource(for workout: TrackedWorkout) {
@@ -281,7 +286,7 @@ final class WorkoutRoutePathView: UIView {
                 return
             }
 
-            sourceCache.setObject(source, forKey: key as NSString)
+            sourceCache.setObject(source, forKey: key as NSString, cost: source.memoryCost)
 
             sourceBuildLock.lock()
             let completions = pendingSourceBuilds.removeValue(forKey: key)?.completions ?? []
@@ -330,7 +335,7 @@ final class WorkoutRoutePathView: UIView {
             rect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
         }
         let source = RouteSource(points: points, boundingRect: boundingRect)
-        sourceCache.setObject(source, forKey: cacheKey)
+        sourceCache.setObject(source, forKey: cacheKey, cost: source.memoryCost)
         return source
     }
 

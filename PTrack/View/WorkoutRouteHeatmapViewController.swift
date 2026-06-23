@@ -15,15 +15,10 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         "routeHeatmapCareerCollapsed"
     )
 
-    private static let routeCache: NSCache<NSString, HeatmapRouteCacheBox> = {
-        let cache = NSCache<NSString, HeatmapRouteCacheBox>()
-        cache.countLimit = 2
-        cache.totalCostLimit = 450_000
-        return cache
-    }()
-
     private var workouts: [TrackedWorkout]
     private var knownWorkoutIDs: Set<String>
+    private var statisticWorkouts: [TrackedWorkout]
+    private var knownStatisticWorkoutIDs: Set<String>
     private let cacheStore = WorkoutCacheStore()
     private let cacheLoadQueue = DispatchQueue(label: "studio.pj.PTrack.heatmap-cache-load", qos: .userInitiated)
     private let routeRenderQueue = DispatchQueue(label: "studio.pj.PTrack.heatmap-render", qos: .userInitiated)
@@ -46,7 +41,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }()
     private lazy var sportsCareerSheetViewController: SportsCareerViewController = {
         let viewController = SportsCareerViewController(
-            workouts: workouts,
+            workouts: statisticWorkouts,
             presentationStyle: .heatmapSheet
         )
         viewController.modalPresentationStyle = .pageSheet
@@ -66,31 +61,34 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private var suppressSportsCareerSheetPresentation = false
     private var hasPreparedForPermanentDismissal = false
     private var selectedFilters = HeatmapFilterStore.shared.selectedFilters()
+    private var selectedYear: Int?
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.heatmapStyle()
     private var filterMenuActions: [HeatmapFilter: UIAction] = [:]
     var routesOverlayRenderer: HeatmapRoutesOverlayRenderer?
-    private var renderedRoutesByID: [String: HeatmapRenderedRoute] = [:]
-    private var renderedRouteCache: [String: HeatmapRenderedRoute] = [:]
     private var overlayUpdateWorkItem: DispatchWorkItem?
-    private var progressiveOverlayWorkItem: DispatchWorkItem?
     private var heatmapDataRefreshWorkItem: DispatchWorkItem?
-    private var routePublishWorkItem: DispatchWorkItem?
+    private var regionCacheReloadWorkItem: DispatchWorkItem?
+    private var careerStatisticsUpdateWorkItem: DispatchWorkItem?
+    private var availableRouteYearValues: Set<Int> = []
     private var overlayUpdateGeneration = 0
     private var cacheLoadGeneration = 0
     private var isLoadingCachedWorkouts = false
+    private var hasStartedHeatmapLoading = false
 
     private let routeSamplingRatio = 1.0
-    private let maximumRoutePointCount = 220
+    private let maximumRoutePointCount = 320
     private let navigationBackgroundHeight: CGFloat = 124
-    private let routeLoadingPaddingRatio = 0.42
-    private let routeOverlayBatchSize = 36
-    private let cacheLoadBatchSize = 64
-    private let routePublishInterval: TimeInterval = 0.08
-    private let maximumRenderedRouteCacheCount = 500
+    private let routeLoadingPaddingRatio = 0.08
+    private let cacheLoadBatchSize = 8
+    private let maximumPreparedRoutePoolCount = 1_800
+    private let regionCacheReloadDelay: TimeInterval = 0.45
 
     init(workouts: [TrackedWorkout]) {
         self.workouts = workouts
-        knownWorkoutIDs = Set(workouts.map(\.id))
+        knownWorkoutIDs = []
+        statisticWorkouts = Self.statisticsWorkouts(from: workouts)
+        knownStatisticWorkoutIDs = Set(statisticWorkouts.map(\.id))
+        availableRouteYearValues = Set(statisticWorkouts.map { Calendar.current.component(.year, from: $0.startDate) })
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -105,8 +103,6 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         configureMapView()
         configureNavigationBackgroundView()
         configureLoadingIndicator()
-        prepareHeatmapRoutes()
-        loadCachedWorkoutsProgressively()
     }
 
     deinit {
@@ -149,14 +145,16 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateNavigationBackgroundMask()
+        startHeatmapLoadingIfNeeded()
         fitRoutesIfNeeded()
         scheduleVisibleRouteOverlayUpdate()
     }
 
     override func didReceiveMemoryWarning() {
         super.didReceiveMemoryWarning()
-        renderedRouteCache.removeAll(keepingCapacity: false)
-        Self.routeCache.removeAllObjects()
+        cancelRouteRenderingWork()
+        routesOverlay.renderedRoutes = []
+        invalidateRoutesOverlayRenderer()
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
@@ -311,12 +309,16 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         setCachedWorkoutLoading(false)
         loadingIndicator.stopAnimating()
         heatmapDataRefreshWorkItem?.cancel()
+        regionCacheReloadWorkItem?.cancel()
+        careerStatisticsUpdateWorkItem?.cancel()
         heatmapDataRefreshWorkItem = nil
+        regionCacheReloadWorkItem = nil
+        careerStatisticsUpdateWorkItem = nil
         cancelRouteRenderingWork()
-        renderedRoutesByID.removeAll(keepingCapacity: false)
-        renderedRouteCache.removeAll(keepingCapacity: false)
         preparedRoutes.removeAll(keepingCapacity: false)
         visibleRoutes.removeAll(keepingCapacity: false)
+        statisticWorkouts.removeAll(keepingCapacity: false)
+        knownStatisticWorkoutIDs.removeAll(keepingCapacity: false)
         routesOverlay.renderedRoutes = []
         routesOverlayRenderer = nil
         mapView.delegate = nil
@@ -331,22 +333,80 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         AppMapContainerView.retainForMetalDrain(mapContainerView)
     }
 
+    private func startHeatmapLoadingIfNeeded() {
+        guard !hasStartedHeatmapLoading,
+              mapView.bounds.width > 1,
+              mapView.bounds.height > 1 else {
+            return
+        }
+
+        hasStartedHeatmapLoading = true
+        prepareHeatmapRoutes()
+        loadCachedWorkoutsProgressively()
+    }
+
     private func loadCachedWorkoutsProgressively() {
         cacheLoadGeneration += 1
         let generation = cacheLoadGeneration
         setCachedWorkoutLoading(true)
         let cacheStore = cacheStore
         let cacheLoadBatchSize = cacheLoadBatchSize
+        let samplingRatio = routeSamplingRatio
+        let maximumRoutePointCount = maximumRoutePointCount
+        let selectedFilters = selectedFilters
+        let selectedYear = selectedYear
 
         cacheLoadQueue.async { [weak self, cacheStore, cacheLoadBatchSize] in
-            let cachedWorkouts = cacheStore.load(
+            cacheStore.loadProgressively(
                 batchSize: cacheLoadBatchSize,
+                shouldContinue: { [weak self] in
+                    var shouldContinue = false
+                    DispatchQueue.main.sync {
+                        shouldContinue = self?.cacheLoadGeneration == generation
+                            && self?.hasPreparedForPermanentDismissal == false
+                    }
+                    return shouldContinue
+                },
                 onBatch: { [weak self] cachedWorkoutBatch in
+                    guard self != nil else {
+                        return
+                    }
+
+                    let statisticWorkouts = Self.statisticsWorkouts(from: cachedWorkoutBatch)
+                    let routes = cachedWorkoutBatch.compactMap { workout -> HeatmapRoute? in
+                        let isIncludedBySport = selectedFilters.contains { filter in
+                            filter.includes(workout.sportKind)
+                        }
+                        let isIncludedByYear = selectedYear.map {
+                            Calendar.current.component(.year, from: workout.startDate) == $0
+                        } ?? true
+
+                        guard isIncludedBySport && isIncludedByYear else {
+                            return nil
+                        }
+
+                        return Self.makeHeatmapRoute(
+                            for: workout,
+                            samplingRatio: samplingRatio,
+                            maximumPointCount: maximumRoutePointCount
+                        )
+                    }
+                    guard !routes.isEmpty else {
+                        DispatchQueue.main.async { [weak self] in
+                            self?.mergeCachedHeatmapBatch(
+                                routes: [],
+                                statisticWorkouts: statisticWorkouts,
+                                generation: generation
+                            )
+                        }
+                        return
+                    }
+
                     DispatchQueue.main.async { [weak self] in
-                        self?.mergeCachedWorkouts(
-                            cachedWorkoutBatch,
-                            generation: generation,
-                            isFinalBatch: false
+                        self?.mergeCachedHeatmapBatch(
+                            routes: routes,
+                            statisticWorkouts: statisticWorkouts,
+                            generation: generation
                         )
                     }
                 }
@@ -358,28 +418,64 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                     return
                 }
 
-                self.mergeCachedWorkouts(
-                    cachedWorkouts,
-                    generation: generation,
-                    isFinalBatch: true
-                )
                 self.setCachedWorkoutLoading(false)
+                self.scheduleSportsCareerStatisticsUpdate(immediate: true, animated: true)
             }
         }
     }
 
-    private func mergeCachedWorkouts(
-        _ cachedWorkouts: [TrackedWorkout],
-        generation: Int,
-        isFinalBatch: Bool
+    private func mergeCachedHeatmapBatch(
+        routes: [HeatmapRoute],
+        statisticWorkouts: [TrackedWorkout],
+        generation: Int
     ) {
-        guard cacheLoadGeneration == generation, !cachedWorkouts.isEmpty else {
+        guard cacheLoadGeneration == generation else {
+            return
+        }
+
+        mergeStatisticWorkouts(statisticWorkouts)
+        guard !routes.isEmpty else {
+            return
+        }
+
+        let loadingMapRect = routeLoadingMapRect()
+        availableRouteYearValues.formUnion(routes.map(\.startYear))
+        var didAppendRoute = false
+        var didAppendVisibleRoute = false
+
+        preparedRoutes.reserveCapacity(preparedRoutes.count + routes.count)
+        for route in routes where route.boundingMapRect.intersects(loadingMapRect) && knownWorkoutIDs.insert(route.id).inserted {
+            preparedRoutes.append(route)
+            didAppendRoute = true
+
+            guard isRouteIncludedBySelectedFilters(route) else {
+                continue
+            }
+
+            visibleRoutes.append(route)
+            if route.boundingMapRect.intersects(loadingMapRect) {
+                didAppendVisibleRoute = true
+            }
+        }
+
+        trimPreparedRoutePool(to: loadingMapRect)
+        guard didAppendRoute, didAppendVisibleRoute else {
+            return
+        }
+
+        scheduleVisibleRouteOverlayUpdate(preservesRenderedRoutes: true)
+    }
+
+    private func mergeStatisticWorkouts(_ workouts: [TrackedWorkout]) {
+        guard !workouts.isEmpty else {
             return
         }
 
         var didAppendWorkout = false
-        for workout in cachedWorkouts where knownWorkoutIDs.insert(workout.id).inserted {
-            workouts.append(workout)
+        statisticWorkouts.reserveCapacity(statisticWorkouts.count + workouts.count)
+        for workout in workouts where knownStatisticWorkoutIDs.insert(workout.id).inserted {
+            statisticWorkouts.append(workout)
+            availableRouteYearValues.insert(Calendar.current.component(.year, from: workout.startDate))
             didAppendWorkout = true
         }
 
@@ -387,21 +483,62 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             return
         }
 
-        workouts.sort { $0.startDate > $1.startDate }
-        if hasPresentedSportsCareerSheet {
-            sportsCareerSheetViewController.updateWorkouts(
-                workouts,
-                animated: !isFinalBatch
-            )
-        }
-        let shouldResetCamera = !hasFittedRoutes && !hasUserAdjustedMapRegion
-        scheduleHeatmapDataRefresh(
-            resetCamera: shouldResetCamera,
-            preservesRenderedRoutes: !shouldResetCamera
-        )
+        statisticWorkouts.sort { $0.startDate > $1.startDate }
+        scheduleSportsCareerStatisticsUpdate(animated: true)
     }
 
-    private func scheduleHeatmapDataRefresh(resetCamera: Bool, preservesRenderedRoutes: Bool) {
+    private func scheduleSportsCareerStatisticsUpdate(
+        immediate: Bool = false,
+        animated: Bool
+    ) {
+        guard hasPresentedSportsCareerSheet else {
+            return
+        }
+
+        if immediate {
+            careerStatisticsUpdateWorkItem?.cancel()
+            careerStatisticsUpdateWorkItem = nil
+            sportsCareerSheetViewController.updateWorkouts(statisticWorkouts, animated: animated)
+            return
+        }
+
+        guard careerStatisticsUpdateWorkItem == nil else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.careerStatisticsUpdateWorkItem = nil
+            self.sportsCareerSheetViewController.updateWorkouts(
+                self.statisticWorkouts,
+                animated: animated
+            )
+        }
+        careerStatisticsUpdateWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func trimPreparedRoutePool(to mapRect: MKMapRect) {
+        let retainedRoutes = preparedRoutes.filter { route in
+            route.boundingMapRect.intersects(mapRect)
+        }
+        preparedRoutes = Self.spatiallyDistributedRoutes(
+            retainedRoutes,
+            in: mapRect,
+            maximumCount: maximumPreparedRoutePoolCount
+        )
+        knownWorkoutIDs = Set(preparedRoutes.map(\.id))
+        visibleRoutes = preparedRoutes.filter(isRouteIncludedBySelectedFilters)
+    }
+
+    private func scheduleHeatmapDataRefresh(
+        resetCamera: Bool,
+        preservesRenderedRoutes: Bool,
+        delay: TimeInterval = 0.16
+    ) {
         guard !hasPreparedForPermanentDismissal else {
             return
         }
@@ -418,7 +555,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             )
         }
         heatmapDataRefreshWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private func makeMoreMenu() -> UIMenu {
@@ -444,6 +581,16 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                     children: filterActions
                 ),
                 UIMenu(
+                    title: AppLocalization.text(.time),
+                    image: UIImage(systemName: "calendar"),
+                    identifier: UIMenu.Identifier("studio.pj.PTrack.heatmap.time"),
+                    children: [
+                        UIDeferredMenuElement.uncached { [weak self] completion in
+                            completion(self?.makeTimeMenuActions() ?? [])
+                        }
+                    ]
+                ),
+                UIMenu(
                     title: AppLocalization.text(.mapStyle),
                     image: UIImage(systemName: "map"),
                     identifier: UIMenu.Identifier("studio.pj.PTrack.heatmap.mapStyle"),
@@ -451,6 +598,36 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 )
             ]
         )
+    }
+
+    private func makeTimeMenuActions() -> [UIMenuElement] {
+        var actions: [UIMenuElement] = [
+            UIAction(
+                title: AppLocalization.text(.all),
+                state: selectedYear == nil ? .on : .off
+            ) { [weak self] _ in
+                self?.applyYearFilter(nil)
+            }
+        ]
+
+        actions.append(contentsOf: availableRouteYears().map { year in
+            UIAction(
+                title: "\(year)",
+                state: selectedYear == year ? .on : .off
+            ) { [weak self] _ in
+                self?.applyYearFilter(year)
+            }
+        })
+
+        return actions
+    }
+
+    private func availableRouteYears() -> [Int] {
+        var years = availableRouteYearValues
+        if let selectedYear {
+            years.insert(selectedYear)
+        }
+        return years.sorted(by: >)
     }
 
     private func makeFilterMenuAction(for filter: HeatmapFilter) -> UIAction {
@@ -535,8 +712,13 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private func showWorkoutDetailFromSportsCareer(_ workout: TrackedWorkout) {
         dismissSportsCareerSheetForNavigation { [weak self] in
-            let detailViewController = WorkoutRouteDetailViewController(workout: workout)
-            self?.navigationController?.pushViewController(detailViewController, animated: true)
+            guard let self else {
+                return
+            }
+
+            let resolvedWorkout = self.cacheStore.loadWorkout(id: workout.id) ?? workout
+            let detailViewController = WorkoutRouteDetailViewController(workout: resolvedWorkout)
+            self.navigationController?.pushViewController(detailViewController, animated: true)
         }
     }
 
@@ -546,24 +728,12 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         let workouts = workouts
         let samplingRatio = routeSamplingRatio
         let maximumRoutePointCount = maximumRoutePointCount
-        let cacheKey = Self.cacheKey(
-            for: workouts,
-            samplingRatio: samplingRatio,
-            maximumPointCount: maximumRoutePointCount
-        )
-
-        if let cachedRoutes = Self.routeCache.object(forKey: cacheKey)?.routes {
-            preparedRoutes = cachedRoutes
-            applySelectedFilters(
-                resetCamera: resetCamera,
-                preservesRenderedRoutes: preservesRenderedRoutes
-            )
-            return
-        }
+        let routePoolMapRect = routeLoadingMapRect()
+        let maximumPreparedRoutePoolCount = maximumPreparedRoutePoolCount
 
         DispatchQueue.global(qos: .userInitiated).async {
             var routes: [HeatmapRoute] = []
-            routes.reserveCapacity(workouts.count)
+            routes.reserveCapacity(min(workouts.count, maximumPreparedRoutePoolCount))
 
             for workout in workouts {
                 let route = Self.makeHeatmapRoute(
@@ -575,95 +745,38 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                     continue
                 }
 
+                guard route.boundingMapRect.intersects(routePoolMapRect) else {
+                    continue
+                }
+
                 routes.append(route)
+                if routes.count > maximumPreparedRoutePoolCount * 2 {
+                    routes = Self.spatiallyDistributedRoutes(
+                        routes,
+                        in: routePoolMapRect,
+                        maximumCount: maximumPreparedRoutePoolCount
+                    )
+                }
             }
+
+            routes = Self.spatiallyDistributedRoutes(
+                routes,
+                in: routePoolMapRect,
+                maximumCount: maximumPreparedRoutePoolCount
+            )
 
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.loadGeneration == generation else {
                     return
                 }
 
-                Self.routeCache.setObject(
-                    HeatmapRouteCacheBox(routes: routes),
-                    forKey: cacheKey,
-                    cost: Self.routeCacheCost(for: routes)
-                )
                 self.preparedRoutes = routes
+                self.knownWorkoutIDs = Set(routes.map(\.id))
                 self.applySelectedFilters(
                     resetCamera: resetCamera,
                     preservesRenderedRoutes: preservesRenderedRoutes
                 )
             }
-        }
-    }
-
-    private static func cacheKey(
-        for workouts: [TrackedWorkout],
-        samplingRatio: Double,
-        maximumPointCount: Int
-    ) -> NSString {
-        var hash: UInt64 = 14_695_981_039_346_656_037
-
-        func combine(_ value: UInt64) {
-            hash ^= value
-            hash &*= 1_099_511_628_211
-        }
-
-        func combine(_ value: Int) {
-            combine(UInt64(bitPattern: Int64(value)))
-        }
-
-        func combine(_ value: Double) {
-            let roundedValue = Int64((value * 1_000_000).rounded())
-            combine(UInt64(bitPattern: roundedValue))
-        }
-
-        func combineTime(_ value: TimeInterval) {
-            let roundedValue = Int64((value * 1_000).rounded())
-            combine(UInt64(bitPattern: roundedValue))
-        }
-
-        func combine(_ value: String) {
-            for byte in value.utf8 {
-                combine(UInt64(byte))
-            }
-            combine(0xff)
-        }
-
-        func combine(_ coordinate: RouteCoordinate?) {
-            guard let coordinate else {
-                combine(0)
-                return
-            }
-
-            combine(coordinate.latitude)
-            combine(coordinate.longitude)
-        }
-
-        combine(workouts.count)
-        combine(samplingRatio)
-        combine(maximumPointCount)
-
-        for workout in workouts {
-            let routeCoordinates = workout.routeDetailCoordinates
-            combine(workout.id)
-            combine(workout.sportKind.rawValue)
-            combineTime(workout.startDate.timeIntervalSince1970)
-            combineTime(workout.endDate?.timeIntervalSince1970 ?? 0)
-            combine(workout.distanceMeters)
-            combine(workout.coordinates.count)
-            combine(workout.fullCoordinates?.count ?? 0)
-            combine(routeCoordinates.count)
-            combine(routeCoordinates.first)
-            combine(routeCoordinates.last)
-        }
-
-        return "\(workouts.count)-\(maximumPointCount)-\(String(hash, radix: 16))" as NSString
-    }
-
-    private static func routeCacheCost(for routes: [HeatmapRoute]) -> Int {
-        routes.reduce(0) { result, route in
-            result + route.coordinates.count
         }
     }
 
@@ -683,19 +796,32 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
 
         updateFilterMenuActionStates()
-        moreBarButtonItem.menu = makeMoreMenu()
         HeatmapFilterStore.shared.setSelectedFilters(selectedFilters)
+        cancelCachedWorkoutLoading()
         applySelectedFilters(resetCamera: true, preservesRenderedRoutes: false)
+        scheduleCurrentRegionCacheReload()
+    }
+
+    private func applyYearFilter(_ year: Int?) {
+        guard selectedYear != year else {
+            return
+        }
+
+        selectedYear = year
+        cancelCachedWorkoutLoading()
+        applySelectedFilters(resetCamera: true, preservesRenderedRoutes: false)
+        scheduleCurrentRegionCacheReload()
+    }
+
+    private func cancelCachedWorkoutLoading() {
+        cacheLoadGeneration += 1
+        setCachedWorkoutLoading(false)
     }
 
     private func applySelectedFilters(resetCamera: Bool, preservesRenderedRoutes: Bool) {
-        visibleRoutes = preparedRoutes.filter { route in
-            selectedFilters.contains { filter in
-                filter.includes(route.sportKind)
-            }
-        }
+        visibleRoutes = preparedRoutes.filter(isRouteIncludedBySelectedFilters)
         if !preservesRenderedRoutes {
-            clearRouteOverlays()
+            resetRenderedRouteState(removesCache: true)
         }
 
         if resetCamera {
@@ -710,6 +836,14 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
 
         loadingIndicator.stopAnimating()
+    }
+
+    private func isRouteIncludedBySelectedFilters(_ route: HeatmapRoute) -> Bool {
+        let isIncludedBySport = selectedFilters.contains { filter in
+            filter.includes(route.sportKind)
+        }
+        let isIncludedByYear = selectedYear.map { route.startYear == $0 } ?? true
+        return isIncludedBySport && isIncludedByYear
     }
 
     private func applyMapStyle(_ style: AppMapDisplayStyle) {
@@ -756,6 +890,15 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         suspendProgressiveRouteLoading()
     }
 
+    func handleMapRegionDidChange(_ mapView: MKMapView) {
+        guard mapView.bounds.width > 1, mapView.bounds.height > 1 else {
+            return
+        }
+
+        scheduleVisibleRouteOverlayUpdate()
+        scheduleCurrentRegionCacheReload()
+    }
+
     private static func hasActiveUserGesture(in view: UIView) -> Bool {
         if view.gestureRecognizers?.contains(where: { gestureRecognizer in
             switch gestureRecognizer.state {
@@ -771,36 +914,47 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         return view.subviews.contains { hasActiveUserGesture(in: $0) }
     }
 
-    private func clearRouteOverlays() {
+    private func resetRenderedRouteState(removesCache _: Bool) {
         overlayUpdateGeneration += 1
         overlayUpdateWorkItem?.cancel()
-        progressiveOverlayWorkItem?.cancel()
         overlayUpdateWorkItem = nil
-        progressiveOverlayWorkItem = nil
-
-        renderedRoutesByID.removeAll(keepingCapacity: true)
-        publishRenderedRoutes(immediate: true)
+        routesOverlay.renderedRoutes = []
+        invalidateRoutesOverlayRenderer()
     }
 
     private func cancelRouteRenderingWork() {
         overlayUpdateGeneration += 1
         overlayUpdateWorkItem?.cancel()
-        progressiveOverlayWorkItem?.cancel()
-        routePublishWorkItem?.cancel()
         overlayUpdateWorkItem = nil
-        progressiveOverlayWorkItem = nil
-        routePublishWorkItem = nil
     }
 
     func suspendProgressiveRouteLoading() {
-        overlayUpdateGeneration += 1
-        overlayUpdateWorkItem?.cancel()
-        progressiveOverlayWorkItem?.cancel()
-        routePublishWorkItem?.cancel()
-        overlayUpdateWorkItem = nil
-        progressiveOverlayWorkItem = nil
-        routePublishWorkItem = nil
-        scheduleVisibleRouteOverlayUpdate()
+        cancelRouteRenderingWork()
+    }
+
+    private func scheduleCurrentRegionCacheReload() {
+        guard hasStartedHeatmapLoading, !hasPreparedForPermanentDismissal else {
+            return
+        }
+
+        regionCacheReloadWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.reloadCurrentRegionRoutePool()
+        }
+        regionCacheReloadWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + regionCacheReloadDelay, execute: workItem)
+    }
+
+    private func reloadCurrentRegionRoutePool() {
+        guard !hasPreparedForPermanentDismissal,
+              mapView.bounds.width > 1,
+              mapView.bounds.height > 1 else {
+            return
+        }
+
+        trimPreparedRoutePool(to: routeLoadingMapRect())
+        prepareHeatmapRoutes(resetCamera: false, preservesRenderedRoutes: true)
+        loadCachedWorkoutsProgressively()
     }
 
     func scheduleVisibleRouteOverlayUpdate(immediate: Bool = false, preservesRenderedRoutes: Bool = false) {
@@ -822,7 +976,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
-    private func updateVisibleRouteOverlays(preservesRenderedRoutes: Bool = false) {
+    private func updateVisibleRouteOverlays(preservesRenderedRoutes _: Bool = false) {
         guard !visibleRoutes.isEmpty, mapView.bounds.width > 1, mapView.bounds.height > 1 else {
             return
         }
@@ -831,203 +985,43 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         let candidateRoutes = visibleRoutes.filter { route in
             route.boundingMapRect.intersects(loadingMapRect)
         }
-        let pointLimit = overlayPointLimitForCurrentZoom()
-        let targetCandidates: [HeatmapRoute]
-        if preservesRenderedRoutes {
-            targetCandidates = candidateRoutes.filter { route in
-                renderedRoutesByID[route.id]?.pointLimit != pointLimit
-            }
-        } else {
-            targetCandidates = candidateRoutes
-        }
-        let targetRoutes = spatiallyDistributedRoutes(
-            targetCandidates,
+        let pointLimit = routePointLimitForCurrentZoom()
+        let targetRoutes = Self.spatiallyDistributedRoutes(
+            candidateRoutes,
             in: loadingMapRect,
-            maximumCount: maximumActiveRouteOverlayCount(for: pointLimit)
+            maximumCount: renderedRouteLimitForCurrentZoom()
         )
-        let targetRouteIDs = Set(targetRoutes.map(\.id))
-        let obsoleteRouteIDs = preservesRenderedRoutes ? [] : renderedRoutesByID.keys.filter { !targetRouteIDs.contains($0) }
-
-        let routesNeedingOverlay = targetRoutes.filter { route in
-            renderedRoutesByID[route.id]?.pointLimit != pointLimit
-        }
-        guard !routesNeedingOverlay.isEmpty else {
-            removeRenderedRoutes(withIDs: Array(obsoleteRouteIDs))
-            publishRenderedRoutes()
-            return
-        }
 
         overlayUpdateGeneration += 1
-        progressiveOverlayWorkItem?.cancel()
-        addRouteOverlaysProgressively(
-            routesNeedingOverlay,
-            startIndex: 0,
-            generation: overlayUpdateGeneration,
-            pointLimit: pointLimit,
-            obsoleteRouteIDs: Array(obsoleteRouteIDs)
-        )
-    }
+        let generation = overlayUpdateGeneration
 
-    private func addRouteOverlaysProgressively(
-        _ routes: [HeatmapRoute],
-        startIndex: Int,
-        generation: Int,
-        pointLimit: Int,
-        obsoleteRouteIDs: [String] = []
-    ) {
-        guard generation == overlayUpdateGeneration, startIndex < routes.count else {
-            return
-        }
-
-        let endIndex = min(startIndex + routeOverlayBatchSize, routes.count)
-        let batchRoutes = Array(routes[startIndex..<endIndex])
-        var cachedRenderedRoutes: [HeatmapRenderedRoute] = []
-        var routesToRender: [HeatmapRoute] = []
-
-        for route in batchRoutes where renderedRoutesByID[route.id]?.pointLimit != pointLimit {
-            let cacheKey = renderedRouteCacheKey(routeID: route.id, pointLimit: pointLimit)
-            if let renderedRoute = renderedRouteCache[cacheKey] {
-                cachedRenderedRoutes.append(renderedRoute)
-            } else {
-                routesToRender.append(route)
-            }
-        }
-
-        if routesToRender.isEmpty {
-            applyRenderedRouteBatch(
-                cachedRenderedRoutes,
-                routes: routes,
-                endIndex: endIndex,
-                generation: generation,
+        routeRenderQueue.async { [targetRoutes, pointLimit, loadingMapRect] in
+            let renderedRoutes = Self.renderedRoutes(
+                for: targetRoutes,
                 pointLimit: pointLimit,
-                obsoleteRouteIDs: obsoleteRouteIDs,
-                removesObsoleteRouteIDs: startIndex == 0
+                mapRect: loadingMapRect
             )
-            return
-        }
-
-        routeRenderQueue.async { [routesToRender, pointLimit] in
-            let generatedRenderedRoutes = routesToRender.compactMap { route in
-                Self.renderedRoute(for: route, maximumCount: pointLimit)
-            }
 
             DispatchQueue.main.async { [weak self] in
-                self?.applyRenderedRouteBatch(
-                    cachedRenderedRoutes + generatedRenderedRoutes,
-                    routes: routes,
-                    endIndex: endIndex,
-                    generation: generation,
-                    pointLimit: pointLimit,
-                    obsoleteRouteIDs: obsoleteRouteIDs,
-                    removesObsoleteRouteIDs: startIndex == 0
+                self?.replaceRenderedRoutes(
+                    renderedRoutes,
+                    generation: generation
                 )
             }
         }
     }
 
-    private func applyRenderedRouteBatch(
-        _ renderedRoutes: [HeatmapRenderedRoute],
-        routes: [HeatmapRoute],
-        endIndex: Int,
-        generation: Int,
-        pointLimit: Int,
-        obsoleteRouteIDs: [String],
-        removesObsoleteRouteIDs: Bool
-    ) {
+    private func replaceRenderedRoutes(_ renderedRoutes: [HeatmapRenderedRoute], generation: Int) {
         guard generation == overlayUpdateGeneration else {
             return
         }
 
-        if removesObsoleteRouteIDs {
-            removeRenderedRoutes(withIDs: obsoleteRouteIDs)
-        }
-
-        for renderedRoute in renderedRoutes {
-            renderedRoutesByID[renderedRoute.id] = renderedRoute
-            renderedRouteCache[renderedRouteCacheKey(routeID: renderedRoute.id, pointLimit: pointLimit)] = renderedRoute
-        }
-
-        pruneRenderedRouteCacheIfNeeded()
-        publishRenderedRoutes()
-
-        guard endIndex < routes.count else {
-            return
-        }
-
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.addRouteOverlaysProgressively(
-                routes,
-                startIndex: endIndex,
-                generation: generation,
-                pointLimit: pointLimit
-            )
-        }
-        progressiveOverlayWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016, execute: workItem)
-    }
-
-    private func renderedRouteCacheKey(routeID: String, pointLimit: Int) -> String {
-        "\(routeID)-\(pointLimit)"
-    }
-
-    private func pruneRenderedRouteCacheIfNeeded() {
-        guard renderedRouteCache.count > maximumRenderedRouteCacheCount else {
-            return
-        }
-
-        renderedRouteCache.removeAll(keepingCapacity: true)
-    }
-
-    private func removeRenderedRoutes(withIDs routeIDs: [String]) {
-        guard !routeIDs.isEmpty else {
-            return
-        }
-
-        for routeID in routeIDs {
-            renderedRoutesByID.removeValue(forKey: routeID)
-        }
-    }
-
-    private func publishRenderedRoutes() {
-        publishRenderedRoutes(immediate: false)
-    }
-
-    private func publishRenderedRoutes(immediate: Bool) {
-        if immediate {
-            routePublishWorkItem?.cancel()
-            routePublishWorkItem = nil
-            publishRenderedRoutesNow()
-            return
-        }
-
-        guard routePublishWorkItem == nil else {
-            return
-        }
-
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-
-            self.routePublishWorkItem = nil
-            self.publishRenderedRoutesNow()
-        }
-        routePublishWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + routePublishInterval, execute: workItem)
-    }
-
-    private func publishRenderedRoutesNow() {
-        routesOverlay.renderedRoutes = Array(renderedRoutesByID.values)
+        routesOverlay.renderedRoutes = renderedRoutes
         invalidateRoutesOverlayRenderer()
     }
 
     private func invalidateRoutesOverlayRenderer() {
-        guard mapView.bounds.width > 1, mapView.bounds.height > 1 else {
-            routesOverlayRenderer?.setNeedsDisplay()
-            return
-        }
-
-        routesOverlayRenderer?.setNeedsDisplay(routeLoadingMapRect())
+        routesOverlayRenderer?.setNeedsDisplay()
     }
 
     private func routeLoadingMapRect() -> MKMapRect {
@@ -1037,41 +1031,39 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         return visibleMapRect.insetBy(dx: -dx, dy: -dy)
     }
 
-    private func overlayPointLimitForCurrentZoom() -> Int {
+    private func routePointLimitForCurrentZoom() -> Int {
         let longitudeDelta = abs(mapView.region.span.longitudeDelta)
 
         switch longitudeDelta {
         case 8...:
-            return min(maximumRoutePointCount, 96)
-        case 2..<8:
-            return min(maximumRoutePointCount, 132)
-        case 0.7..<2:
-            return min(maximumRoutePointCount, 168)
-        case 0.15..<0.7:
-            return min(maximumRoutePointCount, 200)
+            return min(maximumRoutePointCount, 56)
+        case 3..<8:
+            return min(maximumRoutePointCount, 80)
+        case 1..<3:
+            return min(maximumRoutePointCount, 120)
+        case 0.35..<1:
+            return min(maximumRoutePointCount, 180)
         default:
             return maximumRoutePointCount
         }
     }
 
-    private func maximumActiveRouteOverlayCount(for _: Int) -> Int {
+    private func renderedRouteLimitForCurrentZoom() -> Int {
         let longitudeDelta = abs(mapView.region.span.longitudeDelta)
 
         switch longitudeDelta {
-        case 8...:
-            return 1_400
-        case 2..<8:
-            return 900
-        case 0.7..<2:
-            return 560
-        case 0.15..<0.7:
-            return 340
+        case 3...:
+            return 1_800
+        case 1..<3:
+            return 1_600
+        case 0.35..<1:
+            return 1_200
         default:
-            return 180
+            return 760
         }
     }
 
-    private func spatiallyDistributedRoutes(
+    private static func spatiallyDistributedRoutes(
         _ routes: [HeatmapRoute],
         in mapRect: MKMapRect,
         maximumCount: Int
@@ -1118,7 +1110,10 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         return result
     }
 
-    private static func coordinates(for route: HeatmapRoute, maximumCount: Int) -> [CLLocationCoordinate2D] {
+    private static func coordinates(
+        for route: HeatmapRoute,
+        maximumCount: Int
+    ) -> [CLLocationCoordinate2D] {
         guard route.coordinates.count > maximumCount, maximumCount > 2 else {
             return route.coordinates
         }
@@ -1127,20 +1122,70 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         return indexes.map { route.coordinates[$0] }
     }
 
+    private static func statisticsWorkouts(from workouts: [TrackedWorkout]) -> [TrackedWorkout] {
+        workouts.map { workout in
+            workout.statisticsPreview()
+        }
+    }
+
+    private static func renderedRoutes(
+        for routes: [HeatmapRoute],
+        pointLimit: Int,
+        mapRect: MKMapRect
+    ) -> [HeatmapRenderedRoute] {
+        guard !routes.isEmpty, pointLimit > 1 else {
+            return []
+        }
+
+        var renderedRoutes: [HeatmapRenderedRoute] = []
+        renderedRoutes.reserveCapacity(routes.count)
+
+        for route in routes where route.boundingMapRect.intersects(mapRect) {
+            if let renderedRoute = renderedRoute(
+                for: route,
+                pointLimit: pointLimit,
+                mapRect: mapRect
+            ) {
+                renderedRoutes.append(renderedRoute)
+            }
+        }
+
+        return renderedRoutes
+    }
+
     private static func renderedRoute(
         for route: HeatmapRoute,
-        maximumCount: Int
+        pointLimit: Int,
+        mapRect: MKMapRect
     ) -> HeatmapRenderedRoute? {
-        let coordinates = coordinates(for: route, maximumCount: maximumCount)
+        let coordinates = coordinates(for: route, maximumCount: pointLimit)
         guard coordinates.count > 1 else {
+            return nil
+        }
+
+        var mapPoints: [MKMapPoint] = []
+        mapPoints.reserveCapacity(coordinates.count)
+        var boundingMapRect = MKMapRect.null
+
+        for coordinate in coordinates {
+            guard CLLocationCoordinate2DIsValid(coordinate) else {
+                continue
+            }
+
+            let mapPoint = MKMapPoint(coordinate)
+            mapPoints.append(mapPoint)
+            boundingMapRect = boundingMapRect.union(MKMapRect(x: mapPoint.x, y: mapPoint.y, width: 1, height: 1))
+        }
+
+        guard mapPoints.count > 1, boundingMapRect.intersects(mapRect) else {
             return nil
         }
 
         return HeatmapRenderedRoute(
             id: route.id,
-            coordinates: coordinates,
-            boundingMapRect: route.boundingMapRect,
-            pointLimit: maximumCount
+            mapPoints: mapPoints,
+            boundingMapRect: boundingMapRect,
+            pointLimit: pointLimit
         )
     }
 
@@ -1160,7 +1205,26 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         )
         let coordinateIndexes = sampledIndexes(sourceCount: sourceCoordinates.count, targetCount: targetCount)
         let sampledCoordinates = coordinateIndexes.map { sourceCoordinates[$0].coordinate }
-        let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sampledCoordinates)
+        let preparedRoute = validDisplayCoordinates(for: sampledCoordinates)
+
+        guard preparedRoute.coordinates.count > 1,
+              !preparedRoute.boundingMapRect.isNull else {
+            return nil
+        }
+
+        return HeatmapRoute(
+            id: workout.id,
+            coordinates: preparedRoute.coordinates,
+            boundingMapRect: preparedRoute.boundingMapRect,
+            sportKind: workout.sportKind,
+            startYear: Calendar.current.component(.year, from: workout.startDate)
+        )
+    }
+
+    private static func validDisplayCoordinates(
+        for sourceCoordinates: [CLLocationCoordinate2D]
+    ) -> (coordinates: [CLLocationCoordinate2D], boundingMapRect: MKMapRect) {
+        let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sourceCoordinates)
         var validDisplayCoordinates: [CLLocationCoordinate2D] = []
         validDisplayCoordinates.reserveCapacity(displayCoordinates.count)
         var boundingMapRect = MKMapRect.null
@@ -1175,16 +1239,22 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             boundingMapRect = boundingMapRect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
         }
 
-        guard validDisplayCoordinates.count > 1, !boundingMapRect.isNull else {
-            return nil
+        return (validDisplayCoordinates, boundingMapRect)
+    }
+
+    private static func boundingMapRect(for coordinates: [CLLocationCoordinate2D]) -> MKMapRect? {
+        var boundingMapRect = MKMapRect.null
+
+        for coordinate in coordinates {
+            guard CLLocationCoordinate2DIsValid(coordinate) else {
+                continue
+            }
+
+            let point = MKMapPoint(coordinate)
+            boundingMapRect = boundingMapRect.union(MKMapRect(x: point.x, y: point.y, width: 1, height: 1))
         }
 
-        return HeatmapRoute(
-            id: workout.id,
-            coordinates: validDisplayCoordinates,
-            boundingMapRect: boundingMapRect,
-            sportKind: workout.sportKind
-        )
+        return boundingMapRect.isNull ? nil : boundingMapRect
     }
 
     private static func sampledIndexes(sourceCount: Int, targetCount: Int) -> [Int] {

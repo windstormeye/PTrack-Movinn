@@ -90,6 +90,44 @@ struct TrackedWorkout: Codable {
     let fullCoordinates: [RouteCoordinate]?
 
     nonisolated init(
+        id: String,
+        healthDataVersion: Int?,
+        activityTypeRawValue: UInt,
+        startDate: Date,
+        endDate: Date?,
+        durationSeconds: TimeInterval?,
+        distanceMeters: Double,
+        totalEnergyBurnedKilocalories: Double?,
+        sourceRevision: TrackedWorkoutSourceRevision?,
+        device: TrackedWorkoutDevice?,
+        metadata: [String: TrackedMetadataValue]?,
+        workoutEvents: [TrackedWorkoutEvent]?,
+        routeSegments: [TrackedWorkoutRouteSegment]?,
+        routeSummary: TrackedRouteSummary?,
+        quantityMetrics: [TrackedWorkoutQuantityMetric]?,
+        coordinates: [RouteCoordinate],
+        fullCoordinates: [RouteCoordinate]?
+    ) {
+        self.id = id
+        self.healthDataVersion = healthDataVersion
+        self.activityTypeRawValue = activityTypeRawValue
+        self.startDate = startDate
+        self.endDate = endDate
+        self.durationSeconds = durationSeconds
+        self.distanceMeters = distanceMeters
+        self.totalEnergyBurnedKilocalories = totalEnergyBurnedKilocalories
+        self.sourceRevision = sourceRevision
+        self.device = device
+        self.metadata = metadata
+        self.workoutEvents = workoutEvents
+        self.routeSegments = routeSegments
+        self.routeSummary = routeSummary
+        self.quantityMetrics = quantityMetrics
+        self.coordinates = coordinates
+        self.fullCoordinates = fullCoordinates
+    }
+
+    nonisolated init(
         workout: HKWorkout,
         locations: [CLLocation],
         routeSegments: [TrackedWorkoutRouteSegment] = [],
@@ -357,6 +395,70 @@ struct TrackedWorkout: Codable {
 
     var routeDetailDisplayCoordinates: [CLLocationCoordinate2D] {
         CoordinateTransformer.displayCoordinates(for: routeDetailCoordinates.map(\.coordinate))
+    }
+
+    nonisolated func listPreview(maximumCoordinateCount: Int) -> TrackedWorkout {
+        TrackedWorkout(
+            id: id,
+            healthDataVersion: healthDataVersion,
+            activityTypeRawValue: activityTypeRawValue,
+            startDate: startDate,
+            endDate: endDate,
+            durationSeconds: durationSeconds,
+            distanceMeters: distanceMeters,
+            totalEnergyBurnedKilocalories: totalEnergyBurnedKilocalories,
+            sourceRevision: sourceRevision,
+            device: device,
+            metadata: metadata,
+            workoutEvents: nil,
+            routeSegments: nil,
+            routeSummary: routeSummary,
+            quantityMetrics: nil,
+            coordinates: RouteSampler.downsample(coordinates, limit: maximumCoordinateCount),
+            fullCoordinates: nil
+        )
+    }
+
+    nonisolated func statisticsPreview() -> TrackedWorkout {
+        TrackedWorkout(
+            id: id,
+            healthDataVersion: healthDataVersion,
+            activityTypeRawValue: activityTypeRawValue,
+            startDate: startDate,
+            endDate: endDate,
+            durationSeconds: durationSeconds,
+            distanceMeters: distanceMeters,
+            totalEnergyBurnedKilocalories: totalEnergyBurnedKilocalories,
+            sourceRevision: sourceRevision,
+            device: device,
+            metadata: metadata,
+            workoutEvents: nil,
+            routeSegments: nil,
+            routeSummary: routeSummary,
+            quantityMetrics: nil,
+            coordinates: Self.routeEndpointCoordinates(from: coordinates),
+            fullCoordinates: nil
+        )
+    }
+
+    private nonisolated static func routeEndpointCoordinates(from coordinates: [RouteCoordinate]) -> [RouteCoordinate] {
+        guard let firstCoordinate = coordinates.first else {
+            return []
+        }
+
+        guard let lastCoordinate = coordinates.last,
+              !isSameCoordinate(firstCoordinate.coordinate, lastCoordinate.coordinate) else {
+            return [firstCoordinate]
+        }
+
+        return [firstCoordinate, lastCoordinate]
+    }
+
+    private nonisolated static func isSameCoordinate(
+        _ lhs: CLLocationCoordinate2D,
+        _ rhs: CLLocationCoordinate2D
+    ) -> Bool {
+        lhs.latitude == rhs.latitude && lhs.longitude == rhs.longitude
     }
 
     nonisolated static func fullCoordinatesIfSampled(

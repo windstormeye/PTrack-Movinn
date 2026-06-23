@@ -79,6 +79,7 @@ class ViewController: UIViewController {
     private let activeScrollFlushDelay: TimeInterval = 0.45
     private let cacheSaveDebounceDelay: TimeInterval = 1.0
     private let cacheLoadPreviewBatchSize = 32
+    private let homePreviewCoordinateLimit = 240
     private let stravaIncrementalLookback: TimeInterval = 7 * 24 * 60 * 60
     private let pullRefreshTriggerDistance: CGFloat = 86
     private var isRouteBookModeActive = false
@@ -878,11 +879,22 @@ class ViewController: UIViewController {
                 return
             }
 
-            let cachedWorkouts = self.cacheStore.load(
+            let loadedWorkoutCount = self.cacheStore.loadProgressively(
                 batchSize: self.cacheLoadPreviewBatchSize,
+                shouldContinue: { [weak self] in
+                    self != nil
+                },
                 onBatch: { [weak self] cachedWorkoutBatch in
+                    guard let self else {
+                        return
+                    }
+
+                    let previewBatch = cachedWorkoutBatch.map {
+                        $0.listPreview(maximumCoordinateCount: self.homePreviewCoordinateLimit)
+                    }
+
                     DispatchQueue.main.async { [weak self] in
-                        self?.appendCachedWorkoutBatch(cachedWorkoutBatch)
+                        self?.appendCachedWorkoutBatch(previewBatch)
                     }
                 }
             )
@@ -891,7 +903,8 @@ class ViewController: UIViewController {
                     return
                 }
 
-                self.applyCachedWorkouts(cachedWorkouts)
+                let hadCachedSummary = self.cachedWorkoutSummary != nil
+                self.finishApplyingCachedWorkoutPreviews()
                 self.isCacheLoadInProgress = false
                 if self.isCacheLoadShowingLoadingIndicator {
                     self.isCacheLoadShowingLoadingIndicator = false
@@ -902,7 +915,7 @@ class ViewController: UIViewController {
                 }
 
                 self.synchronizeDataSourcesForAppOpen(
-                    showsLoadingIndicator: cachedWorkouts.isEmpty && self.cachedWorkoutSummary == nil
+                    showsLoadingIndicator: loadedWorkoutCount == 0 && !hadCachedSummary
                 )
             }
         }
@@ -932,8 +945,7 @@ class ViewController: UIViewController {
         restorePersistedRouteBookModeIfNeeded()
     }
 
-    private func applyCachedWorkouts(_ cachedWorkouts: [TrackedWorkout]) {
-        workouts = cachedWorkouts
+    private func finishApplyingCachedWorkoutPreviews() {
         removeCachedAppleHealthWorkoutsConflictingWithStrava()
         knownWorkoutIDs = Set(workouts.map(\.id))
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
@@ -1194,7 +1206,6 @@ class ViewController: UIViewController {
             knownWorkoutIDs.insert(workout.id)
             totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
             updateTotalDistanceText()
-            prewarmRouteSource(for: workout)
             markCacheDirty(workout.id)
             scheduleCacheSave()
             return
@@ -1305,7 +1316,6 @@ class ViewController: UIViewController {
 
         pendingWorkouts.append(workout)
         newWorkoutBadgeStore.markIfNeeded(workout)
-        prewarmRouteSource(for: workout)
         markCacheDirty(workout.id)
         schedulePendingWorkoutFlush()
     }
@@ -1453,14 +1463,8 @@ class ViewController: UIViewController {
         }
     }
 
-    private func prewarmRouteSource(for workout: TrackedWorkout) {
-        routeSourcePrewarmQueue.async {
-            WorkoutRoutePathView.prewarmSource(for: workout)
-        }
-    }
-
     private func prewarmInitialRouteSources() {
-        let initialPrewarmCount = min(workouts.count, 72)
+        let initialPrewarmCount = min(workouts.count, 24)
         guard initialPrewarmCount > 0 else {
             return
         }
@@ -1507,15 +1511,24 @@ class ViewController: UIViewController {
         indexPath: IndexPath,
         cell: WorkoutRouteCell?
     ) {
+        let workout = resolvedWorkoutForDetailedUse(workout)
         if newWorkoutBadgeStore.markSeen(workout) {
             cell?.setShowsNewBadge(false)
         }
 
         let detailViewController = WorkoutRouteDetailViewController(
-            workout: workout,
-            mergeSourceWorkouts: workouts
+            workout: workout
         )
         navigationController?.pushViewController(detailViewController, animated: true)
+    }
+
+    private func resolvedWorkoutForDetailedUse(_ workout: TrackedWorkout) -> TrackedWorkout {
+        guard workout.fullCoordinates == nil,
+              !workout.isRouteCollectionSource else {
+            return workout
+        }
+
+        return cacheStore.loadWorkout(id: workout.id) ?? workout
     }
 
     private func makeWorkoutContextMenuConfiguration(for workout: TrackedWorkout) -> UIContextMenuConfiguration {
@@ -1725,6 +1738,7 @@ class ViewController: UIViewController {
     }
 
     private func enterRouteBookMode(with workout: TrackedWorkout, persists: Bool = true) {
+        let workout = resolvedWorkoutForDetailedUse(workout)
         let coordinates = workout.displayCoordinates
         guard coordinates.count > 1 else {
             presentSimpleAlert(title: AppLocalization.text(.routeBook), message: AppLocalization.text(.unknownLocation))

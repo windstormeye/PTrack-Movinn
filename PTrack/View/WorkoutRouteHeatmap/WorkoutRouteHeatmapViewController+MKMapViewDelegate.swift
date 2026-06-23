@@ -14,7 +14,7 @@ extension WorkoutRouteHeatmapViewController: MKMapViewDelegate {
     }
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
-        scheduleVisibleRouteOverlayUpdate()
+        handleMapRegionDidChange(mapView)
     }
 
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {

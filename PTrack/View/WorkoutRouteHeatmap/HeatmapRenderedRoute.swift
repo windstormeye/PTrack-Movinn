@@ -10,7 +10,7 @@ import MapKit
 
 struct HeatmapRenderedRoute {
     let id: String
-    let coordinates: [CLLocationCoordinate2D]
+    let mapPoints: [MKMapPoint]
     let boundingMapRect: MKMapRect
     let pointLimit: Int
 }

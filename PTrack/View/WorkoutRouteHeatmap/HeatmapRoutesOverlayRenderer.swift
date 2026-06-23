@@ -31,7 +31,7 @@ final class HeatmapRoutesOverlayRenderer: MKOverlayRenderer {
         context.setAllowsAntialiasing(true)
         context.setLineCap(.round)
         context.setLineJoin(.round)
-        context.setLineWidth(3 / zoomScale)
+        context.setLineWidth(lineWidth(for: zoomScale))
         context.setStrokeColor(UIColor.black.withAlphaComponent(0.34).cgColor)
 
         for route in routes where route.boundingMapRect.intersects(mapRect) {
@@ -42,17 +42,22 @@ final class HeatmapRoutesOverlayRenderer: MKOverlayRenderer {
     }
 
     private func draw(route: HeatmapRenderedRoute, in context: CGContext) {
-        guard let firstCoordinate = route.coordinates.first else {
+        guard let firstPoint = route.mapPoints.first else {
             return
         }
 
         context.beginPath()
-        context.move(to: point(for: MKMapPoint(firstCoordinate)))
+        context.move(to: point(for: firstPoint))
 
-        for coordinate in route.coordinates.dropFirst() {
-            context.addLine(to: point(for: MKMapPoint(coordinate)))
+        for mapPoint in route.mapPoints.dropFirst() {
+            context.addLine(to: point(for: mapPoint))
         }
 
         context.strokePath()
+    }
+
+    private func lineWidth(for zoomScale: MKZoomScale) -> CGFloat {
+        let screenLineWidth: CGFloat = zoomScale > 0.001 ? 2.0 : 2.4
+        return screenLineWidth / max(zoomScale, .leastNonzeroMagnitude)
     }
 }

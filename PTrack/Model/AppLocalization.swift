@@ -169,6 +169,7 @@ enum AppTextKey: String {
     case totalWorkoutTime
     case trailRunning
     case tools
+    case time
     case today
     case uiSettings
     case unknownDistance
@@ -377,6 +378,7 @@ enum AppLocalization {
             .totalWorkoutTime: "总时间",
             .trailRunning: "越野跑",
             .tools: "工具",
+            .time: "时间",
             .today: "今天",
             .uiSettings: "功能设置",
             .unknownDistance: "未知距离",
@@ -539,6 +541,7 @@ enum AppLocalization {
             .totalWorkoutTime: "合計時間",
             .trailRunning: "トレイルランニング",
             .tools: "ツール",
+            .time: "時間",
             .today: "今日",
             .uiSettings: "機能設定",
             .unknownDistance: "不明な距離",
@@ -701,6 +704,7 @@ enum AppLocalization {
             .totalWorkoutTime: "총 시간",
             .trailRunning: "트레일 러닝",
             .tools: "도구",
+            .time: "시간",
             .today: "오늘",
             .uiSettings: "기능 설정",
             .unknownDistance: "알 수 없는 거리",
@@ -863,6 +867,7 @@ enum AppLocalization {
             .totalWorkoutTime: "Total Time",
             .trailRunning: "Trail Running",
             .tools: "Tools",
+            .time: "Time",
             .today: "Today",
             .uiSettings: "Feature Settings",
             .unknownDistance: "Unknown Distance",

@@ -19,6 +19,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         WorkoutRouteSnapshotRenderer.clearMemoryCache()
+        WorkoutRoutePathView.clearMemoryCache()
         RouteMediaStore.clearMemoryCache()
     }
 

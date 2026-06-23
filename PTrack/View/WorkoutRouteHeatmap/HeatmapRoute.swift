@@ -13,4 +13,5 @@ struct HeatmapRoute {
     let coordinates: [CLLocationCoordinate2D]
     let boundingMapRect: MKMapRect
     let sportKind: TrackedWorkoutSportKind
+    let startYear: Int
 }
