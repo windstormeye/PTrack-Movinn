@@ -219,6 +219,12 @@ final class MoreSettingsViewController: UIViewController {
             name: RouteCollectionCloudSyncSettings.didChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleHealthAuthorizationStateDidChange),
+            name: HealthWorkoutStore.authorizationStateDidChangeNotification,
+            object: nil
+        )
     }
 
     @objc private func handleLanguageDidChange() {
@@ -227,6 +233,12 @@ final class MoreSettingsViewController: UIViewController {
 
     @objc private func handleRouteCollectionCloudSyncSettingDidChange() {
         collectionView?.reloadData()
+    }
+
+    @objc private func handleHealthAuthorizationStateDidChange() {
+        Task { @MainActor in
+            collectionView?.reloadData()
+        }
     }
 
     private func updateLocalizedText() {
@@ -313,12 +325,34 @@ final class MoreSettingsViewController: UIViewController {
             Toast.show(AppLocalization.text(.healthDataReadAuthorized), in: view)
             return
         case .needsAttention:
-            presentHealthAuthorizationSettingsAlert()
+            requestHealthAuthorizationIfAvailable()
             return
         case .notDetermined:
-            break
+            performHealthAuthorizationRequest()
         }
+    }
 
+    private func requestHealthAuthorizationIfAvailable() {
+        healthWorkoutStore.authorizationRequestAvailability { [weak self] result in
+            Task { @MainActor in
+                guard let self else {
+                    return
+                }
+
+                switch result {
+                case .success(.canRequest):
+                    self.performHealthAuthorizationRequest()
+                case .success(.settingsRequired):
+                    self.presentHealthAuthorizationSettingsAlert()
+                case .failure(let error):
+                    self.presentErrorAlert(error)
+                    self.collectionView.reloadData()
+                }
+            }
+        }
+    }
+
+    private func performHealthAuthorizationRequest() {
         healthWorkoutStore.requestAuthorization { [weak self] result in
             Task { @MainActor in
                 guard let self else {

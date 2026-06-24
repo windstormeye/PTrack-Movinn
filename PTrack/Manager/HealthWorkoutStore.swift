@@ -10,6 +10,10 @@ import Foundation
 import HealthKit
 
 final class HealthWorkoutStore {
+    static let authorizationStateDidChangeNotification = Notification.Name(
+        "studio.pj.PTrack.health.authorizationStateDidChange"
+    )
+
     private lazy var healthStore = HKHealthStore()
     private let defaults: UserDefaults
 
@@ -21,9 +25,15 @@ final class HealthWorkoutStore {
         case needsAttention
     }
 
+    enum AuthorizationRequestAvailability {
+        case canRequest
+        case settingsRequired
+    }
+
     private enum DefaultsKey {
         static let authorizationRequested = "studio.pj.PTrack.health.authorizationRequested"
         static let authorizationNeedsAttention = "studio.pj.PTrack.health.authorizationNeedsAttention"
+        static let authorizationVerified = "studio.pj.PTrack.health.authorizationVerified"
     }
 
     private static let sourceLookupRetryDelays: [TimeInterval] = [0.35, 0.9, 1.6]
@@ -38,7 +48,8 @@ final class HealthWorkoutStore {
         }
 
         guard HKHealthStore.isHealthDataAvailable(),
-              !defaults.bool(forKey: DefaultsKey.authorizationNeedsAttention) else {
+              !defaults.bool(forKey: DefaultsKey.authorizationNeedsAttention),
+              defaults.bool(forKey: DefaultsKey.authorizationVerified) else {
             return .needsAttention
         }
 
@@ -216,11 +227,41 @@ final class HealthWorkoutStore {
                 self.updateAuthorizationState(for: error)
                 completion(.failure(error))
             } else if success {
-                self.markAuthorizationAuthorized()
+                self.markAuthorizationRequiresVerification()
                 completion(.success(()))
             } else {
                 self.markAuthorizationNeedsAttention()
                 completion(.failure(HealthWorkoutStoreError.authorizationDenied))
+            }
+        }
+    }
+
+    func authorizationRequestAvailability(
+        completion: @escaping (Result<AuthorizationRequestAvailability, Error>) -> Void
+    ) {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            markAuthorizationNeedsAttention()
+            completion(.failure(HealthWorkoutStoreError.healthDataUnavailable))
+            return
+        }
+
+        healthStore.getRequestStatusForAuthorization(
+            toShare: [],
+            read: Self.readTypes
+        ) { status, error in
+            if let error {
+                self.updateAuthorizationState(for: error)
+                completion(.failure(error))
+                return
+            }
+
+            switch status {
+            case .shouldRequest, .unknown:
+                completion(.success(.canRequest))
+            case .unnecessary:
+                completion(.success(.settingsRequired))
+            @unknown default:
+                completion(.success(.settingsRequired))
             }
         }
     }
@@ -282,6 +323,9 @@ final class HealthWorkoutStore {
                 .filter { !excludedIDs.contains($0.uuid.uuidString) }
             print("PTrack HealthKit: found \(workouts.count) new cycling/hiking/walking/running workouts")
             if !workouts.isEmpty {
+                self.markAuthorizationVerified()
+            }
+            if !workouts.isEmpty {
                 onNewDataDetected?(workouts.count)
             }
             self.progressHandler?("找到 \(workouts.count) 条运动记录，正在逐条读取轨迹...")
@@ -298,16 +342,37 @@ final class HealthWorkoutStore {
     private func markAuthorizationAuthorized() {
         defaults.set(true, forKey: DefaultsKey.authorizationRequested)
         defaults.set(false, forKey: DefaultsKey.authorizationNeedsAttention)
+        defaults.set(true, forKey: DefaultsKey.authorizationVerified)
+        notifyAuthorizationStateDidChange()
+    }
+
+    private func markAuthorizationRequiresVerification() {
+        defaults.set(true, forKey: DefaultsKey.authorizationRequested)
+        defaults.set(true, forKey: DefaultsKey.authorizationNeedsAttention)
+        defaults.set(false, forKey: DefaultsKey.authorizationVerified)
+        notifyAuthorizationStateDidChange()
     }
 
     private func markAuthorizationNotDetermined() {
         defaults.set(false, forKey: DefaultsKey.authorizationRequested)
         defaults.set(false, forKey: DefaultsKey.authorizationNeedsAttention)
+        defaults.set(false, forKey: DefaultsKey.authorizationVerified)
+        notifyAuthorizationStateDidChange()
     }
 
     func markAuthorizationNeedsAttention() {
         defaults.set(true, forKey: DefaultsKey.authorizationRequested)
         defaults.set(true, forKey: DefaultsKey.authorizationNeedsAttention)
+        defaults.set(false, forKey: DefaultsKey.authorizationVerified)
+        notifyAuthorizationStateDidChange()
+    }
+
+    func markAuthorizationVerified() {
+        markAuthorizationAuthorized()
+    }
+
+    private func notifyAuthorizationStateDidChange() {
+        NotificationCenter.default.post(name: Self.authorizationStateDidChangeNotification, object: self)
     }
 
     private func updateAuthorizationState(for error: Error) {

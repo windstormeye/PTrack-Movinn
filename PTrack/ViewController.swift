@@ -90,6 +90,7 @@ class ViewController: UIViewController {
     private var routeBookLastHeadingDegrees: CLLocationDirection?
     private var routeBookHeadingDisplayDegrees: CLLocationDirection?
     private var shouldClearRouteImportIndicatorsOnNextHomeAppear = false
+    private var isHealthAuthorizationRecoveryCheckInProgress = false
 
     deinit {
         pendingFlushWorkItem?.cancel()
@@ -123,6 +124,8 @@ class ViewController: UIViewController {
         registerStravaImportObserver()
         registerRouteBookObserver()
         registerSharedRouteImportObserver()
+        registerAppForegroundObserver()
+        registerHealthAuthorizationObserver()
         store.progressHandler = { message in
             print("PTrack HealthKit: \(message)")
         }
@@ -419,6 +422,17 @@ class ViewController: UIViewController {
     }
 
     private func makeHeaderMoreMenu() -> UIMenu {
+        let moreAction = UIAction(
+            title: AppLocalization.text(.more),
+            image: UIImage(systemName: "ellipsis")
+        ) { [weak self] _ in
+            self?.showMoreSettings()
+        }
+
+        guard hasReadableDataSourceAuthorization else {
+            return UIMenu(children: [moreAction])
+        }
+
         let hasUnseenRoute = SharedRouteImportInbox.hasUnseenRoute
         let routeCollectionAction = UIAction(
             title: AppLocalization.text(.routeCollectionMenuTitle),
@@ -433,13 +447,6 @@ class ViewController: UIViewController {
             image: UIImage(systemName: "map")
         ) { [weak self] _ in
             self?.showHeatmap()
-        }
-
-        let moreAction = UIAction(
-            title: AppLocalization.text(.more),
-            image: UIImage(systemName: "ellipsis")
-        ) { [weak self] _ in
-            self?.showMoreSettings()
         }
 
         return UIMenu(children: [routeCollectionAction, heatmapAction, moreAction])
@@ -473,7 +480,9 @@ class ViewController: UIViewController {
 
     private func updateRouteCollectionBadgeVisibility() {
         routeCollectionBadgeLabel.text = AppLocalization.text(.newRoute)
-        routeCollectionBadgeLabel.isHidden = isRouteBookModeActive || !SharedRouteImportInbox.hasUnseenRoute
+        routeCollectionBadgeLabel.isHidden = isRouteBookModeActive
+            || !hasReadableDataSourceAuthorization
+            || !SharedRouteImportInbox.hasUnseenRoute
         if !isRouteBookModeActive {
             moreButton.menu = makeHeaderMoreMenu()
         }
@@ -643,9 +652,13 @@ class ViewController: UIViewController {
     func synchronizeDataSourcesForAppOpen(showsLoadingIndicator: Bool = true) {
         updateHeaderReadAuthorizationState()
 
-        if store.authorizationState == .authorized {
+        switch store.authorizationState {
+        case .authorized:
             loadAuthorizedHealthWorkouts(showsLoadingIndicator: showsLoadingIndicator)
-        } else {
+        case .needsAttention:
+            print("PTrack HealthKit: checking pending authorization on app open")
+            recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
+        case .notDetermined:
             print("PTrack HealthKit: skipped import, no stored authorization")
         }
         loadAuthorizedStravaWorkouts(showsLoadingIndicator: showsLoadingIndicator)
@@ -772,6 +785,37 @@ class ViewController: UIViewController {
             name: SharedRouteImportInbox.openRouteCollectionNotification,
             object: nil
         )
+    }
+
+    private func registerAppForegroundObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+
+    private func registerHealthAuthorizationObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleHealthAuthorizationStateDidChange),
+            name: HealthWorkoutStore.authorizationStateDidChangeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleAppWillEnterForeground() {
+        recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: false)
+        updateHeaderReadAuthorizationState()
+        updateEmptyDataSourceVisibility()
+    }
+
+    @objc private func handleHealthAuthorizationStateDidChange() {
+        Task { @MainActor in
+            updateHeaderReadAuthorizationState()
+            updateEmptyDataSourceVisibility()
+        }
     }
 
     @objc private func handlePendingSharedRoutesDidChange() {
@@ -947,6 +991,7 @@ class ViewController: UIViewController {
 
     private func finishApplyingCachedWorkoutPreviews() {
         removeCachedAppleHealthWorkoutsConflictingWithStrava()
+        markHealthAuthorizationVerifiedFromCachedWorkoutsIfNeeded()
         knownWorkoutIDs = Set(workouts.map(\.id))
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
         let shouldBackfillCacheSummary = cachedWorkoutSummary == nil && !workouts.isEmpty
@@ -958,6 +1003,45 @@ class ViewController: UIViewController {
         if shouldBackfillCacheSummary {
             cacheSaveQueue.async { [cacheStore = self.cacheStore, workouts] in
                 cacheStore.saveSummary(for: workouts)
+            }
+        }
+    }
+
+    private func markHealthAuthorizationVerifiedFromCachedWorkoutsIfNeeded() {
+        guard workouts.contains(where: { !$0.isStravaSource && !$0.isRouteCollectionSource }) else {
+            return
+        }
+
+        store.markAuthorizationVerified()
+    }
+
+    private func recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: Bool) {
+        guard store.authorizationState == .needsAttention,
+              !isHealthSyncInProgress,
+              !isHealthAuthorizationRecoveryCheckInProgress else {
+            return
+        }
+
+        isHealthAuthorizationRecoveryCheckInProgress = true
+        store.authorizationRequestAvailability { [weak self] result in
+            Task { @MainActor in
+                guard let self else {
+                    return
+                }
+
+                self.isHealthAuthorizationRecoveryCheckInProgress = false
+                guard self.store.authorizationState == .needsAttention,
+                      !self.isHealthSyncInProgress else {
+                    return
+                }
+
+                switch result {
+                case .success(.settingsRequired):
+                    self.loadAuthorizedHealthWorkouts(showsLoadingIndicator: showsLoadingIndicator)
+                case .success(.canRequest), .failure:
+                    self.updateHeaderReadAuthorizationState()
+                    self.updateEmptyDataSourceVisibility()
+                }
             }
         }
     }
@@ -1630,7 +1714,7 @@ class ViewController: UIViewController {
             Toast.show(AppLocalization.text(.healthDataReadAuthorized), in: view)
             return
         case .needsAttention:
-            presentHealthAuthorizationSettingsAlert()
+            requestHealthAuthorizationIfAvailable()
             return
         case .notDetermined:
             break
@@ -1641,6 +1725,33 @@ class ViewController: UIViewController {
         }
 
         requestHealthAuthorizationAndLoadWorkouts()
+    }
+
+    private func requestHealthAuthorizationIfAvailable() {
+        guard !isHealthSyncInProgress else {
+            return
+        }
+
+        store.authorizationRequestAvailability { [weak self] result in
+            Task { @MainActor in
+                guard let self else {
+                    return
+                }
+
+                switch result {
+                case .success(.canRequest):
+                    self.requestHealthAuthorizationAndLoadWorkouts()
+                case .success(.settingsRequired):
+                    self.presentHealthAuthorizationSettingsAlert()
+                    self.updateHeaderReadAuthorizationState()
+                    self.updateEmptyDataSourceVisibility()
+                case .failure(let error):
+                    self.presentHealthAuthorizationError(error)
+                    self.updateHeaderReadAuthorizationState()
+                    self.updateEmptyDataSourceVisibility()
+                }
+            }
+        }
     }
 
     private func handleEmptyStravaSelection() {

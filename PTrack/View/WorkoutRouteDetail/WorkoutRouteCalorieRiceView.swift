@@ -28,6 +28,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
     private var tiltGravityY: CGFloat = 0.2
     private var calibratedViewerOffset: UIOffset?
     private var lastSideImpactTime: CFTimeInterval = 0
+    private var isImpactFeedbackEnabled = false
 
     private let bodySize = CGSize(width: 24, height: 18)
     private let gravityMagnitude: CGFloat = 1.85
@@ -82,6 +83,15 @@ final class WorkoutRouteCalorieRiceView: UIView {
         layoutRiceLabels(mode: .falling)
         tiltGravityY = max(tiltGravityY, restingVerticalGravity)
         resetPhysics(initialVerticalVelocity: 26)
+    }
+
+    func setImpactFeedbackEnabled(_ isEnabled: Bool) {
+        isImpactFeedbackEnabled = isEnabled
+        lastSideImpactTime = CACurrentMediaTime()
+
+        if isEnabled {
+            impactFeedbackGenerator.prepare()
+        }
     }
 
     private func configureView() {
@@ -248,7 +258,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
     }
 
     private func handleSideImpacts(itemBehavior: UIDynamicItemBehavior) {
-        guard window != nil, bounds.width > 0 else {
+        guard isImpactFeedbackEnabled, window != nil, bounds.width > 0 else {
             return
         }
 

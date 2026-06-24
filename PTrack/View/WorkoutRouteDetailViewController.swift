@@ -1387,6 +1387,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func applyPanelSheetDetent(_ detent: PanelDetent, animated: Bool) {
         selectedPanelDetent = detent
+        calorieRiceView.setImpactFeedbackEnabled(false)
+
         if detent == .minimum {
             removeReplayAnnotation()
             replayRulerView.setProgress(0)
@@ -1403,6 +1405,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         guard animated else {
             changes()
+            handlePanelDetentTransitionCompleted(for: detent)
             return
         }
 
@@ -1414,18 +1417,20 @@ final class WorkoutRouteDetailViewController: UIViewController {
             options: [.allowUserInteraction, .beginFromCurrentState],
             animations: changes,
             completion: { [weak self] _ in
-                self?.restartMediumPanelAnimationsIfNeeded(for: detent)
+                self?.handlePanelDetentTransitionCompleted(for: detent)
             }
         )
     }
 
-    private func restartMediumPanelAnimationsIfNeeded(for detent: PanelDetent) {
-        guard detent == .medium,
+    private func handlePanelDetentTransitionCompleted(for detent: PanelDetent) {
+        guard selectedPanelDetent == detent,
+              detent == .medium,
               panelCaloriesKilocalories != nil else {
             return
         }
 
         calorieRiceView.restartRiceFallAnimation()
+        calorieRiceView.setImpactFeedbackEnabled(true)
     }
 
     @objc private func handleReplayProgressChanged(_ sender: WorkoutRouteReplayRulerView) {
