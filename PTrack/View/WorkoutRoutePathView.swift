@@ -309,7 +309,7 @@ final class WorkoutRoutePathView: UIView {
     }
 
     private static func sourceCacheKey(for workout: TrackedWorkout) -> String {
-        "\(workout.id)-gcj\(CoordinateTransformer.version)-p\(maximumThumbnailPointCount)"
+        "\(workout.id)-\(CoordinateTransformer.cacheKey)-p\(maximumThumbnailPointCount)"
     }
 
     private static func removePendingSourceBuild(for key: String, operation: Operation) {

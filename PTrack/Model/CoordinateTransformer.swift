@@ -9,30 +9,68 @@ import CoreLocation
 import Foundation
 
 enum CoordinateTransformer {
-    static let version = 4
+    enum DisplayMapDatum: String {
+        case wgs84
+        case gcj02
+    }
+
+    static let version = 6
+    static var cacheKey: String {
+        "coord\(version)-\(currentDisplayMapDatum.rawValue)"
+    }
+
+    static var currentDisplayMapDatum: DisplayMapDatum {
+        usesMainlandChinaMapProvider ? .gcj02 : .wgs84
+    }
 
     private static let pi = Double.pi
     private static let axis = 6378245.0
     private static let offset = 0.00669342162296594323
 
-    static func displayCoordinate(for coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
-        displayCoordinate(for: coordinate, routeNeedsTransform: false)
+    static func displayCoordinate(
+        for coordinate: CLLocationCoordinate2D,
+        mapDatum: DisplayMapDatum = currentDisplayMapDatum
+    ) -> CLLocationCoordinate2D {
+        displayCoordinate(
+            for: coordinate,
+            mapDatum: mapDatum,
+            routeNeedsTransform: false
+        )
     }
 
-    static func displayCoordinates(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
-        let routeNeedsTransform = shouldTransformRoute(coordinates)
-        return coordinates.map { displayCoordinate(for: $0, routeNeedsTransform: routeNeedsTransform) }
+    static func displayCoordinates(
+        for coordinates: [CLLocationCoordinate2D],
+        mapDatum: DisplayMapDatum = currentDisplayMapDatum
+    ) -> [CLLocationCoordinate2D] {
+        let routeNeedsTransform = mapDatum == .gcj02 && shouldTransformRoute(coordinates)
+        return coordinates.map {
+            displayCoordinate(
+                for: $0,
+                mapDatum: mapDatum,
+                routeNeedsTransform: routeNeedsTransform
+            )
+        }
     }
 
     private static func displayCoordinate(
         for coordinate: CLLocationCoordinate2D,
+        mapDatum: DisplayMapDatum,
         routeNeedsTransform: Bool
     ) -> CLLocationCoordinate2D {
+        guard mapDatum == .gcj02 else {
+            return coordinate
+        }
+
         guard shouldTransform(coordinate, routeNeedsTransform: routeNeedsTransform) else {
             return coordinate
         }
 
         return wgs84ToGCJ02(coordinate)
+    }
+
+    private static var usesMainlandChinaMapProvider: Bool {
+        // MapKit does not expose its tile provider; CN region is the public proxy for the AutoNavi/GCJ context.
+        Locale.autoupdatingCurrent.region?.identifier.uppercased() == "CN"
     }
 
     private static func shouldTransform(
