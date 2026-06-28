@@ -15,10 +15,10 @@ enum RouteShareModuleChrome {
             systemName: "xmark",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .bold)
         )
-        configuration.baseForegroundColor = .black
+        configuration.baseForegroundColor = AppColors.solidForeground
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
         button.configuration = configuration
-        button.backgroundColor = .white
+        button.backgroundColor = AppColors.solidBackground
         button.layer.cornerRadius = 12
         button.layer.shadowColor = UIColor.black.cgColor
         button.layer.shadowOpacity = 0.18

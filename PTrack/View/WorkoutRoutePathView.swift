@@ -14,7 +14,7 @@ final class WorkoutRoutePathView: UIView {
     private var routeID: String?
     private var renderedSize = CGSize.zero
     private var currentLayerScale: CGFloat = 0
-    private var strokeColor: UIColor = .black
+    private var strokeColor: UIColor = .label
 
     private let paddingRatio: Double = 0.18
     private var lineWidth: CGFloat = 2.8

@@ -85,7 +85,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
     }
 
     func configureMap(isSelected: Bool) {
-        contentView.backgroundColor = UIColor(white: 0.945, alpha: 1)
+        contentView.backgroundColor = AppColors.cardBackground
         imageView.image = nil
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(
@@ -99,7 +99,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
     }
 
     func configureCollage(isSelected: Bool) {
-        contentView.backgroundColor = UIColor(white: 0.945, alpha: 1)
+        contentView.backgroundColor = AppColors.cardBackground
         imageView.image = nil
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(
@@ -113,7 +113,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
     }
 
     func configureAdd() {
-        contentView.backgroundColor = UIColor(white: 0.945, alpha: 1)
+        contentView.backgroundColor = AppColors.cardBackground
         imageView.image = nil
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(
@@ -127,7 +127,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
 
     private func applyImageStyle(isSelected: Bool) {
         contentView.backgroundColor = .black
-        imageView.backgroundColor = UIColor(white: 0.9, alpha: 1)
+        imageView.backgroundColor = AppColors.placeholderBackground
         addIconView.isHidden = true
         contentView.layer.borderWidth = isSelected ? Self.selectedBorderWidth : 0
         contentView.layer.borderColor = AppColors.movinnGreen.cgColor
@@ -154,7 +154,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
             systemName: "plus",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
         )
-        addIconView.tintColor = .black
+        addIconView.tintColor = AppColors.solidForeground
         addIconView.contentMode = .scaleAspectFit
 
         liveIconView.image = UIImage(
@@ -168,7 +168,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
         liveIconView.layer.masksToBounds = true
         liveIconView.isHidden = true
 
-        disabledOverlayView.backgroundColor = UIColor(white: 1, alpha: 0.58)
+        disabledOverlayView.backgroundColor = AppColors.background(alpha: 0.58)
         disabledOverlayView.isUserInteractionEnabled = false
         disabledOverlayView.isHidden = true
 

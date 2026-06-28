@@ -30,7 +30,7 @@ extension WorkoutRouteHeatmapViewController: MKMapViewDelegate {
 
         if let polyline = overlay as? MKPolyline {
             let renderer = MKPolylineRenderer(polyline: polyline)
-            renderer.strokeColor = UIColor.black.withAlphaComponent(0.34)
+            renderer.strokeColor = UIColor.label.withAlphaComponent(0.34)
             renderer.lineWidth = 3
             renderer.lineJoin = .round
             renderer.lineCap = .round

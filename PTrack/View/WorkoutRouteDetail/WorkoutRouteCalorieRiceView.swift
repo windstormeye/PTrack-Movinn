@@ -97,15 +97,10 @@ final class WorkoutRouteCalorieRiceView: UIView {
     private func configureView() {
         isUserInteractionEnabled = false
         clipsToBounds = true
-        backgroundColor = UIColor(
-            red: 0.945,
-            green: 0.948,
-            blue: 0.938,
-            alpha: 0.96
-        )
+        backgroundColor = AppColors.cardBackground.withAlphaComponent(0.96)
         layer.cornerRadius = 14
         layer.cornerCurve = .continuous
-        layer.borderColor = UIColor.white.withAlphaComponent(0.62).cgColor
+        updateBorderColor()
         layer.borderWidth = 0.8
 
         gravityMotionEffect.onOffsetChanged = { [weak self] viewerOffset in
@@ -115,7 +110,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
         impactFeedbackGenerator.prepare()
 
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        titleLabel.textColor = UIColor.black.withAlphaComponent(0.58)
+        titleLabel.textColor = AppColors.foreground(alpha: 0.58)
         titleLabel.textAlignment = .right
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -124,6 +119,17 @@ final class WorkoutRouteCalorieRiceView: UIView {
             make.top.equalToSuperview().offset(8)
             make.trailing.equalToSuperview().inset(12)
         }
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
+            view.updateBorderColor()
+        }
+    }
+
+    private func updateBorderColor() {
+        layer.borderColor = AppColors.solidBackground
+            .resolvedColor(with: traitCollection)
+            .withAlphaComponent(0.62)
+            .cgColor
     }
 
     private func rebuildRiceLabels(count: Int) {

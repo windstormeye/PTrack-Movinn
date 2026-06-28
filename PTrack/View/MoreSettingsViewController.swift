@@ -30,7 +30,7 @@ final class MoreSettingsViewController: UIViewController {
         var items: [SettingsItem] {
             switch self {
             case .uiSettings:
-                var items: [SettingsItem] = [.appLanguage]
+                var items: [SettingsItem] = [.appLanguage, .appearanceSettings]
                 if RouteCollectionCloudSyncSettings.isFeatureAvailable {
                     items.append(.iCloudRouteSync)
                 }
@@ -45,6 +45,7 @@ final class MoreSettingsViewController: UIViewController {
 
     private enum SettingsItem {
         case appLanguage
+        case appearanceSettings
         case iCloudRouteSync
         case appleHealth
         case strava
@@ -55,6 +56,8 @@ final class MoreSettingsViewController: UIViewController {
             switch self {
             case .appLanguage:
                 return .appLanguage
+            case .appearanceSettings:
+                return .appearanceSettings
             case .iCloudRouteSync:
                 return .iCloudRouteSync
             case .appleHealth:
@@ -72,6 +75,8 @@ final class MoreSettingsViewController: UIViewController {
             switch self {
             case .appLanguage:
                 return "translate"
+            case .appearanceSettings:
+                return "circle.lefthalf.filled"
             case .iCloudRouteSync:
                 return "icloud"
             case .appleHealth:
@@ -94,8 +99,7 @@ final class MoreSettingsViewController: UIViewController {
         }
     }
 
-    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
-    private let navigationBackgroundMask = CAGradientLayer()
+    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let navigationBackgroundHeight: CGFloat = 124
     private let healthWorkoutStore = HealthWorkoutStore()
     private var collectionView: UICollectionView!
@@ -112,6 +116,7 @@ final class MoreSettingsViewController: UIViewController {
         configureCollectionView()
         configureNavigationBackgroundView()
         registerObservers()
+        registerTraitChangeHandler()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -123,7 +128,6 @@ final class MoreSettingsViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateNavigationBackgroundMask()
         collectionView.collectionViewLayout.invalidateLayout()
     }
 
@@ -132,6 +136,13 @@ final class MoreSettingsViewController: UIViewController {
         navigationItem.largeTitleDisplayMode = .never
         edgesForExtendedLayout = [.top, .bottom]
         updateLocalizedText()
+    }
+
+    private func registerTraitChangeHandler() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
+            viewController.updateNavigationBackgroundColors()
+            viewController.collectionView?.reloadData()
+        }
     }
 
     private func configureNavigationBar() {
@@ -151,14 +162,7 @@ final class MoreSettingsViewController: UIViewController {
 
     private func configureNavigationBackgroundView() {
         navigationBackgroundView.isUserInteractionEnabled = false
-        navigationBackgroundView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
-        navigationBackgroundMask.colors = [
-            UIColor.white.cgColor,
-            UIColor.white.withAlphaComponent(0.78).cgColor,
-            UIColor.white.withAlphaComponent(0).cgColor
-        ]
-        navigationBackgroundMask.locations = [0, 0.58, 1]
-        navigationBackgroundView.layer.mask = navigationBackgroundMask
+        updateNavigationBackgroundColors()
 
         view.addSubview(navigationBackgroundView)
 
@@ -200,10 +204,10 @@ final class MoreSettingsViewController: UIViewController {
         }
     }
 
-    private func updateNavigationBackgroundMask() {
-        navigationBackgroundMask.frame = navigationBackgroundView.bounds
-        navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
-        navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
+    private func updateNavigationBackgroundColors() {
+        navigationBackgroundView.effect = nil
+        navigationBackgroundView.contentView.backgroundColor = .clear
+        navigationBackgroundView.layer.mask = nil
     }
 
     private func registerObservers() {
@@ -211,6 +215,12 @@ final class MoreSettingsViewController: UIViewController {
             self,
             selector: #selector(handleLanguageDidChange),
             name: AppLanguageStore.languageDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppearanceDidChange),
+            name: AppAppearanceStore.appearanceDidChangeNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -229,6 +239,12 @@ final class MoreSettingsViewController: UIViewController {
 
     @objc private func handleLanguageDidChange() {
         updateLocalizedText()
+    }
+
+    @objc private func handleAppearanceDidChange() {
+        updateNavigationBackgroundColors()
+        setNeedsStatusBarAppearanceUpdate()
+        collectionView?.reloadData()
     }
 
     @objc private func handleRouteCollectionCloudSyncSettingDidChange() {
@@ -281,12 +297,12 @@ final class MoreSettingsViewController: UIViewController {
             }
         case .iCloudRouteSync:
             return RouteCollectionCloudSyncSettings.isEnabled ? .connected : nil
-        case .appLanguage, .developerWebsite:
+        case .appLanguage, .appearanceSettings, .developerWebsite:
             return nil
         }
     }
 
-    private func presentLanguagePicker(from sourceView: UIView?) {
+    private func presentLanguagePicker(from indexPath: IndexPath) {
         let alertController = UIAlertController(
             title: AppLocalization.text(.appLanguage),
             message: nil,
@@ -307,16 +323,55 @@ final class MoreSettingsViewController: UIViewController {
         ))
 
         if let popoverPresentationController = alertController.popoverPresentationController {
-            popoverPresentationController.sourceView = sourceView ?? view
-            popoverPresentationController.sourceRect = sourceView?.bounds ?? CGRect(
-                x: view.bounds.midX,
-                y: view.bounds.midY,
-                width: 1,
-                height: 1
-            )
+            configurePopoverPresentation(popoverPresentationController, sourceIndexPath: indexPath)
         }
 
         present(alertController, animated: true)
+    }
+
+    private func presentAppearancePicker(from indexPath: IndexPath) {
+        let alertController = UIAlertController(
+            title: AppLocalization.text(.appearanceSettings),
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+        let currentAppearance = AppAppearanceStore.shared.appearance
+
+        for appearance in AppAppearanceMode.allCases {
+            let title = AppLocalization.text(appearance.titleKey)
+            let actionTitle = appearance == currentAppearance ? "✓ \(title)" : title
+            alertController.addAction(UIAlertAction(title: actionTitle, style: .default) { _ in
+                AppAppearanceStore.shared.appearance = appearance
+            })
+        }
+
+        alertController.addAction(UIAlertAction(
+            title: AppLocalization.text(.cancel),
+            style: .cancel
+        ))
+
+        if let popoverPresentationController = alertController.popoverPresentationController {
+            configurePopoverPresentation(popoverPresentationController, sourceIndexPath: indexPath)
+        }
+
+        present(alertController, animated: true)
+    }
+
+    private func configurePopoverPresentation(
+        _ popoverPresentationController: UIPopoverPresentationController,
+        sourceIndexPath: IndexPath
+    ) {
+        let sourceRect: CGRect
+        if let cell = collectionView.cellForItem(at: sourceIndexPath) {
+            sourceRect = view.convert(cell.bounds, from: cell)
+        } else if let attributes = collectionView.layoutAttributesForItem(at: sourceIndexPath) {
+            sourceRect = view.convert(attributes.frame, from: collectionView)
+        } else {
+            sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+        }
+
+        popoverPresentationController.sourceView = view
+        popoverPresentationController.sourceRect = sourceRect
     }
 
     private func requestHealthAuthorization() {
@@ -655,7 +710,7 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
                 title: AppLocalization.text(item.titleKey),
                 indicatorColor: indicatorColor
             )
-        case .appLanguage, .developerWebsite:
+        case .appLanguage, .appearanceSettings, .developerWebsite:
             cell.configureSystemIcon(
                 iconName: item.iconName,
                 title: AppLocalization.text(item.titleKey),
@@ -691,7 +746,9 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
 
         switch item(at: indexPath) {
         case .appLanguage:
-            presentLanguagePicker(from: collectionView.cellForItem(at: indexPath))
+            presentLanguagePicker(from: indexPath)
+        case .appearanceSettings:
+            presentAppearancePicker(from: indexPath)
         case .iCloudRouteSync:
             handleRouteCollectionCloudSyncSelection()
         case .appleHealth:
@@ -797,7 +854,7 @@ private final class MoreSettingsCell: UICollectionViewCell {
                 systemName: iconName,
                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
             ),
-            imageTintColor: .black,
+            imageTintColor: AppColors.solidForeground,
             title: title,
             indicatorColor: indicatorColor
         )
@@ -833,14 +890,14 @@ private final class MoreSettingsCell: UICollectionViewCell {
         indicatorColor: UIColor?
     ) {
         applyBaseStyle(
-            backgroundColor: UIColor(white: 0.945, alpha: 1),
+            backgroundColor: AppColors.cardBackground,
             indicatorColor: indicatorColor
         )
         iconView.isHidden = false
         titleLabel.isHidden = false
         brandImageView.isHidden = true
         iconView.image = image
-        iconView.tintColor = imageTintColor ?? .black
+        iconView.tintColor = imageTintColor ?? AppColors.solidForeground
         titleLabel.text = title
     }
 
@@ -851,19 +908,20 @@ private final class MoreSettingsCell: UICollectionViewCell {
         contentView.backgroundColor = backgroundColor
         brandImageView.image = nil
         iconView.image = nil
-        iconView.tintColor = .black
+        iconView.tintColor = AppColors.solidForeground
         titleLabel.text = nil
         statusIndicatorView.backgroundColor = indicatorColor
         statusIndicatorView.isHidden = indicatorColor == nil
+        updateStatusIndicatorBorderColor()
     }
 
     private func configureViews() {
         backgroundColor = .clear
-        contentView.backgroundColor = UIColor(white: 0.945, alpha: 1)
+        contentView.backgroundColor = AppColors.cardBackground
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
-        iconView.tintColor = .black
+        iconView.tintColor = AppColors.solidForeground
         iconView.contentMode = .scaleAspectFit
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -873,7 +931,7 @@ private final class MoreSettingsCell: UICollectionViewCell {
         brandImageView.setContentHuggingPriority(.required, for: .horizontal)
         brandImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        titleLabel.textColor = .black
+        titleLabel.textColor = AppColors.solidForeground
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.adjustsFontSizeToFitWidth = true
         titleLabel.minimumScaleFactor = 0.74
@@ -883,7 +941,7 @@ private final class MoreSettingsCell: UICollectionViewCell {
         statusIndicatorView.layer.cornerRadius = 4
         statusIndicatorView.layer.masksToBounds = true
         statusIndicatorView.layer.borderWidth = 1
-        statusIndicatorView.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+        updateStatusIndicatorBorderColor()
 
         contentView.addSubview(iconView)
         contentView.addSubview(brandImageView)
@@ -912,6 +970,14 @@ private final class MoreSettingsCell: UICollectionViewCell {
             make.top.trailing.equalToSuperview().inset(8)
             make.size.equalTo(8)
         }
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (cell: Self, _) in
+            cell.updateStatusIndicatorBorderColor()
+        }
+    }
+
+    private func updateStatusIndicatorBorderColor() {
+        statusIndicatorView.layer.borderColor = AppColors.statusIndicatorBorderColor(for: traitCollection)
     }
 }
 

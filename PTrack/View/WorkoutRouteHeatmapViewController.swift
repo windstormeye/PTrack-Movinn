@@ -26,8 +26,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let routesOverlay = HeatmapRoutesOverlay()
-    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
-    private let navigationBackgroundMask = CAGradientLayer()
+    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let cacheLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let navigationTitleLabel = UILabel()
@@ -103,6 +102,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         configureMapView()
         configureNavigationBackgroundView()
         configureLoadingIndicator()
+        registerTraitChangeHandler()
     }
 
     deinit {
@@ -144,7 +144,6 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateNavigationBackgroundMask()
         startHeatmapLoadingIfNeeded()
         fitRoutesIfNeeded()
         scheduleVisibleRouteOverlayUpdate()
@@ -158,7 +157,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
-        .darkContent
+        AppAppearanceStore.shared.preferredStatusBarStyle(for: traitCollection)
     }
 
     private var isPermanentlyLeaving: Bool {
@@ -241,14 +240,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private func configureNavigationBackgroundView() {
         navigationBackgroundView.isUserInteractionEnabled = false
-        navigationBackgroundView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
-        navigationBackgroundMask.colors = [
-            UIColor.white.cgColor,
-            UIColor.white.withAlphaComponent(0.78).cgColor,
-            UIColor.white.withAlphaComponent(0).cgColor
-        ]
-        navigationBackgroundMask.locations = [0, 0.58, 1]
-        navigationBackgroundView.layer.mask = navigationBackgroundMask
+        updateNavigationBackgroundColors()
 
         view.addSubview(navigationBackgroundView)
 
@@ -258,10 +250,17 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
     }
 
-    private func updateNavigationBackgroundMask() {
-        navigationBackgroundMask.frame = navigationBackgroundView.bounds
-        navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
-        navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
+    private func updateNavigationBackgroundColors() {
+        navigationBackgroundView.effect = nil
+        navigationBackgroundView.contentView.backgroundColor = .clear
+        navigationBackgroundView.layer.mask = nil
+    }
+
+    private func registerTraitChangeHandler() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
+            viewController.updateNavigationBackgroundColors()
+            viewController.setNeedsStatusBarAppearanceUpdate()
+        }
     }
 
     private func configureMapView() {

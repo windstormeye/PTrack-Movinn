@@ -29,6 +29,8 @@ enum AppLanguage: String, CaseIterable {
 
 enum AppTextKey: String {
     case all
+    case appearanceSettings
+    case appearanceSystem
     case appLanguage
     case aspectRatio
     case appleHealth
@@ -39,6 +41,11 @@ enum AppTextKey: String {
     case collage
     case collageSingleLivePhotoLimit
     case collageStyle
+    case colorBlack
+    case colorBlue
+    case colorOrange
+    case colorPink
+    case colorWhite
     case color
     case cycling
     case dark
@@ -87,6 +94,7 @@ enum AppTextKey: String {
     case mapStyle
     case livePhotoSaved
     case livePhotoSaving
+    case light
     case more
     case movinnLocalDataPrivacyStatement
     case newActivity
@@ -238,6 +246,8 @@ enum AppLocalization {
     private static let translations: [AppLanguage: [AppTextKey: String]] = [
         .chinese: [
             .all: "全部",
+            .appearanceSettings: "外观设置",
+            .appearanceSystem: "跟随系统",
             .appLanguage: "App 语言",
             .aspectRatio: "比例",
             .appleHealth: "苹果健康",
@@ -248,6 +258,11 @@ enum AppLocalization {
             .collage: "拼图",
             .collageSingleLivePhotoLimit: "拼图模式只允许加入一张 Live 图",
             .collageStyle: "样式",
+            .colorBlack: "黑色",
+            .colorBlue: "蓝色",
+            .colorOrange: "橙色",
+            .colorPink: "粉色",
+            .colorWhite: "白色",
             .color: "颜色",
             .cycling: "骑行",
             .dark: "暗色",
@@ -296,6 +311,7 @@ enum AppLocalization {
             .mapStyle: "地图样式",
             .livePhotoSaved: "已保存到相册",
             .livePhotoSaving: "正在生成 Live Photo",
+            .light: "亮色",
             .more: "更多",
             .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
             .newActivity: "新活动！",
@@ -401,6 +417,8 @@ enum AppLocalization {
         ],
         .japanese: [
             .all: "すべて",
+            .appearanceSettings: "外観設定",
+            .appearanceSystem: "システムに合わせる",
             .appLanguage: "アプリの言語",
             .aspectRatio: "比率",
             .appleHealth: "Appleヘルスケア",
@@ -411,6 +429,11 @@ enum AppLocalization {
             .collage: "コラージュ",
             .collageSingleLivePhotoLimit: "コラージュモードでは Live Photo は1枚だけ追加できます",
             .collageStyle: "レイアウト",
+            .colorBlack: "ブラック",
+            .colorBlue: "ブルー",
+            .colorOrange: "オレンジ",
+            .colorPink: "ピンク",
+            .colorWhite: "ホワイト",
             .color: "カラー",
             .cycling: "サイクリング",
             .dark: "ダーク",
@@ -459,6 +482,7 @@ enum AppLocalization {
             .mapStyle: "地図スタイル",
             .livePhotoSaved: "写真に保存しました",
             .livePhotoSaving: "Live Photoを生成中",
+            .light: "ライト",
             .more: "その他",
             .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
             .newActivity: "新規",
@@ -564,6 +588,8 @@ enum AppLocalization {
         ],
         .korean: [
             .all: "전체",
+            .appearanceSettings: "화면 모드",
+            .appearanceSystem: "시스템 설정 따르기",
             .appLanguage: "앱 언어",
             .aspectRatio: "비율",
             .appleHealth: "Apple 건강",
@@ -574,6 +600,11 @@ enum AppLocalization {
             .collage: "콜라주",
             .collageSingleLivePhotoLimit: "콜라주 모드에서는 Live Photo를 한 장만 추가할 수 있어요",
             .collageStyle: "레이아웃",
+            .colorBlack: "검정",
+            .colorBlue: "파랑",
+            .colorOrange: "주황",
+            .colorPink: "분홍",
+            .colorWhite: "하양",
             .color: "색상",
             .cycling: "사이클링",
             .dark: "어두운",
@@ -622,6 +653,7 @@ enum AppLocalization {
             .mapStyle: "지도 스타일",
             .livePhotoSaved: "사진 앱에 저장되었습니다",
             .livePhotoSaving: "Live Photo 생성 중",
+            .light: "밝은",
             .more: "더보기",
             .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
             .newActivity: "새 활동!",
@@ -727,6 +759,8 @@ enum AppLocalization {
         ],
         .english: [
             .all: "All",
+            .appearanceSettings: "Appearance",
+            .appearanceSystem: "Follow System",
             .appLanguage: "App Language",
             .aspectRatio: "Ratio",
             .appleHealth: "Apple Health",
@@ -737,6 +771,11 @@ enum AppLocalization {
             .collage: "Collage",
             .collageSingleLivePhotoLimit: "Collage mode allows only one Live Photo",
             .collageStyle: "Layout",
+            .colorBlack: "Black",
+            .colorBlue: "Blue",
+            .colorOrange: "Orange",
+            .colorPink: "Pink",
+            .colorWhite: "White",
             .color: "Color",
             .cycling: "Cycling",
             .dark: "Dark",
@@ -785,6 +824,7 @@ enum AppLocalization {
             .mapStyle: "Map Style",
             .livePhotoSaved: "Saved to Photos",
             .livePhotoSaving: "Creating Live Photo",
+            .light: "Light",
             .more: "More",
             .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
             .newActivity: "New!",

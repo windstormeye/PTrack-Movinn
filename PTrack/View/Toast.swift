@@ -38,7 +38,7 @@ enum Toast {
         currentToastView?.removeFromSuperview()
 
         let toastView = UIView()
-        toastView.backgroundColor = UIColor.black.withAlphaComponent(0.84)
+        toastView.backgroundColor = AppColors.foreground(alpha: 0.84)
         toastView.layer.cornerRadius = 18
         toastView.layer.masksToBounds = true
         toastView.isUserInteractionEnabled = false
@@ -48,7 +48,7 @@ enum Toast {
 
         let messageLabel = UILabel()
         messageLabel.text = message
-        messageLabel.textColor = .white
+        messageLabel.textColor = AppColors.solidBackground
         messageLabel.font = .systemFont(ofSize: 14, weight: .medium)
         messageLabel.numberOfLines = 0
         messageLabel.textAlignment = .center

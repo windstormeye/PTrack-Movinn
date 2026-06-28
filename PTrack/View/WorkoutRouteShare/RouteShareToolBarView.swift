@@ -50,7 +50,7 @@ final class RouteShareToolBarView: UIView {
     }
 
     private func configureViews() {
-        backgroundColor = UIColor(white: 0.94, alpha: 1)
+        backgroundColor = AppColors.toolbarBackground
         layer.cornerRadius = 18
         layer.masksToBounds = true
 

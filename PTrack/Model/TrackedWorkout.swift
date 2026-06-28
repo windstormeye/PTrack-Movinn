@@ -268,7 +268,7 @@ struct TrackedWorkout: Codable {
     }
 
     var routeColor: UIColor {
-        .black
+        .label
     }
 
     var activeEnergyBurnedKilocalories: Double? {

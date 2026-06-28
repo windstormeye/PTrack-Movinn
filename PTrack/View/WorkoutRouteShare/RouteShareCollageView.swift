@@ -354,7 +354,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func configureViews() {
-        backgroundColor = .white
+        backgroundColor = AppColors.solidBackground
         clipsToBounds = true
 
         cropSelectionLayer.fillColor = UIColor.clear.cgColor
@@ -364,7 +364,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         layer.addSublayer(cropSelectionLayer)
 
         dividerLayer.fillColor = UIColor.clear.cgColor
-        dividerLayer.strokeColor = UIColor.white.withAlphaComponent(0.92).cgColor
+        updateDividerColor()
         dividerLayer.lineWidth = 1.5
         layer.addSublayer(dividerLayer)
 
@@ -401,18 +401,29 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         cropRotationGesture.delegate = self
         addGestureRecognizer(cropRotationGesture)
         self.cropRotationGesture = cropRotationGesture
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
+            view.updateDividerColor()
+        }
+    }
+
+    private func updateDividerColor() {
+        dividerLayer.strokeColor = AppColors.solidBackground
+            .resolvedColor(with: traitCollection)
+            .withAlphaComponent(0.92)
+            .cgColor
     }
 
     private func ensureTileViews(count: Int) {
         while tileContainerViews.count < count {
             let containerView = UIView()
             containerView.clipsToBounds = true
-            containerView.backgroundColor = .white
+            containerView.backgroundColor = AppColors.solidBackground
 
             let imageView = UIImageView()
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = false
-            imageView.backgroundColor = .white
+            imageView.backgroundColor = AppColors.solidBackground
 
             let maskLayer = CAShapeLayer()
             containerView.layer.mask = maskLayer
@@ -752,7 +763,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
             systemName: "arrowshape.left.arrowshape.right",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .bold)
         )
-        iconView.tintColor = .black
+        iconView.tintColor = AppColors.solidForeground
         iconView.contentMode = .scaleAspectFit
 
         handleView.addSubview(iconView)

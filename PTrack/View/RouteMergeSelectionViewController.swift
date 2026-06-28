@@ -15,21 +15,32 @@ final class RouteMergeSelectionViewController: UIViewController {
     private let mergeQueue = DispatchQueue(label: "studio.pj.PTrack.route-merge", qos: .userInitiated)
     private let routeGridView = WorkoutRouteGridView()
     private let emptyLabel = UILabel()
-    private let loadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
+    private let loadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let loadingLabel = UILabel()
+    private let navigationTitleStackView = UIStackView()
+    private let navigationTitleLabel = UILabel()
+    private let sourceLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let currentWorkout: TrackedWorkout
     private let currentWorkoutID: String
     private var mergeButton: UIBarButtonItem?
     private var workouts: [TrackedWorkout]
+    private var sourceWorkoutsByID: [String: TrackedWorkout]
     private var selectedWorkoutIDs = Set<String>()
     private var selectedWorkoutOrder: [String] = []
+    private var isLoadingWorkouts: Bool
+    private var knownWorkoutIDs: Set<String>
     private var isMerging = false
+    private static let previewCoordinateLimit = 240
 
-    init(workouts: [TrackedWorkout], currentWorkout: TrackedWorkout) {
+    init(workouts: [TrackedWorkout]? = nil, currentWorkout: TrackedWorkout) {
         self.currentWorkout = currentWorkout
         currentWorkoutID = currentWorkout.id
-        self.workouts = workouts.filter { !$0.routeDetailCoordinates.isEmpty }
+        let sourceWorkouts = Self.filteredSourceWorkouts(workouts ?? [])
+        sourceWorkoutsByID = Self.workoutsByID(from: sourceWorkouts)
+        self.workouts = Self.previewWorkouts(from: sourceWorkouts)
+        knownWorkoutIDs = Set(self.workouts.map(\.id))
+        isLoadingWorkouts = workouts == nil
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -48,10 +59,71 @@ final class RouteMergeSelectionViewController: UIViewController {
         updateEmptyState()
     }
 
+    func appendSourceWorkouts(_ sourceWorkouts: [TrackedWorkout], animated: Bool = true) {
+        let filteredSourceWorkouts = Self.filteredSourceWorkouts(sourceWorkouts).filter {
+            knownWorkoutIDs.insert($0.id).inserted
+        }
+        for workout in filteredSourceWorkouts {
+            sourceWorkoutsByID[workout.id] = workout
+        }
+        let filteredWorkouts = filteredSourceWorkouts.map {
+            $0.listPreview(maximumCoordinateCount: Self.previewCoordinateLimit)
+        }
+        if !isViewLoaded {
+            workouts.append(contentsOf: filteredWorkouts)
+            return
+        }
+
+        guard !filteredWorkouts.isEmpty else {
+            updateEmptyState()
+            updateMergeButtonState()
+            return
+        }
+
+        emptyLabel.isHidden = true
+        workouts.append(contentsOf: filteredWorkouts)
+        if animated {
+            UIView.performWithoutAnimation {
+                routeGridView.reloadData()
+            }
+        } else {
+            routeGridView.reloadData()
+        }
+        updateEmptyState()
+        updateMergeButtonState()
+    }
+
+    func finishLoadingSourceWorkouts() {
+        guard isViewLoaded else {
+            isLoadingWorkouts = false
+            return
+        }
+
+        setSourceLoadingVisible(false)
+    }
+
+    private static func previewWorkouts(from workouts: [TrackedWorkout]) -> [TrackedWorkout] {
+        filteredSourceWorkouts(workouts).map {
+            $0.listPreview(maximumCoordinateCount: previewCoordinateLimit)
+        }
+    }
+
+    private static func filteredSourceWorkouts(_ workouts: [TrackedWorkout]) -> [TrackedWorkout] {
+        workouts.filter { !$0.routeDetailCoordinates.isEmpty }
+    }
+
+    private static func workoutsByID(from workouts: [TrackedWorkout]) -> [String: TrackedWorkout] {
+        var workoutsByID: [String: TrackedWorkout] = [:]
+        for workout in workouts {
+            workoutsByID[workout.id] = workout
+        }
+        return workoutsByID
+    }
+
     private func configureNavigationItem() {
-        title = AppLocalization.text(.routeMerge)
         edgesForExtendedLayout = []
         navigationItem.largeTitleDisplayMode = .never
+        configureNavigationTitleView()
         navigationItem.leftBarButtonItem = UIBarButtonItem(
             image: UIImage(systemName: "xmark"),
             style: .plain,
@@ -68,6 +140,25 @@ final class RouteMergeSelectionViewController: UIViewController {
         )
         navigationItem.rightBarButtonItem = mergeButton
         self.mergeButton = mergeButton
+    }
+
+    private func configureNavigationTitleView() {
+        navigationTitleLabel.text = AppLocalization.text(.routeMerge)
+        navigationTitleLabel.font = .systemFont(ofSize: 19, weight: .bold)
+        navigationTitleLabel.textColor = .label
+
+        sourceLoadingIndicator.style = .medium
+        sourceLoadingIndicator.color = .secondaryLabel
+        sourceLoadingIndicator.hidesWhenStopped = true
+
+        navigationTitleStackView.axis = .horizontal
+        navigationTitleStackView.alignment = .center
+        navigationTitleStackView.spacing = 8
+        navigationTitleStackView.addArrangedSubview(navigationTitleLabel)
+        navigationTitleStackView.addArrangedSubview(sourceLoadingIndicator)
+        navigationItem.titleView = navigationTitleStackView
+
+        updateSourceLoadingIndicator()
     }
 
     private func configureNavigationBar() {
@@ -142,13 +233,13 @@ final class RouteMergeSelectionViewController: UIViewController {
         loadingView.layer.cornerRadius = 16
         loadingView.layer.cornerCurve = .continuous
         loadingView.layer.masksToBounds = true
-        loadingView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+        loadingView.contentView.backgroundColor = AppColors.background(alpha: 0.16)
 
         loadingIndicator.hidesWhenStopped = true
 
         loadingLabel.text = AppLocalization.text(.routeMergeLoading)
         loadingLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        loadingLabel.textColor = UIColor.black.withAlphaComponent(0.72)
+        loadingLabel.textColor = AppColors.foreground(alpha: 0.72)
         loadingLabel.textAlignment = .center
 
         view.addSubview(loadingView)
@@ -198,10 +289,36 @@ final class RouteMergeSelectionViewController: UIViewController {
     }
 
     private func updateEmptyState() {
-        emptyLabel.isHidden = !workouts.isEmpty
+        emptyLabel.isHidden = isLoadingWorkouts || !workouts.isEmpty
     }
 
-    private func selectedWorkouts() -> [TrackedWorkout] {
+    private func setSourceLoadingVisible(_ isVisible: Bool) {
+        guard isLoadingWorkouts != isVisible else {
+            updateEmptyState()
+            updateMergeButtonState()
+            updateSourceLoadingIndicator()
+            return
+        }
+
+        isLoadingWorkouts = isVisible
+        updateSourceLoadingIndicator()
+        updateEmptyState()
+        updateMergeButtonState()
+    }
+
+    private func updateSourceLoadingIndicator() {
+        guard isViewLoaded else {
+            return
+        }
+
+        if isLoadingWorkouts {
+            sourceLoadingIndicator.startAnimating()
+        } else {
+            sourceLoadingIndicator.stopAnimating()
+        }
+    }
+
+    private func selectedPreviewWorkouts() -> [TrackedWorkout] {
         var workoutsByID: [String: TrackedWorkout] = [:]
         for workout in workouts {
             workoutsByID[workout.id] = workout
@@ -210,6 +327,25 @@ final class RouteMergeSelectionViewController: UIViewController {
         var selectedWorkouts = [currentWorkout]
         selectedWorkouts.append(contentsOf: selectedWorkoutOrder.compactMap { workoutsByID[$0] })
         return selectedWorkouts
+    }
+
+    private static func resolvedWorkoutsForMerging(
+        from selectedWorkouts: [TrackedWorkout],
+        currentWorkoutID: String,
+        currentWorkout: TrackedWorkout,
+        sourceWorkoutsByID: [String: TrackedWorkout]
+    ) -> [TrackedWorkout] {
+        let cacheStore = WorkoutCacheStore()
+        return selectedWorkouts.map { workout in
+            if workout.id == currentWorkoutID {
+                return currentWorkout
+            }
+            if let sourceWorkout = sourceWorkoutsByID[workout.id] {
+                return sourceWorkout
+            }
+
+            return cacheStore.loadWorkout(id: workout.id) ?? workout
+        }
     }
 
     private func setLoadingVisible(_ isVisible: Bool) {
@@ -247,7 +383,7 @@ final class RouteMergeSelectionViewController: UIViewController {
             return
         }
 
-        let selectedWorkouts = selectedWorkouts()
+        let selectedWorkouts = selectedPreviewWorkouts()
         guard !selectedWorkouts.isEmpty else {
             return
         }
@@ -255,11 +391,20 @@ final class RouteMergeSelectionViewController: UIViewController {
         isMerging = true
         updateMergeButtonState()
         setLoadingVisible(true)
+        let currentWorkout = currentWorkout
+        let currentWorkoutID = currentWorkoutID
+        let sourceWorkoutsByID = sourceWorkoutsByID
 
-        mergeQueue.async { [weak self] in
+        mergeQueue.async { [weak self, currentWorkout, currentWorkoutID, sourceWorkoutsByID, selectedWorkouts] in
             let result: Result<TrackedWorkout, Error>
             do {
-                let mergedRoute = try RouteCollectionMerger.mergedRoute(from: selectedWorkouts)
+                let resolvedWorkouts = Self.resolvedWorkoutsForMerging(
+                    from: selectedWorkouts,
+                    currentWorkoutID: currentWorkoutID,
+                    currentWorkout: currentWorkout,
+                    sourceWorkoutsByID: sourceWorkoutsByID
+                )
+                let mergedRoute = try RouteCollectionMerger.mergedRoute(from: resolvedWorkouts)
                 result = .success(mergedRoute)
             } catch {
                 result = .failure(error)

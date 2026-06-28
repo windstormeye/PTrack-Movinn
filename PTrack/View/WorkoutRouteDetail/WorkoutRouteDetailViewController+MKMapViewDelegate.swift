@@ -19,7 +19,7 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
         }
 
         let renderer = MKPolylineRenderer(polyline: polyline)
-        renderer.strokeColor = workout.routeColor
+        renderer.strokeColor = mapRouteStrokeColor
         renderer.lineWidth = 4.5
         renderer.lineJoin = .round
         renderer.lineCap = .round

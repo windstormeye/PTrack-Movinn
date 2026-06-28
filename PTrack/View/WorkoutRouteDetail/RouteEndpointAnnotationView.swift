@@ -34,11 +34,18 @@ final class RouteEndpointAnnotationView: MKAnnotationView {
         displayPriority = .required
 
         layer.cornerRadius = diameter / 2
-        layer.borderColor = UIColor.white.cgColor
+        updateBorderColor()
         layer.borderWidth = 3
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOpacity = 0.16
         layer.shadowRadius = 4
         layer.shadowOffset = CGSize(width: 0, height: 1)
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
+            view.updateBorderColor()
+        }
+    }
+
+    private func updateBorderColor() {
+        layer.borderColor = AppColors.solidBackground.resolvedColor(with: traitCollection).cgColor
     }
 }

@@ -13,13 +13,13 @@ final class RouteShareExportLoadingView: UIVisualEffectView {
     private let loadingLabel = UILabel()
 
     init() {
-        super.init(effect: UIBlurEffect(style: .systemThinMaterialLight))
+        super.init(effect: UIBlurEffect(style: .systemThinMaterial))
         configureViews()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        effect = UIBlurEffect(style: .systemThinMaterialLight)
+        effect = UIBlurEffect(style: .systemThinMaterial)
         configureViews()
     }
 
@@ -45,10 +45,10 @@ final class RouteShareExportLoadingView: UIVisualEffectView {
     private func configureViews() {
         isHidden = true
         alpha = 0
-        contentView.backgroundColor = UIColor.white.withAlphaComponent(0.28)
+        contentView.backgroundColor = AppColors.background(alpha: 0.28)
 
         let panelView = UIView()
-        panelView.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        panelView.backgroundColor = AppColors.background(alpha: 0.92)
         panelView.layer.cornerRadius = 14
         panelView.layer.cornerCurve = .continuous
         panelView.layer.shadowColor = UIColor.black.cgColor
@@ -57,10 +57,10 @@ final class RouteShareExportLoadingView: UIVisualEffectView {
         panelView.layer.shadowOffset = CGSize(width: 0, height: 8)
 
         activityIndicator.hidesWhenStopped = false
-        activityIndicator.color = .black
+        activityIndicator.color = AppColors.solidForeground
 
         loadingLabel.font = .systemFont(ofSize: 14, weight: .semibold)
-        loadingLabel.textColor = .black
+        loadingLabel.textColor = AppColors.solidForeground
         loadingLabel.textAlignment = .center
 
         contentView.addSubview(panelView)

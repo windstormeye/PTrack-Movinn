@@ -60,8 +60,7 @@ class ViewController: UIViewController {
         return scaleView
     }()
     private let headerView = UIView()
-    private let headerBlurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
-    private let headerBlurMask = CAGradientLayer()
+    private let headerBlurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let titleLabel = UILabel()
     private let titleAccentLabel = UILabel()
     private let totalDistanceLabel = UILabel()
@@ -126,6 +125,7 @@ class ViewController: UIViewController {
         registerSharedRouteImportObserver()
         registerAppForegroundObserver()
         registerHealthAuthorizationObserver()
+        registerTraitChangeHandler()
         store.progressHandler = { message in
             print("PTrack HealthKit: \(message)")
         }
@@ -135,8 +135,11 @@ class ViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateHeaderBlurMask()
         updateFullScreenInsets()
+    }
+
+    override var preferredStatusBarStyle: UIStatusBarStyle {
+        isRouteBookModeActive ? .darkContent : AppAppearanceStore.shared.preferredStatusBarStyle(for: traitCollection)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -274,7 +277,7 @@ class ViewController: UIViewController {
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
         )
         configuration.baseForegroundColor = .label
-        configuration.baseBackgroundColor = .white.withAlphaComponent(0.92)
+        configuration.baseBackgroundColor = AppColors.background(alpha: 0.92)
         configuration.cornerStyle = .capsule
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
 
@@ -297,17 +300,10 @@ class ViewController: UIViewController {
 
     private func configureHeaderView() {
         headerView.isUserInteractionEnabled = true
-        headerView.backgroundColor = .white
+        headerView.backgroundColor = AppColors.solidBackground
 
         headerBlurView.isHidden = true
-        headerBlurView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
-        headerBlurMask.colors = [
-            UIColor.white.cgColor,
-            UIColor.white.withAlphaComponent(0.78).cgColor,
-            UIColor.white.withAlphaComponent(0).cgColor
-        ]
-        headerBlurMask.locations = [0, 0.58, 1]
-        headerBlurView.layer.mask = headerBlurMask
+        updateHeaderAppearanceColors()
 
         let titleFont = UIFont.systemFont(ofSize: 40, weight: .bold)
         titleLabel.text = "Movin"
@@ -397,7 +393,7 @@ class ViewController: UIViewController {
 
     private func configureRouteCollectionBadgeLabel() {
         routeCollectionBadgeLabel.text = AppLocalization.text(.newRoute)
-        routeCollectionBadgeLabel.textColor = UIColor.black.withAlphaComponent(0.86)
+        routeCollectionBadgeLabel.textColor = AppColors.foreground(alpha: 0.86)
         routeCollectionBadgeLabel.font = .systemFont(ofSize: 8, weight: .bold)
         routeCollectionBadgeLabel.backgroundColor = AppColors.movinnGreen
         routeCollectionBadgeLabel.layer.cornerRadius = 5
@@ -406,8 +402,23 @@ class ViewController: UIViewController {
         routeCollectionBadgeLabel.isHidden = true
     }
 
-    private func updateHeaderBlurMask() {
-        headerBlurMask.frame = headerBlurView.bounds
+    private func updateHeaderAppearanceColors() {
+        headerBlurView.effect = nil
+        headerBlurView.contentView.backgroundColor = .clear
+        headerBlurView.layer.mask = nil
+        if !isRouteBookModeActive {
+            headerView.backgroundColor = AppColors.solidBackground
+        }
+    }
+
+    private func updateRouteBookLocateButtonAppearance() {
+        guard var configuration = routeBookLocateButton.configuration else {
+            return
+        }
+
+        configuration.baseForegroundColor = .label
+        configuration.baseBackgroundColor = AppColors.background(alpha: 0.92)
+        routeBookLocateButton.configuration = configuration
     }
 
     private func configureRouteBookScaleView() {
@@ -457,15 +468,15 @@ class ViewController: UIViewController {
         buttonConfiguration.image = UIImage(
             systemName: isRouteBookModeActive ? "xmark" : "ellipsis",
             withConfiguration: UIImage.SymbolConfiguration(
-                pointSize: isRouteBookModeActive ? 14 : 18,
-                weight: isRouteBookModeActive ? .regular : .semibold
+                pointSize: isRouteBookModeActive ? 15 : 18,
+                weight: isRouteBookModeActive ? .bold : .semibold
             )
         )
         buttonConfiguration.contentInsets = isRouteBookModeActive
             ? NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
             : NSDirectionalEdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         moreButton.configuration = buttonConfiguration
-        moreButton.tintColor = .label
+        moreButton.tintColor = isRouteBookModeActive ? .black : .label
         updateRouteCollectionBadgeVisibility()
 
         if isRouteBookModeActive {
@@ -803,6 +814,14 @@ class ViewController: UIViewController {
             name: HealthWorkoutStore.authorizationStateDidChangeNotification,
             object: nil
         )
+    }
+
+    private func registerTraitChangeHandler() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
+            viewController.updateHeaderAppearanceColors()
+            viewController.updateRouteBookLocateButtonAppearance()
+            viewController.collectionView?.reloadData()
+        }
     }
 
     @objc private func handleAppWillEnterForeground() {
@@ -1601,7 +1620,8 @@ class ViewController: UIViewController {
         }
 
         let detailViewController = WorkoutRouteDetailViewController(
-            workout: workout
+            workout: workout,
+            mergeSourceWorkouts: workouts
         )
         navigationController?.pushViewController(detailViewController, animated: true)
     }
@@ -2086,8 +2106,10 @@ class ViewController: UIViewController {
         setRouteBookScaleViewVisible(isRouteBookModeActive)
         routeGridView.isHidden = isRouteBookModeActive
         collectionView.isHidden = isRouteBookModeActive
-        headerView.backgroundColor = isRouteBookModeActive ? .clear : .white
-        headerBlurView.isHidden = !isRouteBookModeActive
+        headerView.backgroundColor = isRouteBookModeActive ? .clear : AppColors.solidBackground
+        headerBlurView.isHidden = true
+        updateRouteBookHeaderColors()
+        setNeedsStatusBarAppearanceUpdate()
 
         if isRouteBookModeActive {
             emptyDataSourceView.isHidden = true
@@ -2100,6 +2122,18 @@ class ViewController: UIViewController {
         }
 
         updateRouteCollectionBadgeVisibility()
+    }
+
+    private func updateRouteBookHeaderColors() {
+        if isRouteBookModeActive {
+            titleLabel.textColor = .black
+            titleAccentLabel.textColor = AppColors.movinnGreen
+            moreButton.tintColor = .black
+        } else {
+            titleLabel.textColor = .label
+            titleAccentLabel.textColor = AppColors.movinnGreen
+            moreButton.tintColor = .label
+        }
     }
 
     private func setRouteBookScaleViewVisible(_ isVisible: Bool) {
@@ -2152,7 +2186,7 @@ extension ViewController: MKMapViewDelegate {
         }
 
         let renderer = MKPolylineRenderer(polyline: polyline)
-        renderer.strokeColor = UIColor.black.withAlphaComponent(0.34)
+        renderer.strokeColor = .black
         renderer.lineWidth = 3
         renderer.lineJoin = .round
         renderer.lineCap = .round
@@ -2381,7 +2415,7 @@ private final class RouteBookUserLocationMarkerView: UIView {
 
         let center = CGPoint(x: bounds.midX, y: bounds.midY)
         let blue = UIColor.systemBlue
-        let outline = UIColor.white
+        let outline = AppColors.solidBackground
 
         if showsHeading {
             drawHeadingArrow(center: center, fillColor: blue, outlineColor: outline)
@@ -2628,7 +2662,7 @@ private final class HomeDataSourceCardView: UIControl {
     private func configureViews() {
         layer.cornerRadius = 12
         layer.masksToBounds = true
-        backgroundColor = style == .strava ? AppColors.stravaOrange : UIColor(white: 0.945, alpha: 1)
+        backgroundColor = style == .strava ? AppColors.stravaOrange : AppColors.cardBackground
 
         iconView.contentMode = .scaleAspectFit
         iconView.image = UIImage(named: "apple_health")?.withRenderingMode(.alwaysOriginal)
@@ -2640,7 +2674,7 @@ private final class HomeDataSourceCardView: UIControl {
         brandImageView.isHidden = style != .strava
 
         titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
-        titleLabel.textColor = style == .strava ? .white : .black
+        titleLabel.textColor = style == .strava ? .white : AppColors.solidForeground
         titleLabel.adjustsFontSizeToFitWidth = true
         titleLabel.minimumScaleFactor = 0.78
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -2655,7 +2689,7 @@ private final class HomeDataSourceCardView: UIControl {
         statusIndicatorView.layer.cornerRadius = 4
         statusIndicatorView.layer.masksToBounds = true
         statusIndicatorView.layer.borderWidth = 1
-        statusIndicatorView.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+        updateStatusIndicatorBorderColor()
 
         textStackView.axis = .vertical
         textStackView.alignment = .leading
@@ -2699,6 +2733,14 @@ private final class HomeDataSourceCardView: UIControl {
             make.top.trailing.equalToSuperview().inset(8)
             make.size.equalTo(8)
         }
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (cell: Self, _) in
+            cell.updateStatusIndicatorBorderColor()
+        }
+    }
+
+    private func updateStatusIndicatorBorderColor() {
+        statusIndicatorView.layer.borderColor = AppColors.statusIndicatorBorderColor(for: traitCollection)
     }
 }
 

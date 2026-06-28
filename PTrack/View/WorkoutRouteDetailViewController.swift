@@ -40,15 +40,15 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let routePreparationQueue = DispatchQueue(label: "studio.pj.PTrack.route-detail-prepare", qos: .userInitiated)
+    private let routeMergeSourceLoadQueue = DispatchQueue(label: "studio.pj.PTrack.route-merge-source-load", qos: .userInitiated)
     private let gpxExportQueue = DispatchQueue(label: "studio.pj.PTrack.gpx-export", qos: .userInitiated)
-    private let routeLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
+    private let routeLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let routeLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let routeLoadingLabel = UILabel()
-    private let gpxExportLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
+    private let gpxExportLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let gpxExportLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let gpxExportLoadingLabel = UILabel()
-    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
-    private let navigationBackgroundMask = CAGradientLayer()
+    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let panelSheetViewController = UIViewController()
     private let panelView = UIVisualEffectView(effect: WorkoutRouteDetailViewController.makePanelGlassEffect())
     private let handleTouchView = UIView()
@@ -132,11 +132,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
         if #available(iOS 26.0, *) {
             let effect = UIGlassEffect(style: .regular)
             effect.isInteractive = true
-            effect.tintColor = UIColor.white.withAlphaComponent(0.06)
+            effect.tintColor = AppColors.background(alpha: 0.06)
             return effect
         }
 
-        return UIBlurEffect(style: .systemThinMaterialLight)
+        return UIBlurEffect(style: .systemThinMaterial)
     }
 
     override func viewDidLoad() {
@@ -144,6 +144,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         configureNavigationItem()
         registerLanguageObserver()
+        registerTraitChangeHandler()
         configureMapView()
         configureNavigationBackgroundView()
         configureRouteLoadingView()
@@ -161,7 +162,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
-        .darkContent
+        AppAppearanceStore.shared.preferredStatusBarStyle(for: traitCollection)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -194,7 +195,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateNavigationBackgroundMask()
         fitRouteIfNeeded()
     }
 
@@ -388,8 +388,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func presentRouteMergeSelection() {
+        let initialMergeSourceWorkouts = providedMergeSourceWorkouts?.isEmpty == false
+            ? providedMergeSourceWorkouts
+            : nil
         let selectionViewController = RouteMergeSelectionViewController(
-            workouts: routeMergeSourceWorkouts(),
+            workouts: initialMergeSourceWorkouts,
             currentWorkout: workout
         )
         let navigationController = UINavigationController(rootViewController: selectionViewController)
@@ -411,15 +414,49 @@ final class WorkoutRouteDetailViewController: UIViewController {
             sheetPresentationController.prefersScrollingExpandsWhenScrolledToEdge = true
             sheetPresentationController.preferredCornerRadius = 28
         }
-        modalPresentationHost.present(navigationController, animated: true)
+        modalPresentationHost.present(navigationController, animated: true) { [weak self, weak selectionViewController] in
+            guard initialMergeSourceWorkouts == nil else {
+                return
+            }
+
+            self?.loadRouteMergeSourceWorkouts(
+                onBatch: { workouts in
+                    selectionViewController?.appendSourceWorkouts(workouts)
+                },
+                completion: {
+                    selectionViewController?.finishLoadingSourceWorkouts()
+                }
+            )
+        }
     }
 
-    private func routeMergeSourceWorkouts() -> [TrackedWorkout] {
+    private func loadRouteMergeSourceWorkouts(
+        onBatch: @escaping ([TrackedWorkout]) -> Void,
+        completion: @escaping () -> Void
+    ) {
         if let providedMergeSourceWorkouts, !providedMergeSourceWorkouts.isEmpty {
-            return providedMergeSourceWorkouts
+            onBatch(providedMergeSourceWorkouts)
+            completion()
+            return
         }
 
-        return WorkoutCacheStore().load()
+        routeMergeSourceLoadQueue.async { [weak self] in
+            let cacheStore = WorkoutCacheStore()
+            cacheStore.loadProgressively(
+                batchSize: 32,
+                shouldContinue: { [weak self] in
+                    self?.hasPreparedForPermanentDismissal == false
+                },
+                onBatch: { workouts in
+                    DispatchQueue.main.async {
+                        onBatch(workouts)
+                    }
+                }
+            )
+            DispatchQueue.main.async {
+                completion()
+            }
+        }
     }
 
     private func presentRouteMergeCompletedAlert() {
@@ -631,14 +668,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func configureNavigationBackgroundView() {
         navigationBackgroundView.isUserInteractionEnabled = false
-        navigationBackgroundView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
-        navigationBackgroundMask.colors = [
-            UIColor.white.cgColor,
-            UIColor.white.withAlphaComponent(0.78).cgColor,
-            UIColor.white.withAlphaComponent(0).cgColor
-        ]
-        navigationBackgroundMask.locations = [0, 0.58, 1]
-        navigationBackgroundView.layer.mask = navigationBackgroundMask
+        updateNavigationBackgroundColors()
 
         view.addSubview(navigationBackgroundView)
 
@@ -654,14 +684,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
         routeLoadingView.layer.cornerRadius = 16
         routeLoadingView.layer.cornerCurve = .continuous
         routeLoadingView.layer.masksToBounds = true
-        routeLoadingView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.16)
 
         routeLoadingIndicator.hidesWhenStopped = true
 
         routeLoadingLabel.text = AppLocalization.text(.routeLoading)
         routeLoadingLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        routeLoadingLabel.textColor = UIColor.black.withAlphaComponent(0.72)
         routeLoadingLabel.textAlignment = .center
+        updateLoadingViewColors()
 
         view.addSubview(routeLoadingView)
         routeLoadingView.contentView.addSubview(routeLoadingIndicator)
@@ -691,14 +720,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
         gpxExportLoadingView.layer.cornerRadius = 16
         gpxExportLoadingView.layer.cornerCurve = .continuous
         gpxExportLoadingView.layer.masksToBounds = true
-        gpxExportLoadingView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.16)
 
         gpxExportLoadingIndicator.hidesWhenStopped = true
 
         gpxExportLoadingLabel.text = AppLocalization.text(.gpxExporting)
         gpxExportLoadingLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        gpxExportLoadingLabel.textColor = UIColor.black.withAlphaComponent(0.72)
         gpxExportLoadingLabel.textAlignment = .center
+        updateLoadingViewColors()
 
         view.addSubview(gpxExportLoadingView)
         gpxExportLoadingView.contentView.addSubview(gpxExportLoadingIndicator)
@@ -769,10 +797,28 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
-    private func updateNavigationBackgroundMask() {
-        navigationBackgroundMask.frame = navigationBackgroundView.bounds
-        navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
-        navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
+    private func updateNavigationBackgroundColors() {
+        navigationBackgroundView.effect = nil
+        navigationBackgroundView.contentView.backgroundColor = .clear
+        navigationBackgroundView.layer.mask = nil
+    }
+
+    private func registerTraitChangeHandler() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
+            viewController.updateNavigationBackgroundColors()
+            viewController.updateLoadingViewColors()
+            viewController.updatePanelAppearanceColors()
+            viewController.setNeedsStatusBarAppearanceUpdate()
+        }
+    }
+
+    private func updateLoadingViewColors() {
+        routeLoadingView.effect = UIBlurEffect(style: .systemThinMaterial)
+        gpxExportLoadingView.effect = UIBlurEffect(style: .systemThinMaterial)
+        routeLoadingView.contentView.backgroundColor = AppColors.background(alpha: 0.16)
+        gpxExportLoadingView.contentView.backgroundColor = AppColors.background(alpha: 0.16)
+        routeLoadingLabel.textColor = AppColors.foreground(alpha: 0.72)
+        gpxExportLoadingLabel.textColor = AppColors.foreground(alpha: 0.72)
     }
 
     private func applyMapStyle(_ style: AppMapDisplayStyle) {
@@ -784,6 +830,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         AppMapDisplayStyleStore.shared.setRouteDetailStyle(style)
         AppMapStyle.apply(style, to: mapView)
         AppMapStyle.setToneOverlay(mapToneOverlay, visible: style == .appDefault, on: mapView)
+        refreshRouteOverlayStrokeColor()
         navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
     }
 
@@ -958,18 +1005,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
         if #available(iOS 26.0, *) {
             panelView.contentView.backgroundColor = .clear
         } else {
-            panelView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+            panelView.contentView.backgroundColor = AppColors.background(alpha: 0.08)
         }
 
         iconView.image = UIImage(systemName: workout.symbolName)
-        iconView.tintColor = UIColor.black.withAlphaComponent(0.9)
+        iconView.tintColor = AppColors.foreground(alpha: 0.9)
         iconView.contentMode = .scaleAspectFit
         iconView.isHidden = isRouteCollectionPanel
         titleStackView.isHidden = isRouteCollectionPanel
 
         updatePanelText()
         titleLabel.font = .preferredFont(forTextStyle: .headline)
-        titleLabel.textColor = UIColor.black.withAlphaComponent(0.92)
+        titleLabel.textColor = AppColors.foreground(alpha: 0.92)
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
 
@@ -994,7 +1041,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         metricsStackView.spacing = isRouteCollectionPanel ? 12 : 2
 
         distanceLabel.font = distanceFont
-        distanceLabel.textColor = UIColor.black.withAlphaComponent(0.92)
+        distanceLabel.textColor = AppColors.foreground(alpha: 0.92)
         distanceLabel.textAlignment = .right
         distanceLabel.adjustsFontSizeToFitWidth = true
         distanceLabel.minimumScaleFactor = 0.78
@@ -1093,6 +1140,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         applyPanelSheetDetent(.minimum, animated: false)
+    }
+
+    private func updatePanelAppearanceColors() {
+        if #available(iOS 26.0, *) {
+            panelView.contentView.backgroundColor = .clear
+        } else {
+            panelView.contentView.backgroundColor = AppColors.background(alpha: 0.08)
+        }
+        iconView.tintColor = AppColors.foreground(alpha: 0.9)
+        titleLabel.textColor = AppColors.foreground(alpha: 0.92)
+        distanceLabel.textColor = AppColors.foreground(alpha: 0.92)
     }
 
     private func presentPanelSheetIfNeeded() {
@@ -1274,6 +1332,20 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private var routeFitBottomPadding: CGFloat {
         panelHeight(for: .medium) + 28 + mapBottomExtension
+    }
+
+    var mapRouteStrokeColor: UIColor {
+        selectedMapStyle == .dark ? .white : .black
+    }
+
+    private func refreshRouteOverlayStrokeColor() {
+        guard let routePolyline,
+              let renderer = mapView.renderer(for: routePolyline) as? MKPolylineRenderer else {
+            return
+        }
+
+        renderer.strokeColor = mapRouteStrokeColor
+        renderer.setNeedsDisplay()
     }
 
     private func loadRouteMedia() {

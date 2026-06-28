@@ -32,7 +32,7 @@ final class HeatmapRoutesOverlayRenderer: MKOverlayRenderer {
         context.setLineCap(.round)
         context.setLineJoin(.round)
         context.setLineWidth(lineWidth(for: zoomScale))
-        context.setStrokeColor(UIColor.black.withAlphaComponent(0.34).cgColor)
+        context.setStrokeColor(UIColor.label.withAlphaComponent(0.34).cgColor)
 
         for route in routes where route.boundingMapRect.intersects(mapRect) {
             draw(route: route, in: context)

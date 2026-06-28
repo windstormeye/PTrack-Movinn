@@ -22,8 +22,7 @@ private struct RouteCollectionSection {
 }
 
 final class RouteCollectionViewController: UIViewController {
-    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
-    private let navigationBackgroundMask = CAGradientLayer()
+    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let navigationBackgroundHeight: CGFloat = 124
     private let store = RouteCollectionStore()
     private let navigationTitleStackView = UIStackView()
@@ -47,6 +46,7 @@ final class RouteCollectionViewController: UIViewController {
         configureEmptyLabel()
         configureNavigationBackgroundView()
         registerObservers()
+        registerTraitChangeHandler()
         reloadRoutes(importsPendingSharedRoutes: true)
     }
 
@@ -60,7 +60,6 @@ final class RouteCollectionViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateNavigationBackgroundMask()
         collectionView.collectionViewLayout.invalidateLayout()
     }
 
@@ -190,14 +189,7 @@ final class RouteCollectionViewController: UIViewController {
 
     private func configureNavigationBackgroundView() {
         navigationBackgroundView.isUserInteractionEnabled = false
-        navigationBackgroundView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
-        navigationBackgroundMask.colors = [
-            UIColor.white.cgColor,
-            UIColor.white.withAlphaComponent(0.78).cgColor,
-            UIColor.white.withAlphaComponent(0).cgColor
-        ]
-        navigationBackgroundMask.locations = [0, 0.58, 1]
-        navigationBackgroundView.layer.mask = navigationBackgroundMask
+        updateNavigationBackgroundColors()
 
         view.addSubview(navigationBackgroundView)
 
@@ -207,10 +199,16 @@ final class RouteCollectionViewController: UIViewController {
         }
     }
 
-    private func updateNavigationBackgroundMask() {
-        navigationBackgroundMask.frame = navigationBackgroundView.bounds
-        navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
-        navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
+    private func updateNavigationBackgroundColors() {
+        navigationBackgroundView.effect = nil
+        navigationBackgroundView.contentView.backgroundColor = .clear
+        navigationBackgroundView.layer.mask = nil
+    }
+
+    private func registerTraitChangeHandler() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
+            viewController.updateNavigationBackgroundColors()
+        }
     }
 
     private func registerObservers() {
@@ -390,7 +388,8 @@ final class RouteCollectionViewController: UIViewController {
 
         let detailViewController = WorkoutRouteDetailViewController(
             workout: workout,
-            presentationMode: workout.isMergedRouteCollectionSource ? .workout : .routeCollection
+            presentationMode: workout.isMergedRouteCollectionSource ? .workout : .routeCollection,
+            mergeSourceWorkouts: routes
         )
         navigationController?.pushViewController(detailViewController, animated: true)
     }

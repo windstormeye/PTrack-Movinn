@@ -51,8 +51,7 @@ final class SportsCareerViewController: UIViewController {
 
     private var workouts: [TrackedWorkout]
     private let presentationStyle: PresentationStyle
-    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
-    private let navigationBackgroundMask = CAGradientLayer()
+    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private var collectionView: UICollectionView!
     private var statistics: SportsCareerStatistics?
     private var statisticsLoadToken = UUID()
@@ -89,6 +88,7 @@ final class SportsCareerViewController: UIViewController {
         configureNavigationBar()
         configureViews()
         registerLanguageObserver()
+        registerTraitChangeHandler()
         reloadStatisticsAsync()
     }
 
@@ -107,9 +107,6 @@ final class SportsCareerViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if presentationStyle == .pushed {
-            updateNavigationBackgroundMask()
-        }
         collectionView.collectionViewLayout.invalidateLayout()
     }
 
@@ -171,14 +168,7 @@ final class SportsCareerViewController: UIViewController {
         )
 
         navigationBackgroundView.isUserInteractionEnabled = false
-        navigationBackgroundView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
-        navigationBackgroundMask.colors = [
-            UIColor.white.cgColor,
-            UIColor.white.withAlphaComponent(0.78).cgColor,
-            UIColor.white.withAlphaComponent(0).cgColor
-        ]
-        navigationBackgroundMask.locations = [0, 0.58, 1]
-        navigationBackgroundView.layer.mask = navigationBackgroundMask
+        updateNavigationBackgroundColors()
 
         view.addSubview(collectionView)
         if presentationStyle == .pushed {
@@ -350,10 +340,17 @@ final class SportsCareerViewController: UIViewController {
         }
     }
 
-    private func updateNavigationBackgroundMask() {
-        navigationBackgroundMask.frame = navigationBackgroundView.bounds
-        navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
-        navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
+    private func updateNavigationBackgroundColors() {
+        navigationBackgroundView.effect = nil
+        navigationBackgroundView.contentView.backgroundColor = .clear
+        navigationBackgroundView.layer.mask = nil
+    }
+
+    private func registerTraitChangeHandler() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
+            viewController.updateNavigationBackgroundColors()
+            viewController.collectionView?.reloadData()
+        }
     }
 
     private func height(for section: Section, width: CGFloat) -> CGFloat {
@@ -1068,7 +1065,7 @@ private func careerOverviewDistanceAttributedText(_ value: Double) -> NSAttribut
         careerOverviewDistanceText(value),
         numberFont: .systemFont(ofSize: 16, weight: .bold),
         unitFont: .systemFont(ofSize: 11, weight: .semibold),
-        color: .black
+        color: AppColors.solidForeground
     )
 }
 
@@ -1077,7 +1074,7 @@ private func careerOverviewDurationAttributedText(_ value: Double) -> NSAttribut
         careerDurationText(value),
         numberFont: .systemFont(ofSize: 15, weight: .bold),
         unitFont: .systemFont(ofSize: 11, weight: .semibold),
-        color: .black
+        color: AppColors.solidForeground
     )
 }
 
@@ -1184,7 +1181,7 @@ private final class CareerLoadingView: UIView {
     private func configureViews() {
         backgroundColor = .clear
         isHidden = true
-        activityIndicatorView.color = UIColor.black.withAlphaComponent(0.38)
+        activityIndicatorView.color = AppColors.foreground(alpha: 0.38)
 
         addSubview(activityIndicatorView)
         activityIndicatorView.snp.makeConstraints { make in
@@ -1218,7 +1215,7 @@ private final class CareerSectionHeaderView: UICollectionReusableView {
     }
 
     private func configureViews() {
-        titleLabel.textColor = .black
+        titleLabel.textColor = AppColors.solidForeground
         titleLabel.font = .systemFont(ofSize: 15, weight: .bold)
         titleLabel.adjustsFontSizeToFitWidth = true
         titleLabel.minimumScaleFactor = 0.74
@@ -1378,7 +1375,7 @@ private final class CareerSummaryMetricView: UIView {
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
-        titleLabel.textColor = .black
+        titleLabel.textColor = AppColors.solidForeground
         titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textAlignment = .left
         titleLabel.adjustsFontSizeToFitWidth = true
@@ -1436,7 +1433,7 @@ private final class CareerAnnualCurveCell: UICollectionViewCell {
     }
 
     private func configureViews() {
-        contentView.backgroundColor = UIColor(white: 0.965, alpha: 1)
+        contentView.backgroundColor = AppColors.groupedCardBackground
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
@@ -1526,13 +1523,13 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
 
         let yearAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 12, weight: .bold),
-            .foregroundColor: UIColor.black
+            .foregroundColor: AppColors.solidForeground
         ]
         let yearMetricParagraphStyle = NSMutableParagraphStyle()
         yearMetricParagraphStyle.lineSpacing = 1
         let yearMetricAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 9, weight: .semibold),
-            .foregroundColor: UIColor.black.withAlphaComponent(0.38),
+            .foregroundColor: AppColors.foreground(alpha: 0.38),
             .paragraphStyle: yearMetricParagraphStyle
         ]
 
@@ -1587,7 +1584,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
             }
 
             context.saveGState()
-            UIColor.white.setStroke()
+            AppColors.solidBackground.setStroke()
             path.lineWidth = 5
             path.lineCapStyle = .round
             path.lineJoinStyle = .round
@@ -1734,7 +1731,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
         let linePath = UIBezierPath()
         linePath.move(to: CGPoint(x: indicatorX, y: rowMinY + 6))
         linePath.addLine(to: CGPoint(x: indicatorX, y: rowMaxY - 6))
-        UIColor.black.withAlphaComponent(0.22).setStroke()
+        AppColors.foreground(alpha: 0.22).setStroke()
         linePath.lineWidth = 1
         linePath.stroke()
 
@@ -1750,7 +1747,7 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
         paragraphStyle.lineSpacing = 2
         let textAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 11, weight: .bold),
-            .foregroundColor: UIColor.black,
+            .foregroundColor: AppColors.solidForeground,
             .paragraphStyle: paragraphStyle
         ]
         let textRect = (tooltipText as NSString).boundingRect(
@@ -1780,13 +1777,13 @@ private final class CareerAnnualCurveView: UIView, UIGestureRecognizerDelegate {
         context.setShadow(
             offset: CGSize(width: 0, height: 2),
             blur: 8,
-            color: UIColor.black.withAlphaComponent(0.12).cgColor
+            color: AppColors.foreground(alpha: 0.12).cgColor
         )
-        UIColor.white.setFill()
+        AppColors.solidBackground.setFill()
         tooltipPath.fill()
         context.restoreGState()
 
-        UIColor.black.withAlphaComponent(0.08).setStroke()
+        AppColors.foreground(alpha: 0.08).setStroke()
         tooltipPath.lineWidth = 1
         tooltipPath.stroke()
 
@@ -1924,7 +1921,7 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
     }
 
     private func configureViews() {
-        contentView.backgroundColor = UIColor(white: 0.965, alpha: 1)
+        contentView.backgroundColor = AppColors.groupedCardBackground
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
@@ -1951,13 +1948,13 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         let metrics = monthMetrics(for: monthDate)
 
         monthLabel.text = monthTitle(for: monthDate)
-        monthLabel.textColor = .black
+        monthLabel.textColor = AppColors.solidForeground
         monthLabel.font = .systemFont(ofSize: 18, weight: .bold)
         monthLabel.adjustsFontSizeToFitWidth = true
         monthLabel.minimumScaleFactor = 0.7
 
         summaryLabel.text = "\(careerTotalKilometerText(metrics.distanceMeters))\n\(careerDurationText(metrics.durationSeconds))"
-        summaryLabel.textColor = .black
+        summaryLabel.textColor = AppColors.solidForeground
         summaryLabel.font = .systemFont(ofSize: 10, weight: .semibold)
         summaryLabel.numberOfLines = 2
         summaryLabel.textAlignment = .right
@@ -2026,7 +2023,7 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
         for text in weekdaySymbols {
             let label = UILabel()
             label.text = text
-            label.textColor = UIColor.black.withAlphaComponent(0.42)
+            label.textColor = AppColors.foreground(alpha: 0.42)
             label.font = .systemFont(ofSize: 11, weight: .semibold)
             label.textAlignment = .center
             weekdayStackView.addArrangedSubview(label)
@@ -2335,16 +2332,18 @@ private final class CareerCalendarDayView: UIView {
         iconStackView.isHidden = !hasWorkout
 
         if isToday {
-            dayLabel.textColor = .black
+            dayLabel.textColor = AppColors.solidForeground
         } else if !isCurrentMonth {
-            dayLabel.textColor = UIColor.black.withAlphaComponent(0.24)
+            dayLabel.textColor = AppColors.foreground(alpha: 0.24)
         } else if isPast {
-            dayLabel.textColor = UIColor.black.withAlphaComponent(0.48)
+            dayLabel.textColor = AppColors.foreground(alpha: 0.48)
         } else {
-            dayLabel.textColor = .black
+            dayLabel.textColor = AppColors.solidForeground
         }
 
-        circleView.layer.borderColor = isToday ? UIColor.black.cgColor : UIColor.clear.cgColor
+        circleView.layer.borderColor = isToday
+            ? AppColors.solidForeground.resolvedColor(with: traitCollection).cgColor
+            : UIColor.clear.cgColor
         configureIcons(
             symbolNames: symbolNames,
             tintColor: AppColors.movinnGreen
@@ -2384,7 +2383,7 @@ private final class CareerCalendarDayView: UIView {
         circleView.layer.borderWidth = 1.5
         circleView.layer.borderColor = UIColor.clear.cgColor
 
-        dayLabel.textColor = .black
+        dayLabel.textColor = AppColors.solidForeground
         dayLabel.font = .systemFont(ofSize: 16, weight: .medium)
         dayLabel.textAlignment = .center
 
@@ -2446,7 +2445,7 @@ private final class CareerWeeklyChartCell: UICollectionViewCell {
     }
 
     private func configureViews() {
-        contentView.backgroundColor = UIColor(white: 0.965, alpha: 1)
+        contentView.backgroundColor = AppColors.groupedCardBackground
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
@@ -2750,11 +2749,11 @@ private final class CareerLocationMapCardView: UIView {
     }
 
     private func configureViews() {
-        backgroundColor = UIColor(white: 0.965, alpha: 1)
+        backgroundColor = AppColors.groupedCardBackground
         layer.cornerRadius = 8
         layer.masksToBounds = true
 
-        detailLabel.textColor = UIColor.black.withAlphaComponent(0.45)
+        detailLabel.textColor = AppColors.foreground(alpha: 0.45)
         detailLabel.font = Self.detailFont
         detailLabel.textAlignment = .left
         detailLabel.lineBreakMode = .byWordWrapping
@@ -2869,6 +2868,7 @@ private final class CareerRegionMapView: UIView {
         let targetScope = scope
         let targetHighlightedIdentifiers = highlightedIdentifiers
         let displayScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+        let drawsForDarkAppearance = traitCollection.userInterfaceStyle == .dark
         renderToken = token
         requestedRenderSize = renderSize
         requestedRenderScope = targetScope
@@ -2883,7 +2883,8 @@ private final class CareerRegionMapView: UIView {
                 features: features,
                 highlightedIdentifiers: targetHighlightedIdentifiers,
                 size: renderSize,
-                scale: displayScale
+                scale: displayScale,
+                drawsForDarkAppearance: drawsForDarkAppearance
             )
 
             DispatchQueue.main.async { [weak self] in
@@ -2905,7 +2906,8 @@ private final class CareerRegionMapView: UIView {
         features: [CoordinateRegionMapFeature],
         highlightedIdentifiers: Set<String>,
         size: CGSize,
-        scale: CGFloat
+        scale: CGFloat,
+        drawsForDarkAppearance: Bool
     ) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
@@ -2918,7 +2920,7 @@ private final class CareerRegionMapView: UIView {
                   let bounds = drawingBounds(for: features, scope: scope),
                   bounds.width > 0,
                   bounds.height > 0 else {
-                drawPlaceholder(in: rect)
+                drawPlaceholder(in: rect, drawsForDarkAppearance: drawsForDarkAppearance)
                 return
             }
 
@@ -2927,10 +2929,11 @@ private final class CareerRegionMapView: UIView {
                 scope: scope,
                 in: rect.insetBy(dx: 2, dy: 2)
             )
-            let baseFillColor = UIColor.black.withAlphaComponent(0.075)
-            let baseStrokeColor = UIColor.white.withAlphaComponent(0.95)
+            let foregroundColor = drawsForDarkAppearance ? UIColor.white : UIColor.black
+            let baseFillColor = foregroundColor.withAlphaComponent(0.075)
+            let baseStrokeColor = UIColor(white: 0.24, alpha: 0.72)
             let highlightedFillColor = UIColor(red: 141 / 255, green: 189 / 255, blue: 0, alpha: 1)
-            let highlightedStrokeColor = UIColor.black.withAlphaComponent(0.18)
+            let highlightedStrokeColor = UIColor(white: 0.30, alpha: 0.72)
 
             for feature in features {
                 let path = path(for: feature, bounds: bounds, targetRect: targetRect)
@@ -2948,9 +2951,9 @@ private final class CareerRegionMapView: UIView {
         }
     }
 
-    nonisolated private static func drawPlaceholder(in rect: CGRect) {
+    nonisolated private static func drawPlaceholder(in rect: CGRect, drawsForDarkAppearance: Bool) {
         let path = UIBezierPath(roundedRect: rect.insetBy(dx: 8, dy: 18), cornerRadius: 8)
-        UIColor.black.withAlphaComponent(0.045).setFill()
+        (drawsForDarkAppearance ? UIColor.white : UIColor.black).withAlphaComponent(0.045).setFill()
         path.fill()
     }
 
@@ -3107,12 +3110,12 @@ private struct CareerWeeklyDistanceChart: View {
                 summaryMetric(
                     title: AppLocalization.text(.totalWorkoutDistance),
                     value: careerTotalKilometerText(totalDistanceMeters),
-                    valueColor: .black
+                    valueColor: Color(uiColor: AppColors.solidForeground)
                 )
                 summaryMetric(
                     title: AppLocalization.text(.totalWorkoutTime),
                     value: careerDurationText(totalDurationSeconds),
-                    valueColor: .black
+                    valueColor: Color(uiColor: AppColors.solidForeground)
                 )
                 Spacer(minLength: 0)
             }
@@ -3137,7 +3140,7 @@ private struct CareerWeeklyDistanceChart: View {
             }
             .chartPlotStyle { plotArea in
                 plotArea
-                    .background(Color.white.opacity(0.42))
+                    .background(Color(uiColor: AppColors.solidBackground).opacity(0.42))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .chartOverlay { proxy in
@@ -3146,13 +3149,13 @@ private struct CareerWeeklyDistanceChart: View {
                         if let tooltip = selectedTooltip(proxy: proxy, geometry: geometry) {
                             Text(tooltip.text)
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.black)
+                                .foregroundStyle(Color(uiColor: AppColors.solidForeground))
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 4)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.white)
-                                        .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+                                        .fill(Color(uiColor: AppColors.solidBackground))
+                                        .shadow(color: Color(uiColor: AppColors.solidForeground).opacity(0.12), radius: 5, y: 2)
                                 )
                                 .position(x: tooltip.x, y: tooltip.y)
                         }
@@ -3184,7 +3187,7 @@ private struct CareerWeeklyDistanceChart: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.black)
+                .foregroundStyle(Color(uiColor: AppColors.solidForeground))
             Text(value)
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(valueColor)
@@ -3318,14 +3321,14 @@ private struct CareerSportDistributionChart: View {
                     if percentage(for: slice) >= 0.05 {
                         Text(percentageText(for: slice))
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Color(uiColor: AppColors.solidForeground))
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
                             .background(
                                 Capsule()
-                                    .fill(Color.white.opacity(0.82))
+                                    .fill(Color(uiColor: AppColors.solidBackground).opacity(0.82))
                             )
                     }
                 }
@@ -3341,7 +3344,7 @@ private struct CareerSportDistributionChart: View {
                             .frame(width: 8, height: 8)
                         Text("\(slice.title) \(percentageText(for: slice))")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Color(uiColor: AppColors.solidForeground))
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
                     }
@@ -3350,7 +3353,7 @@ private struct CareerSportDistributionChart: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(16)
-        .background(Color(uiColor: UIColor(white: 0.965, alpha: 1)))
+        .background(Color(uiColor: AppColors.groupedCardBackground))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
@@ -3542,25 +3545,25 @@ private final class CareerSportTypeCell: UICollectionViewCell {
     }
 
     private func configureViews() {
-        contentView.backgroundColor = UIColor(white: 0.965, alpha: 1)
+        contentView.backgroundColor = AppColors.groupedCardBackground
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
-        iconView.tintColor = .black
+        iconView.tintColor = AppColors.solidForeground
         iconView.contentMode = .scaleAspectFit
 
-        titleLabel.textColor = .black
+        titleLabel.textColor = AppColors.solidForeground
         titleLabel.font = .systemFont(ofSize: 14, weight: .bold)
         titleLabel.textAlignment = .right
         titleLabel.adjustsFontSizeToFitWidth = true
         titleLabel.minimumScaleFactor = 0.62
 
-        distanceLabel.textColor = .black
+        distanceLabel.textColor = AppColors.solidForeground
         distanceLabel.font = .systemFont(ofSize: 16, weight: .bold)
         distanceLabel.textAlignment = .left
         distanceLabel.adjustsFontSizeToFitWidth = false
 
-        durationLabel.textColor = .black
+        durationLabel.textColor = AppColors.solidForeground
         durationLabel.font = .systemFont(ofSize: 15, weight: .bold)
         durationLabel.textAlignment = .left
         durationLabel.adjustsFontSizeToFitWidth = false

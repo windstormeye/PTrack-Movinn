@@ -36,13 +36,12 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let workout: TrackedWorkout
     private let mediaStore = RouteMediaStore()
     private let livePhotoExporter = RouteShareLivePhotoExporter()
-    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
-    private let navigationBackgroundMask = CAGradientLayer()
+    private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let previewContainerView = UIView()
     private let previewView = UIView()
-    private let bottomControlsView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialLight))
+    private let bottomControlsView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let mapContainerView = AppMapContainerView()
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
@@ -105,7 +104,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var selectedPreviewModule: PreviewModule?
     private var selectedRouteColorIndex = 0 {
         didSet {
-            routePathView.setStrokeColor(colorOptions[selectedRouteColorIndex])
+            routePathView.setStrokeColor(effectiveRouteColor)
             mapView.removeOverlays(mapView.overlays.filter { !($0 is AppMapToneTileOverlay) })
             configureMapRouteOverlay()
         }
@@ -178,6 +177,29 @@ final class WorkoutRouteShareViewController: UIViewController {
         super.init(nibName: nil, bundle: nil)
     }
 
+    private var isMapPreviewBackground: Bool {
+        if case .map = previewBackground {
+            return true
+        }
+        return false
+    }
+
+    private var mapPreviewContentColor: UIColor {
+        selectedMapStyle == .dark ? .white : .black
+    }
+
+    private var effectiveRouteColor: UIColor {
+        isMapPreviewBackground ? mapPreviewContentColor : colorOptions[selectedRouteColorIndex]
+    }
+
+    private var effectiveMetricsColor: UIColor {
+        isMapPreviewBackground ? mapPreviewContentColor : colorOptions[selectedMetricsColorIndex]
+    }
+
+    private var mapPreviewContentColorIndex: Int {
+        selectedMapStyle == .dark ? 0 : 1
+    }
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
@@ -188,7 +210,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
-        .darkContent
+        AppAppearanceStore.shared.preferredStatusBarStyle(for: traitCollection)
     }
 
     override func viewDidLoad() {
@@ -203,6 +225,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         configureNavigationBackgroundView()
         configureExportLoadingView()
         registerObservers()
+        registerTraitChangeHandler()
         updateLocalizedText()
         updatePreviewSelection()
         updatePreviewPhoto()
@@ -287,7 +310,6 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        updateNavigationBackgroundMask()
         updateSelectionChromeFrames()
         updatePreviewPhotoIfNeeded()
         updatePhotoBackgroundLayout()
@@ -300,7 +322,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         view.backgroundColor = .systemBackground
         navigationItem.largeTitleDisplayMode = .never
         exportBarButtonItem.tintColor = AppColors.movinnGreen
-        resetBarButtonItem.tintColor = .black
+        resetBarButtonItem.tintColor = AppColors.solidForeground
         resetBarButtonItem.isEnabled = true
         navigationItem.rightBarButtonItems = [exportBarButtonItem, resetBarButtonItem]
         edgesForExtendedLayout = [.top, .bottom]
@@ -320,7 +342,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         navigationController?.navigationBar.barStyle = .default
         navigationController?.navigationBar.tintColor = .label
         exportBarButtonItem.tintColor = AppColors.movinnGreen
-        resetBarButtonItem.tintColor = .black
+        resetBarButtonItem.tintColor = AppColors.solidForeground
     }
 
     @objc private func resetShareCanvas() {
@@ -446,7 +468,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func configureBottomControlsView() {
-        bottomControlsView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.76)
+        updateInterfaceAppearanceColors()
 
         view.addSubview(bottomControlsView)
 
@@ -463,7 +485,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewContainerView.addGestureRecognizer(previewContainerTapGesture)
         self.previewContainerTapGesture = previewContainerTapGesture
 
-        previewView.backgroundColor = .white
+        previewView.backgroundColor = AppColors.solidBackground
         previewView.clipsToBounds = true
         let previewBackgroundTapGesture = UITapGestureRecognizer(target: self, action: #selector(handlePreviewBackgroundTap(_:)))
         previewBackgroundTapGesture.cancelsTouchesInView = false
@@ -511,19 +533,19 @@ final class WorkoutRouteShareViewController: UIViewController {
             self?.updateVisiblePhotoBrowserCellStates()
         }
 
-        previewPlaceholderView.backgroundColor = UIColor(white: 0.91, alpha: 1)
+        previewPlaceholderView.backgroundColor = AppColors.placeholderBackground
         previewPlaceholderIconView.image = UIImage(
             systemName: "photo",
             withConfiguration: UIImage.SymbolConfiguration(pointSize: 36, weight: .medium)
         )
-        previewPlaceholderIconView.tintColor = UIColor.black.withAlphaComponent(0.22)
+        previewPlaceholderIconView.tintColor = AppColors.foreground(alpha: 0.22)
         previewPlaceholderIconView.contentMode = .scaleAspectFit
 
         routeModuleView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(selectRouteModule)))
-        routeModuleView.configure(with: workout, color: colorOptions[selectedRouteColorIndex])
+        routeModuleView.configure(with: workout, color: effectiveRouteColor)
 
         metricsModuleView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(selectMetricsModule)))
-        metricsModuleView.configure(with: workout, color: colorOptions[selectedMetricsColorIndex])
+        metricsModuleView.configure(with: workout, color: effectiveMetricsColor)
         configureModuleGestures()
         configureBrandPillGestures()
         configureModuleSelectionChrome()
@@ -808,14 +830,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     private func configureNavigationBackgroundView() {
         navigationBackgroundView.isUserInteractionEnabled = false
-        navigationBackgroundView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.42)
-        navigationBackgroundMask.colors = [
-            UIColor.white.cgColor,
-            UIColor.white.withAlphaComponent(0.78).cgColor,
-            UIColor.white.withAlphaComponent(0).cgColor
-        ]
-        navigationBackgroundMask.locations = [0, 0.58, 1]
-        navigationBackgroundView.layer.mask = navigationBackgroundMask
+        updateNavigationBackgroundColors()
 
         view.addSubview(navigationBackgroundView)
 
@@ -842,10 +857,28 @@ final class WorkoutRouteShareViewController: UIViewController {
         )
     }
 
-    private func updateNavigationBackgroundMask() {
-        navigationBackgroundMask.frame = navigationBackgroundView.bounds
-        navigationBackgroundMask.startPoint = CGPoint(x: 0.5, y: 0)
-        navigationBackgroundMask.endPoint = CGPoint(x: 0.5, y: 1)
+    private func updateNavigationBackgroundColors() {
+        navigationBackgroundView.effect = nil
+        navigationBackgroundView.contentView.backgroundColor = .clear
+        navigationBackgroundView.layer.mask = nil
+    }
+
+    private func registerTraitChangeHandler() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
+            viewController.updateNavigationBackgroundColors()
+            viewController.updateInterfaceAppearanceColors()
+            viewController.updateLocalizedText()
+            viewController.setNeedsStatusBarAppearanceUpdate()
+        }
+    }
+
+    private func updateInterfaceAppearanceColors() {
+        bottomControlsView.effect = UIBlurEffect(style: .systemThinMaterial)
+        bottomControlsView.contentView.backgroundColor = AppColors.background(alpha: 0.76)
+        resetBarButtonItem.tintColor = AppColors.solidForeground
+        previewView.backgroundColor = AppColors.solidBackground
+        previewPlaceholderView.backgroundColor = AppColors.placeholderBackground
+        previewPlaceholderIconView.tintColor = AppColors.foreground(alpha: 0.22)
     }
 
     @objc private func handleLanguageDidChange() {
@@ -1011,7 +1044,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     private func toolButtonConfiguration(title: String, imageName: String) -> UIButton.Configuration {
         var configuration = UIButton.Configuration.plain()
-        configuration.baseForegroundColor = .black
+        configuration.baseForegroundColor = AppColors.solidForeground
         configuration.image = UIImage(systemName: imageName)
         configuration.imagePlacement = .top
         configuration.imagePadding = 2
@@ -1841,12 +1874,13 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func applyDefaultColorsForCurrentBackground() {
         switch previewBackground {
         case .map:
-            selectedRouteColorIndex = 1
-            selectedMetricsColorIndex = 1
+            selectedRouteColorIndex = mapPreviewContentColorIndex
+            selectedMetricsColorIndex = mapPreviewContentColorIndex
         case .photo, .collage:
             selectedRouteColorIndex = 0
             selectedMetricsColorIndex = 0
         }
+        updateMapPreviewContentColors()
     }
 
     private func resetPreviewModuleAdjustments() {
@@ -2485,8 +2519,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func applyMetricsColor() {
-        let color = colorOptions[selectedMetricsColorIndex]
-        metricsModuleView.applyColor(color)
+        metricsModuleView.applyColor(effectiveMetricsColor)
     }
 
     private func applyMapStyle(_ style: AppMapDisplayStyle) {
@@ -2495,12 +2528,31 @@ final class WorkoutRouteShareViewController: UIViewController {
             isBackgroundAdjustmentEnabled = false
             selectedPreviewModule = nil
             updatePreviewSelection()
+            applyDefaultColorsForCurrentBackground()
         } else {
             selectMapBackground(usesDefaultMapAspectRatio: false)
         }
         AppMapStyle.apply(style, to: mapView)
         AppMapStyle.setToneOverlay(mapToneOverlay, visible: style == .appDefault, on: mapView)
+        updateMapPreviewContentColors()
         configureMapStyleButton()
+    }
+
+    private func updateMapPreviewContentColors() {
+        routePathView.setStrokeColor(effectiveRouteColor)
+        applyMetricsColor()
+        refreshMapRouteOverlayColor()
+        configureColorToolButton()
+    }
+
+    private func refreshMapRouteOverlayColor() {
+        guard let routePolyline,
+              let renderer = mapView.renderer(for: routePolyline) as? MKPolylineRenderer else {
+            return
+        }
+
+        renderer.strokeColor = effectiveRouteColor
+        renderer.setNeedsDisplay()
     }
 
     private func applyCanvasAspectRatio(_ aspectRatio: CanvasAspectRatio) {
@@ -2591,17 +2643,17 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func colorName(for index: Int) -> String {
         switch index {
         case 0:
-            return "White"
+            return AppLocalization.text(.colorWhite)
         case 1:
-            return "Black"
+            return AppLocalization.text(.colorBlack)
         case 2:
             return "Movinn"
         case 3:
-            return "Blue"
+            return AppLocalization.text(.colorBlue)
         case 4:
-            return "Orange"
+            return AppLocalization.text(.colorOrange)
         case 5:
-            return "Pink"
+            return AppLocalization.text(.colorPink)
         default:
             return AppLocalization.text(.color)
         }
@@ -3322,7 +3374,7 @@ extension WorkoutRouteShareViewController: MKMapViewDelegate {
         }
 
         let renderer = MKPolylineRenderer(polyline: polyline)
-        renderer.strokeColor = colorOptions[selectedRouteColorIndex]
+        renderer.strokeColor = effectiveRouteColor
         renderer.lineWidth = 5
         renderer.lineJoin = .round
         renderer.lineCap = .round

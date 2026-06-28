@@ -196,9 +196,9 @@ final class WorkoutRouteCell: UICollectionViewCell {
         pathView.isHidden = true
 
         timeTagLabel.isHidden = true
-        timeTagLabel.textColor = UIColor.black.withAlphaComponent(0.82)
+        timeTagLabel.textColor = AppColors.foreground(alpha: 0.82)
         timeTagLabel.font = .systemFont(ofSize: 8, weight: .bold)
-        timeTagLabel.backgroundColor = UIColor.white.withAlphaComponent(0.82)
+        timeTagLabel.backgroundColor = AppColors.background(alpha: 0.82)
         timeTagLabel.layer.cornerRadius = 5
         timeTagLabel.layer.masksToBounds = true
         timeTagLabel.layer.zPosition = 20
@@ -209,7 +209,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
         newBadgeLabel.translatesAutoresizingMaskIntoConstraints = true
         newBadgeLabel.isHidden = true
         newBadgeLabel.text = AppLocalization.text(.newActivity)
-        newBadgeLabel.textColor = UIColor.black.withAlphaComponent(0.86)
+        newBadgeLabel.textColor = AppColors.foreground(alpha: 0.86)
         newBadgeLabel.font = .systemFont(ofSize: 8, weight: .bold)
         newBadgeLabel.backgroundColor = AppColors.movinnGreen
         newBadgeLabel.layer.cornerRadius = 5
@@ -262,7 +262,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
         if #available(iOS 26.0, *) {
             let effect = UIGlassEffect(style: .regular)
             effect.isInteractive = false
-            effect.tintColor = UIColor.white.withAlphaComponent(0.06)
+            effect.tintColor = AppColors.background(alpha: 0.06)
             selectionCheckmarkEffectView.effect = effect
             selectionCheckmarkEffectView.backgroundColor = .clear
             selectionCheckmarkEffectView.contentView.backgroundColor = .clear
@@ -272,7 +272,7 @@ final class WorkoutRouteCell: UICollectionViewCell {
             )
         } else {
             selectionCheckmarkEffectView.effect = nil
-            selectionCheckmarkEffectView.backgroundColor = UIColor.black.withAlphaComponent(0.62)
+            selectionCheckmarkEffectView.backgroundColor = AppColors.foreground(alpha: 0.62)
             selectionCheckmarkEffectView.contentView.backgroundColor = .clear
             selectionCheckmarkIconView.image = UIImage(
                 systemName: "checkmark.circle.fill",

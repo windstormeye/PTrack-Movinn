@@ -96,7 +96,7 @@ final class RouteMediaAnnotationView: MKAnnotationView {
         collisionMode = .rectangle
         backgroundColor = .clear
 
-        bubbleLayer.fillColor = UIColor.white.cgColor
+        updateBubbleColors()
         bubbleLayer.shadowColor = UIColor.black.cgColor
         bubbleLayer.shadowOpacity = 0.08
         bubbleLayer.shadowRadius = 4
@@ -108,8 +108,8 @@ final class RouteMediaAnnotationView: MKAnnotationView {
         imageView.layer.cornerRadius = Self.imageCornerRadius
         imageView.backgroundColor = .secondarySystemBackground
 
-        badgeView.tintColor = .white
-        badgeView.backgroundColor = UIColor.black.withAlphaComponent(0.46)
+        badgeView.tintColor = .black
+        badgeView.backgroundColor = UIColor.white.withAlphaComponent(0.82)
         badgeView.layer.cornerRadius = Self.badgeSize / 2
         badgeView.contentMode = .center
         badgeView.isHidden = true
@@ -126,6 +126,15 @@ final class RouteMediaAnnotationView: MKAnnotationView {
             make.trailing.bottom.equalTo(imageView).inset(3)
             make.size.equalTo(Self.badgeSize)
         }
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
+            view.updateBubbleColors()
+        }
+    }
+
+    private func updateBubbleColors() {
+        bubbleLayer.fillColor = UIColor.white.cgColor
+        imageView.backgroundColor = UIColor.white.withAlphaComponent(0.92)
     }
 
     private func badgeImage(for mediaItem: RouteMediaItem) -> UIImage? {
