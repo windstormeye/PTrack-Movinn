@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0C7A000C2FE25A000000000C /* PTrackShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 0C7A00012FE25A0000000001 /* PTrackShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		0C7A000C2FE25A000000000C /* PTrackShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0C7A00012FE25A0000000001 /* PTrackShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0CE136ED2FDC3E6100ECA8BD /* SnapKit in Frameworks */ = {isa = PBXBuildFile; productRef = 0CE136EC2FDC3E6100ECA8BD /* SnapKit */; };
 /* End PBXBuildFile section */
 
@@ -22,15 +22,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		0C7A000B2FE25A000000000B /* Embed App Extensions */ = {
+		0C7A000B2FE25A000000000B /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				0C7A000C2FE25A000000000C /* PTrackShareExtension.appex in Embed App Extensions */,
+				0C7A000C2FE25A000000000C /* PTrackShareExtension.appex in Embed Foundation Extensions */,
 			);
-			name = "Embed App Extensions";
+			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -123,7 +123,7 @@
 				0C039D312FDBF7C10090C542 /* Sources */,
 				0C039D322FDBF7C10090C542 /* Frameworks */,
 				0C039D332FDBF7C10090C542 /* Resources */,
-				0C7A000B2FE25A000000000B /* Embed App Extensions */,
+				0C7A000B2FE25A000000000B /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
@@ -171,7 +171,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2650;
-				LastUpgradeCheck = 2650;
+				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					0C039D342FDBF7C10090C542 = {
 						CreatedOnToolsVersion = 26.5;
@@ -263,7 +263,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrack/PTrack.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
@@ -311,7 +311,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrack/PTrack.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
@@ -410,6 +410,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -467,6 +468,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -475,11 +477,10 @@
 		0C7A00092FE25A0000000009 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrackShareExtension/PTrackShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrackShareExtension/Info.plist;
@@ -509,11 +510,10 @@
 		0C7A000A2FE25A000000000A /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrackShareExtension/PTrackShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrackShareExtension/Info.plist;
