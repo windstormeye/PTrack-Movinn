@@ -87,17 +87,17 @@
 			path = PTrack;
 			sourceTree = "<group>";
 		};
-		0C0B3CF12FF3A38A008D5AC4 /* WidgetShared */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PTrack/WidgetShared;
-			sourceTree = "<group>";
-		};
 		0C0B3BD92FF37044008D5AC4 /* Widget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				0C0B3BE92FF37045008D5AC4 /* Exceptions for "Widget" folder in "WidgetExtension" target */,
 			);
 			path = Widget;
+			sourceTree = "<group>";
+		};
+		0C0B3CF12FF3A38A008D5AC4 /* PTrack/WidgetShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PTrack/WidgetShared;
 			sourceTree = "<group>";
 		};
 		0C7A00022FE25A0000000002 /* PTrackShareExtension */ = {
@@ -142,7 +142,7 @@
 			isa = PBXGroup;
 			children = (
 				0C039D372FDBF7C10090C542 /* PTrack */,
-				0C0B3CF12FF3A38A008D5AC4 /* WidgetShared */,
+				0C0B3CF12FF3A38A008D5AC4 /* PTrack/WidgetShared */,
 				0C7A00022FE25A0000000002 /* PTrackShareExtension */,
 				0C0B3BD92FF37044008D5AC4 /* Widget */,
 				0C0B3BD42FF37044008D5AC4 /* Frameworks */,
@@ -212,7 +212,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				0C0B3BD92FF37044008D5AC4 /* Widget */,
-				0C0B3CF12FF3A38A008D5AC4 /* WidgetShared */,
+				0C0B3CF12FF3A38A008D5AC4 /* PTrack/WidgetShared */,
 			);
 			name = WidgetExtension;
 			packageProductDependencies = (
@@ -366,7 +366,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrack/PTrack.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
@@ -414,7 +414,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrack/PTrack.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
@@ -585,7 +585,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = Widget/Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
@@ -618,7 +618,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = Widget/Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
@@ -649,7 +649,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrackShareExtension/PTrackShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrackShareExtension/Info.plist;
@@ -683,7 +683,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrackShareExtension/PTrackShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrackShareExtension/Info.plist;

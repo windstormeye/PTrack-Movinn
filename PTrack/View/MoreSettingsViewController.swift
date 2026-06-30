@@ -30,7 +30,7 @@ final class MoreSettingsViewController: UIViewController {
         var items: [SettingsItem] {
             switch self {
             case .uiSettings:
-                var items: [SettingsItem] = [.appLanguage, .appearanceSettings, .widgets]
+                var items: [SettingsItem] = [.proStatus, .appLanguage, .appearanceSettings, .widgets]
                 if RouteCollectionCloudSyncSettings.isFeatureAvailable {
                     items.append(.iCloudRouteSync)
                 }
@@ -38,12 +38,18 @@ final class MoreSettingsViewController: UIViewController {
             case .dataIntegration:
                 return [.appleHealth, .strava, .systemPhotos]
             case .other:
-                return [.developerWebsite]
+                var items: [SettingsItem] = []
+                #if DEBUG
+                items.append(.developerTools)
+                #endif
+                items.append(.developerWebsite)
+                return items
             }
         }
     }
 
     private enum SettingsItem {
+        case proStatus
         case appLanguage
         case appearanceSettings
         case widgets
@@ -51,10 +57,15 @@ final class MoreSettingsViewController: UIViewController {
         case appleHealth
         case strava
         case systemPhotos
+        #if DEBUG
+        case developerTools
+        #endif
         case developerWebsite
 
         var titleKey: AppTextKey {
             switch self {
+            case .proStatus:
+                return .proPaywallTitle
             case .appLanguage:
                 return .appLanguage
             case .appearanceSettings:
@@ -69,6 +80,10 @@ final class MoreSettingsViewController: UIViewController {
                 return .strava
             case .systemPhotos:
                 return .systemPhotos
+            #if DEBUG
+            case .developerTools:
+                return .developerTools
+            #endif
             case .developerWebsite:
                 return .developerWebsite
             }
@@ -76,6 +91,8 @@ final class MoreSettingsViewController: UIViewController {
 
         var iconName: String {
             switch self {
+            case .proStatus:
+                return "crown.fill"
             case .appLanguage:
                 return "translate"
             case .appearanceSettings:
@@ -90,6 +107,10 @@ final class MoreSettingsViewController: UIViewController {
                 return "figure.run"
             case .systemPhotos:
                 return "photo.on.rectangle"
+            #if DEBUG
+            case .developerTools:
+                return "hammer.fill"
+            #endif
             case .developerWebsite:
                 return "safari"
             }
@@ -188,6 +209,7 @@ final class MoreSettingsViewController: UIViewController {
         collectionView.alwaysBounceVertical = true
         collectionView.dataSource = self
         collectionView.delegate = self
+        collectionView.register(MoreProStatusCell.self, forCellWithReuseIdentifier: MoreProStatusCell.reuseIdentifier)
         collectionView.register(MoreSettingsCell.self, forCellWithReuseIdentifier: MoreSettingsCell.reuseIdentifier)
         collectionView.register(
             MoreSettingsSectionHeaderView.self,
@@ -240,6 +262,12 @@ final class MoreSettingsViewController: UIViewController {
             name: HealthWorkoutStore.authorizationStateDidChangeNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleProSubscriptionDidChange),
+            name: ProSubscriptionManager.didChangeNotification,
+            object: nil
+        )
     }
 
     @objc private func handleLanguageDidChange() {
@@ -260,6 +288,10 @@ final class MoreSettingsViewController: UIViewController {
         Task { @MainActor in
             collectionView?.reloadData()
         }
+    }
+
+    @objc private func handleProSubscriptionDidChange() {
+        collectionView?.reloadData()
     }
 
     private func updateLocalizedText() {
@@ -302,8 +334,28 @@ final class MoreSettingsViewController: UIViewController {
             }
         case .iCloudRouteSync:
             return RouteCollectionCloudSyncSettings.isEnabled ? .connected : nil
-        case .appLanguage, .appearanceSettings, .widgets, .developerWebsite:
+        case .proStatus, .appLanguage, .appearanceSettings, .widgets, .developerWebsite:
             return nil
+        #if DEBUG
+        case .developerTools:
+            return nil
+        #endif
+        }
+    }
+
+    private func handleProStatusSelection() {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.ensureAccessResolved()
+            guard !ProSubscriptionManager.shared.isProUser else {
+                Toast.show(AppLocalization.text(.proStatusActive), in: view)
+                return
+            }
+
+            presentProPaywall()
         }
     }
 
@@ -366,6 +418,18 @@ final class MoreSettingsViewController: UIViewController {
         let viewController = WidgetSettingsViewController()
         navigationController?.pushViewController(viewController, animated: true)
     }
+
+    #if DEBUG
+    private func presentDeveloperTools() {
+        let viewController = DeveloperToolsViewController()
+        let navigationController = UINavigationController(rootViewController: viewController)
+        if let sheetPresentationController = navigationController.sheetPresentationController {
+            sheetPresentationController.detents = [.medium(), .large()]
+            sheetPresentationController.prefersGrabberVisible = true
+        }
+        present(navigationController, animated: true)
+    }
+    #endif
 
     private func configurePopoverPresentation(
         _ popoverPresentationController: UIPopoverPresentationController,
@@ -685,6 +749,20 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
         _ collectionView: UICollectionView,
         cellForItemAt indexPath: IndexPath
     ) -> UICollectionViewCell {
+        let item = item(at: indexPath)
+
+        if item == .proStatus {
+            guard let cell = collectionView.dequeueReusableCell(
+                withReuseIdentifier: MoreProStatusCell.reuseIdentifier,
+                for: indexPath
+            ) as? MoreProStatusCell else {
+                return UICollectionViewCell()
+            }
+
+            cell.configure(isProUser: ProSubscriptionManager.shared.isProUser)
+            return cell
+        }
+
         guard let cell = collectionView.dequeueReusableCell(
             withReuseIdentifier: MoreSettingsCell.reuseIdentifier,
             for: indexPath
@@ -692,7 +770,6 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
             return UICollectionViewCell()
         }
 
-        let item = item(at: indexPath)
         let indicatorColor = connectionIndicatorState(for: item)?.color
         switch item {
         case .appleHealth:
@@ -726,6 +803,16 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
                 title: AppLocalization.text(item.titleKey),
                 indicatorColor: indicatorColor
             )
+        #if DEBUG
+        case .developerTools:
+            cell.configureSystemIcon(
+                iconName: item.iconName,
+                title: AppLocalization.text(item.titleKey),
+                indicatorColor: indicatorColor
+            )
+        #endif
+        case .proStatus:
+            break
         }
         return cell
     }
@@ -755,6 +842,8 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
         collectionView.deselectItem(at: indexPath, animated: true)
 
         switch item(at: indexPath) {
+        case .proStatus:
+            handleProStatusSelection()
         case .appLanguage:
             presentLanguagePicker(from: indexPath)
         case .appearanceSettings:
@@ -769,6 +858,10 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
             handleStravaSelection()
         case .systemPhotos:
             handlePhotoLibrarySelection()
+        #if DEBUG
+        case .developerTools:
+            presentDeveloperTools()
+        #endif
         case .developerWebsite:
             openDeveloperWebsite()
         }
@@ -791,6 +884,11 @@ extension MoreSettingsViewController: UICollectionViewDelegateFlowLayout {
             layout: collectionViewLayout,
             minimumInteritemSpacingForSectionAt: indexPath.section
         )
+        if item(at: indexPath) == .proStatus {
+            let width = collectionView.bounds.width - sectionInset.left - sectionInset.right
+            return CGSize(width: max(width, 1), height: 86)
+        }
+
         let width = floor((collectionView.bounds.width - sectionInset.left - sectionInset.right - spacing) / 2)
         return CGSize(width: max(width, 1), height: 58)
     }
@@ -826,6 +924,147 @@ extension MoreSettingsViewController: UICollectionViewDelegateFlowLayout {
         referenceSizeForHeaderInSection section: Int
     ) -> CGSize {
         CGSize(width: collectionView.bounds.width, height: 34)
+    }
+}
+
+private final class MoreProStatusCell: UICollectionViewCell {
+    static let reuseIdentifier = "MoreProStatusCell"
+
+    private let gradientView = AnimatedProGradientView()
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private let promoBadgeView = PromoBadgeView()
+    private var isProUser = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    override var isHighlighted: Bool {
+        didSet {
+            UIView.animate(withDuration: 0.14) {
+                self.contentView.alpha = self.isHighlighted ? 0.72 : 1
+                self.transform = self.isHighlighted ? CGAffineTransform(scaleX: 0.985, y: 0.985) : .identity
+            }
+        }
+    }
+
+    func configure(isProUser: Bool) {
+        self.isProUser = isProUser
+        updateGradientAppearance()
+        titleLabel.text = AppLocalization.text(isProUser ? .proUnlockedTitle : .proPaywallTitle)
+        subtitleLabel.text = AppLocalization.text(.proPaywallSubtitle)
+        promoBadgeView.isHidden = isProUser
+        if isProUser {
+            promoBadgeView.stopAnimations()
+        } else {
+            promoBadgeView.configure(text: AppLocalization.text(.promotionBadge))
+        }
+        updateColors()
+    }
+
+    private func configureViews() {
+        clipsToBounds = false
+        backgroundColor = .clear
+        contentView.layer.cornerRadius = 8
+        contentView.layer.cornerCurve = .continuous
+        contentView.layer.masksToBounds = true
+
+        titleLabel.font = .systemFont(ofSize: 20, weight: .bold)
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.8
+
+        subtitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        subtitleLabel.adjustsFontSizeToFitWidth = true
+        subtitleLabel.minimumScaleFactor = 0.76
+        subtitleLabel.numberOfLines = 2
+        subtitleLabel.lineBreakMode = .byWordWrapping
+        updateColors()
+
+        contentView.addSubview(gradientView)
+        contentView.addSubview(titleLabel)
+        contentView.addSubview(subtitleLabel)
+        addSubview(promoBadgeView)
+
+        gradientView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        titleLabel.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(16)
+            make.trailing.equalToSuperview().inset(16)
+            make.top.equalToSuperview().offset(18)
+        }
+
+        subtitleLabel.snp.makeConstraints { make in
+            make.leading.equalTo(titleLabel)
+            make.trailing.equalToSuperview().inset(16)
+            make.top.equalTo(titleLabel.snp.bottom).offset(5)
+        }
+
+        promoBadgeView.snp.makeConstraints { make in
+            make.top.equalToSuperview().offset(-7)
+            make.trailing.equalToSuperview().offset(7)
+            make.height.equalTo(24)
+            make.width.greaterThanOrEqualTo(52)
+        }
+
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (cell: Self, _) in
+            cell.updateGradientAppearance()
+            cell.updateColors()
+        }
+    }
+
+    private func updateGradientAppearance() {
+        gradientView.apply(
+            style: isProUser ? .proCard : .inactiveCard,
+            traitCollection: effectiveTraitCollection
+        )
+    }
+
+    private func updateColors() {
+        let isDarkMode = effectiveUserInterfaceStyle == .dark
+        let shouldUseLightText = !isProUser && isDarkMode
+        if isProUser {
+            titleLabel.textColor = isDarkMode
+                ? UIColor.white.withAlphaComponent(0.94)
+                : UIColor.black.withAlphaComponent(0.9)
+        } else {
+            titleLabel.textColor = shouldUseLightText
+                ? UIColor.white.withAlphaComponent(0.94)
+                : UIColor.black.withAlphaComponent(0.9)
+        }
+        if isProUser && isDarkMode {
+            subtitleLabel.textColor = UIColor.white.withAlphaComponent(0.72)
+        } else {
+            subtitleLabel.textColor = shouldUseLightText
+                ? UIColor.white.withAlphaComponent(0.62)
+                : UIColor.black.withAlphaComponent(0.62)
+        }
+    }
+
+    private var effectiveTraitCollection: UITraitCollection {
+        let appUserInterfaceStyle = AppAppearanceStore.shared.userInterfaceStyle
+        guard appUserInterfaceStyle != .unspecified else {
+            return traitCollection
+        }
+
+        return traitCollection.modifyingTraits { mutableTraits in
+            mutableTraits.userInterfaceStyle = appUserInterfaceStyle
+        }
+    }
+
+    private var effectiveUserInterfaceStyle: UIUserInterfaceStyle {
+        let appUserInterfaceStyle = AppAppearanceStore.shared.userInterfaceStyle
+        return appUserInterfaceStyle == .unspecified
+            ? traitCollection.userInterfaceStyle
+            : appUserInterfaceStyle
     }
 }
 

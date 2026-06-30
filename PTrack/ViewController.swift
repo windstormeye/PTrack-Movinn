@@ -1922,6 +1922,24 @@ class ViewController: UIViewController {
     }
 
     private func showHeatmap() {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.ensureAccessResolved()
+            guard ProSubscriptionManager.shared.isProUser else {
+                presentProPaywall { [weak self] in
+                    self?.showHeatmapUnlocked()
+                }
+                return
+            }
+
+            showHeatmapUnlocked()
+        }
+    }
+
+    private func showHeatmapUnlocked() {
         flushPendingWorkouts(force: true)
         let heatmapViewController = WorkoutRouteHeatmapViewController(workouts: workouts)
         navigationController?.pushViewController(heatmapViewController, animated: true)

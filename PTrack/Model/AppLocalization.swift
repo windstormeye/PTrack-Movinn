@@ -54,7 +54,11 @@ enum AppTextKey: String {
     case delete
     case deleteRoute
     case deleteRouteMessage
+    case debugProAccessLocked
+    case debugProAccessSimulation
+    case debugProAccessUnlocked
     case developerWebsite
+    case developerTools
     case disable
     case distanceMetersFormat
     case enable
@@ -97,6 +101,7 @@ enum AppTextKey: String {
     case light
     case more
     case movinnLocalDataPrivacyStatement
+    case movinnPro
     case newActivity
     case newRoute
     case ok
@@ -115,6 +120,26 @@ enum AppTextKey: String {
     case photoSaving
     case photoBackgroundAdjustmentHint
     case photoMatching
+    case privacyPolicy
+    case promotionBadge
+    case proFeatureHeatmap
+    case proFeatureMoreComing
+    case proFeatureRouteMerge
+    case proPaywallSubtitle
+    case proPaywallTitle
+    case proProductUnavailable
+    case proPurchaseButton
+    case proPurchaseButtonPriceFormat
+    case proPurchaseFailed
+    case proPurchaseLoading
+    case proPurchaseNotAllowed
+    case proPurchasePending
+    case proPurchaseSuccess
+    case proPurchaseUnverified
+    case proRestoreNoPurchase
+    case proRestoreSuccess
+    case proStatusActive
+    case proUnlockedTitle
     case queryingLocation
     case routeBook
     case routeBookExit
@@ -140,6 +165,7 @@ enum AppTextKey: String {
     case routeMergeMultipleTitleFormat
     case routeMergeNoRoutes
     case routeMergeViewRoutes
+    case restorePurchases
     case running
     case satellite
     case share
@@ -170,6 +196,7 @@ enum AppTextKey: String {
     case stillOpen
     case systemPhotos
     case systemMapsNotFound
+    case termsOfUse
     case totalActivityCountFormat
     case totalDistanceFormat
     case totalWorkoutCount
@@ -282,7 +309,11 @@ enum AppLocalization {
             .delete: "删除",
             .deleteRoute: "删除路线？",
             .deleteRouteMessage: "删除后无法恢复。",
+            .debugProAccessLocked: "未解锁",
+            .debugProAccessSimulation: "模拟 Pro 功能解锁",
+            .debugProAccessUnlocked: "已解锁",
             .developerWebsite: "开发者网站",
+            .developerTools: "开发者工具",
             .disable: "关闭",
             .distanceMetersFormat: "%.0f 米",
             .enable: "开启",
@@ -325,6 +356,7 @@ enum AppLocalization {
             .light: "亮色",
             .more: "更多",
             .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
+            .movinnPro: "Movinn Pro",
             .newActivity: "新活动！",
             .newRoute: "新路线！",
             .ok: "好",
@@ -343,6 +375,26 @@ enum AppLocalization {
             .photoSaving: "正在保存图片",
             .photoBackgroundAdjustmentHint: "双击照片调整",
             .photoMatching: "照片匹配",
+            .privacyPolicy: "隐私政策",
+            .promotionBadge: "促销",
+            .proFeatureHeatmap: "查看运动路线热图",
+            .proFeatureMoreComing: "未来更多功能",
+            .proFeatureRouteMerge: "合并多段运动轨迹",
+            .proPaywallSubtitle: "Movinn 持续提供高级功能，让你的运动更加从容！",
+            .proPaywallTitle: "解锁高级功能",
+            .proProductUnavailable: "暂时无法获取订阅商品，请稍后再试。",
+            .proPurchaseButton: "永久解锁",
+            .proPurchaseButtonPriceFormat: "永久解锁 %@",
+            .proPurchaseFailed: "购买没有完成，请稍后重试。",
+            .proPurchaseLoading: "处理中",
+            .proPurchaseNotAllowed: "当前设备不允许 App 内购买。",
+            .proPurchasePending: "购买正在等待确认。",
+            .proPurchaseSuccess: "已开通 Movinn Pro",
+            .proPurchaseUnverified: "购买校验失败，请稍后重试。",
+            .proRestoreNoPurchase: "没有找到可恢复的购买",
+            .proRestoreSuccess: "购买已恢复",
+            .proStatusActive: "高级功能已解锁",
+            .proUnlockedTitle: "已解锁高级功能",
             .queryingLocation: "位置查询中",
             .routeBook: "作为路书",
             .routeBookExit: "退出作为路书？",
@@ -368,6 +420,7 @@ enum AppLocalization {
             .routeMergeMultipleTitleFormat: "%@ 等 %d 段",
             .routeMergeNoRoutes: "请选择需要合并的路线。",
             .routeMergeViewRoutes: "去看看",
+            .restorePurchases: "恢复购买",
             .running: "跑步",
             .satellite: "卫星",
             .share: "分享",
@@ -398,6 +451,7 @@ enum AppLocalization {
             .stillOpen: "仍要打开",
             .systemPhotos: "系统相册",
             .systemMapsNotFound: "未找到系统地图",
+            .termsOfUse: "使用条款",
             .totalActivityCountFormat: "%d 次",
             .totalDistanceFormat: "%dkm",
             .totalWorkoutCount: "总次数",
@@ -464,7 +518,11 @@ enum AppLocalization {
             .delete: "削除",
             .deleteRoute: "ルートを削除しますか？",
             .deleteRouteMessage: "削除すると元に戻せません。",
+            .debugProAccessLocked: "未解放",
+            .debugProAccessSimulation: "Pro 状態をシミュレート",
+            .debugProAccessUnlocked: "解放済み",
             .developerWebsite: "開発者サイト",
+            .developerTools: "開発者ツール",
             .disable: "オフにする",
             .distanceMetersFormat: "%.0f m",
             .enable: "オンにする",
@@ -507,6 +565,7 @@ enum AppLocalization {
             .light: "ライト",
             .more: "その他",
             .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
+            .movinnPro: "Movinn Pro",
             .newActivity: "新規",
             .newRoute: "新規ルート",
             .ok: "OK",
@@ -525,6 +584,26 @@ enum AppLocalization {
             .photoSaving: "画像を保存中",
             .photoBackgroundAdjustmentHint: "写真をダブルタップして調整",
             .photoMatching: "写真照合",
+            .privacyPolicy: "プライバシー",
+            .promotionBadge: "セール",
+            .proFeatureHeatmap: "ルートヒートマップ",
+            .proFeatureMoreComing: "今後の機能",
+            .proFeatureRouteMerge: "複数区間のルート結合",
+            .proPaywallSubtitle: "Movinn は高度な機能で運動をもっと快適にします。",
+            .proPaywallTitle: "高度な機能を解放",
+            .proProductUnavailable: "サブスクリプションを取得できません。あとでもう一度お試しください。",
+            .proPurchaseButton: "永久に解放",
+            .proPurchaseButtonPriceFormat: "永久に解放 %@",
+            .proPurchaseFailed: "購入を完了できませんでした。",
+            .proPurchaseLoading: "処理中",
+            .proPurchaseNotAllowed: "このデバイスでは App 内購入を利用できません。",
+            .proPurchasePending: "購入は確認待ちです。",
+            .proPurchaseSuccess: "Movinn Pro が有効です",
+            .proPurchaseUnverified: "購入を確認できませんでした。",
+            .proRestoreNoPurchase: "復元できる購入がありません",
+            .proRestoreSuccess: "購入を復元しました",
+            .proStatusActive: "高度な機能が有効です",
+            .proUnlockedTitle: "高度な機能を解放済み",
             .queryingLocation: "位置を検索中",
             .routeBook: "ルートブックとして使う",
             .routeBookExit: "ルートブックモードを終了しますか？",
@@ -550,6 +629,7 @@ enum AppLocalization {
             .routeMergeMultipleTitleFormat: "%@ ほか %d 区間",
             .routeMergeNoRoutes: "結合するルートを選択してください。",
             .routeMergeViewRoutes: "見に行く",
+            .restorePurchases: "購入を復元",
             .running: "ランニング",
             .satellite: "衛星",
             .share: "共有",
@@ -580,6 +660,7 @@ enum AppLocalization {
             .stillOpen: "それでも開く",
             .systemPhotos: "写真",
             .systemMapsNotFound: "システムマップが見つかりません",
+            .termsOfUse: "利用規約",
             .totalActivityCountFormat: "%d回",
             .totalDistanceFormat: "%dkm",
             .totalWorkoutCount: "合計回数",
@@ -646,7 +727,11 @@ enum AppLocalization {
             .delete: "삭제",
             .deleteRoute: "경로를 삭제할까요?",
             .deleteRouteMessage: "삭제하면 되돌릴 수 없습니다.",
+            .debugProAccessLocked: "잠금됨",
+            .debugProAccessSimulation: "Pro 상태 시뮬레이션",
+            .debugProAccessUnlocked: "잠금 해제됨",
             .developerWebsite: "개발자 웹사이트",
+            .developerTools: "개발자 도구",
             .disable: "끄기",
             .distanceMetersFormat: "%.0f m",
             .enable: "켜기",
@@ -689,6 +774,7 @@ enum AppLocalization {
             .light: "밝은",
             .more: "더보기",
             .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
+            .movinnPro: "Movinn Pro",
             .newActivity: "새 활동!",
             .newRoute: "새 경로!",
             .ok: "확인",
@@ -707,6 +793,26 @@ enum AppLocalization {
             .photoSaving: "이미지 저장 중",
             .photoBackgroundAdjustmentHint: "사진을 두 번 탭해 조정",
             .photoMatching: "사진 매칭",
+            .privacyPolicy: "개인정보",
+            .promotionBadge: "할인",
+            .proFeatureHeatmap: "경로 히트맵 보기",
+            .proFeatureMoreComing: "더 많은 기능 예정",
+            .proFeatureRouteMerge: "여러 구간 경로 병합",
+            .proPaywallSubtitle: "Movinn은 고급 기능으로 운동을 더 편하게 합니다.",
+            .proPaywallTitle: "고급 기능 잠금 해제",
+            .proProductUnavailable: "구독 상품을 불러올 수 없습니다. 나중에 다시 시도해 주세요.",
+            .proPurchaseButton: "영구 잠금 해제",
+            .proPurchaseButtonPriceFormat: "영구 잠금 해제 %@",
+            .proPurchaseFailed: "구매를 완료하지 못했습니다.",
+            .proPurchaseLoading: "처리 중",
+            .proPurchaseNotAllowed: "이 기기에서는 앱 내 구매를 사용할 수 없습니다.",
+            .proPurchasePending: "구매 확인 대기 중입니다.",
+            .proPurchaseSuccess: "Movinn Pro가 활성화되었습니다",
+            .proPurchaseUnverified: "구매를 확인하지 못했습니다.",
+            .proRestoreNoPurchase: "복원할 구매가 없습니다",
+            .proRestoreSuccess: "구매를 복원했습니다",
+            .proStatusActive: "고급 기능이 활성화되었습니다",
+            .proUnlockedTitle: "고급 기능 잠금 해제됨",
             .queryingLocation: "위치 조회 중",
             .routeBook: "루트북으로 사용",
             .routeBookExit: "루트북 모드를 종료할까요?",
@@ -732,6 +838,7 @@ enum AppLocalization {
             .routeMergeMultipleTitleFormat: "%@ 외 %d개 구간",
             .routeMergeNoRoutes: "병합할 경로를 선택해 주세요.",
             .routeMergeViewRoutes: "보러가기",
+            .restorePurchases: "구매 복원",
             .running: "달리기",
             .satellite: "위성",
             .share: "공유",
@@ -762,6 +869,7 @@ enum AppLocalization {
             .stillOpen: "그래도 열기",
             .systemPhotos: "사진",
             .systemMapsNotFound: "시스템 지도를 찾을 수 없음",
+            .termsOfUse: "이용 약관",
             .totalActivityCountFormat: "%d회",
             .totalDistanceFormat: "%dkm",
             .totalWorkoutCount: "총 횟수",
@@ -828,7 +936,11 @@ enum AppLocalization {
             .delete: "Delete",
             .deleteRoute: "Delete Route?",
             .deleteRouteMessage: "This cannot be undone.",
+            .debugProAccessLocked: "Locked",
+            .debugProAccessSimulation: "Simulate Pro Access",
+            .debugProAccessUnlocked: "Unlocked",
             .developerWebsite: "Developer Website",
+            .developerTools: "Developer Tools",
             .disable: "Disable",
             .distanceMetersFormat: "%.0f m",
             .enable: "Enable",
@@ -871,6 +983,7 @@ enum AppLocalization {
             .light: "Light",
             .more: "More",
             .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
+            .movinnPro: "Movinn Pro",
             .newActivity: "New!",
             .newRoute: "New Route!",
             .ok: "OK",
@@ -889,6 +1002,26 @@ enum AppLocalization {
             .photoSaving: "Saving Image",
             .photoBackgroundAdjustmentHint: "Double-tap photo to adjust",
             .photoMatching: "Photo Matching",
+            .privacyPolicy: "Privacy",
+            .promotionBadge: "SALE",
+            .proFeatureHeatmap: "View route heatmaps",
+            .proFeatureMoreComing: "More features soon",
+            .proFeatureRouteMerge: "Merge route segments",
+            .proPaywallSubtitle: "Movinn keeps advanced tools ready for easier workouts.",
+            .proPaywallTitle: "Unlock Pro Features",
+            .proProductUnavailable: "The subscription is unavailable. Please try again later.",
+            .proPurchaseButton: "Unlock Forever",
+            .proPurchaseButtonPriceFormat: "Unlock Forever %@",
+            .proPurchaseFailed: "Purchase could not be completed.",
+            .proPurchaseLoading: "Processing",
+            .proPurchaseNotAllowed: "In-app purchases are not allowed on this device.",
+            .proPurchasePending: "Purchase is pending confirmation.",
+            .proPurchaseSuccess: "Movinn Pro is active",
+            .proPurchaseUnverified: "Purchase could not be verified.",
+            .proRestoreNoPurchase: "No purchase to restore",
+            .proRestoreSuccess: "Purchase restored",
+            .proStatusActive: "Pro features unlocked",
+            .proUnlockedTitle: "Pro Features Unlocked",
             .queryingLocation: "Locating",
             .routeBook: "Use as Route Book",
             .routeBookExit: "Exit Route Book Mode?",
@@ -914,6 +1047,7 @@ enum AppLocalization {
             .routeMergeMultipleTitleFormat: "%@ and %d segments",
             .routeMergeNoRoutes: "Select the routes you want to merge.",
             .routeMergeViewRoutes: "View Routes",
+            .restorePurchases: "Restore Purchase",
             .running: "Running",
             .satellite: "Satellite",
             .share: "Share",
@@ -944,6 +1078,7 @@ enum AppLocalization {
             .stillOpen: "Open Anyway",
             .systemPhotos: "Photos",
             .systemMapsNotFound: "System Maps not found",
+            .termsOfUse: "Terms",
             .totalActivityCountFormat: "%d times",
             .totalDistanceFormat: "%dkm",
             .totalWorkoutCount: "Total Count",

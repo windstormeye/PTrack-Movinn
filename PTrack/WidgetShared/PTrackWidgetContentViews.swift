@@ -22,15 +22,18 @@ struct PTrackWeeklyProgressWidgetContentView: View {
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(PTrackWidgetPalette.muted.opacity(0.42), lineWidth: 11)
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(
-                    PTrackWidgetPalette.brand,
-                    style: StrokeStyle(lineWidth: 11, lineCap: .round, lineJoin: .round)
-                )
-                .rotationEffect(.degrees(-90))
+            ZStack {
+                Circle()
+                    .stroke(PTrackWidgetPalette.muted.opacity(0.42), lineWidth: 11)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(
+                        PTrackWidgetPalette.brand,
+                        style: StrokeStyle(lineWidth: 11, lineCap: .round, lineJoin: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+            }
+            .padding(5)
 
             VStack(spacing: 2) {
                 Text(compactDistanceText(snapshot.weekSummary.distanceMeters))

@@ -544,7 +544,7 @@ private struct WidgetSettingsPreviewHostView: View {
     var body: some View {
         GeometryReader { proxy in
             let size = fittedSize(in: proxy.size)
-            let cornerRadius = min(size.height * 0.22, 32)
+            let cornerRadius = min(size.height * 0.17, 26)
             content
                 .frame(width: size.width, height: size.height)
                 .background(WidgetSettingsPreviewBackgroundView())

@@ -388,6 +388,24 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func presentRouteMergeSelection() {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.ensureAccessResolved()
+            guard ProSubscriptionManager.shared.isProUser else {
+                modalPresentationHost.presentProPaywall { [weak self] in
+                    self?.presentRouteMergeSelectionUnlocked()
+                }
+                return
+            }
+
+            presentRouteMergeSelectionUnlocked()
+        }
+    }
+
+    private func presentRouteMergeSelectionUnlocked() {
         let initialMergeSourceWorkouts = providedMergeSourceWorkouts?.isEmpty == false
             ? providedMergeSourceWorkouts
             : nil

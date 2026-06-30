@@ -59,7 +59,7 @@ enum PTrackWidgetSettingsStore {
     }
 }
 
-enum PTrackWidgetLanguage: String {
+nonisolated enum PTrackWidgetLanguage: String {
     case chinese = "zh-Hans"
     case japanese = "ja"
     case korean = "ko"
@@ -85,7 +85,7 @@ enum PTrackWidgetLanguage: String {
     }
 }
 
-enum PTrackWidgetTextKey {
+nonisolated enum PTrackWidgetTextKey {
     case widgetSmallWeeklyGoal
     case widgetSmallWeeklyGoalDescription
     case widgetWeeklyChart
@@ -106,7 +106,7 @@ enum PTrackWidgetTextKey {
     case duration
 }
 
-struct PTrackWidgetText {
+nonisolated struct PTrackWidgetText {
     let language: PTrackWidgetLanguage
 
     init(languageRawValue _: String?) {
@@ -292,7 +292,7 @@ struct PTrackWidgetText {
     ]
 }
 
-struct PTrackWidgetSnapshot: Codable {
+nonisolated struct PTrackWidgetSnapshot: Codable {
     struct WeekSummary: Codable {
         let distanceMeters: Double
         let durationSeconds: TimeInterval

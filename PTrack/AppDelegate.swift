@@ -14,6 +14,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         RouteCollectionCloudSyncCoordinator.shared.startIfEnabled()
+        Task { @MainActor in
+            _ = ProSubscriptionManager.shared
+        }
         return true
     }
 
