@@ -30,7 +30,8 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let cacheLoadingIndicator = UIActivityIndicatorView(style: .medium)
     private let navigationTitleLabel = UILabel()
-    private lazy var moreBarButtonItem = makeMoreBarButtonItem()
+    private lazy var moreMenuButton = makeMoreMenuButton()
+    private lazy var moreBarButtonItem = UIBarButtonItem(customView: moreMenuButton)
     private lazy var navigationTitleView: UIStackView = {
         let stackView = UIStackView(arrangedSubviews: [navigationTitleLabel, cacheLoadingIndicator])
         stackView.axis = .horizontal
@@ -197,17 +198,27 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         navigationItem.titleView = navigationTitleView
     }
 
-    private func makeMoreBarButtonItem() -> UIBarButtonItem {
-        let barButtonItem = UIBarButtonItem(
-            image: UIImage(systemName: "ellipsis"),
-            menu: makeMoreMenu()
-        )
-        return barButtonItem
+    private func makeMoreMenuButton() -> UIButton {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: "ellipsis"), for: .normal)
+        button.tintColor = .label
+        button.accessibilityLabel = AppLocalization.text(.more)
+        button.showsMenuAsPrimaryAction = true
+        button.menu = makeMoreMenu()
+        button.frame = CGRect(x: 0, y: 0, width: 34, height: 34)
+        button.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        return button
     }
 
     private func updateNavigationRightBarButtonItems() {
-        moreBarButtonItem.menu = makeMoreMenu()
+        updateMoreMenuButtonMenu()
         navigationItem.rightBarButtonItem = moreBarButtonItem
+    }
+
+    private func updateMoreMenuButtonMenu() {
+        moreMenuButton.accessibilityLabel = AppLocalization.text(.more)
+        moreMenuButton.menu = makeMoreMenu()
     }
 
     private func setCachedWorkoutLoading(_ isLoading: Bool) {
@@ -565,7 +576,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 title: style.title,
                 state: style == selectedMapStyle ? .on : .off
             ) { [weak self] _ in
-                self?.applyMapStyle(style)
+                self?.applyMapStyleFromMenu(style)
             }
         }
 
@@ -605,7 +616,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 title: AppLocalization.text(.all),
                 state: selectedYear == nil ? .on : .off
             ) { [weak self] _ in
-                self?.applyYearFilter(nil)
+                self?.applyYearFilterFromMenu(nil)
             }
         ]
 
@@ -614,7 +625,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 title: "\(year)",
                 state: selectedYear == year ? .on : .off
             ) { [weak self] _ in
-                self?.applyYearFilter(year)
+                self?.applyYearFilterFromMenu(year)
             }
         })
 
@@ -639,10 +650,9 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             title: filter.title,
             image: nil,
             identifier: filterMenuActionIdentifier(for: filter),
-            attributes: [.keepsMenuPresented],
             state: selectedFilters.contains(filter) ? .on : .off
         ) { [weak self] _ in
-            self?.toggleFilter(filter)
+            self?.toggleFilterFromMenu(filter)
         }
         filterMenuActions[filter] = action
         return action
@@ -663,6 +673,20 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             if let action = filterMenuActions[filter] {
                 configureFilterMenuAction(action, for: filter)
             }
+        }
+    }
+
+    private func reopenMoreMenuAfterSubmenuSelection() {
+        updateMoreMenuButtonMenu()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            guard let self,
+                  !self.hasPreparedForPermanentDismissal,
+                  self.view.window != nil,
+                  self.moreMenuButton.window != nil else {
+                return
+            }
+
+            self.moreMenuButton.performPrimaryAction()
         }
     }
 
@@ -801,6 +825,11 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         scheduleCurrentRegionCacheReload()
     }
 
+    private func toggleFilterFromMenu(_ filter: HeatmapFilter) {
+        toggleFilter(filter)
+        reopenMoreMenuAfterSubmenuSelection()
+    }
+
     private func applyYearFilter(_ year: Int?) {
         guard selectedYear != year else {
             return
@@ -810,6 +839,11 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         cancelCachedWorkoutLoading()
         applySelectedFilters(resetCamera: true, preservesRenderedRoutes: false)
         scheduleCurrentRegionCacheReload()
+    }
+
+    private func applyYearFilterFromMenu(_ year: Int?) {
+        applyYearFilter(year)
+        reopenMoreMenuAfterSubmenuSelection()
     }
 
     private func cancelCachedWorkoutLoading() {
@@ -855,6 +889,11 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         AppMapStyle.apply(style, to: mapView)
         AppMapStyle.setToneOverlay(mapToneOverlay, visible: style == .appDefault, on: mapView)
         updateNavigationRightBarButtonItems()
+    }
+
+    private func applyMapStyleFromMenu(_ style: AppMapDisplayStyle) {
+        applyMapStyle(style)
+        reopenMoreMenuAfterSubmenuSelection()
     }
 
     private func fitMap(to routes: [HeatmapRoute], animated: Bool) {
