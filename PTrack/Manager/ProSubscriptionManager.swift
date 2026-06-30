@@ -56,7 +56,7 @@ final class ProSubscriptionManager {
 
     var isProUser: Bool {
         #if DEBUG
-        if let debugProAccessOverride {
+        if debugProAccessMockEnabled, let debugProAccessOverride {
             return debugProAccessOverride
         }
         #endif
@@ -71,6 +71,10 @@ final class ProSubscriptionManager {
     }
 
     #if DEBUG
+    var isDebugProAccessMockEnabled: Bool {
+        debugProAccessMockEnabled
+    }
+
     var debugProAccessOverrideValue: Bool? {
         debugProAccessOverride
     }
@@ -83,11 +87,13 @@ final class ProSubscriptionManager {
     private var transactionUpdatesTask: Task<Void, Never>?
     private var foregroundObserver: NSObjectProtocol?
     #if DEBUG
+    private var debugProAccessMockEnabled = false
     private var debugProAccessOverride: Bool?
     #endif
 
     private init() {
         #if DEBUG
+        debugProAccessMockEnabled = Self.loadDebugProAccessMockEnabled()
         debugProAccessOverride = Self.loadDebugProAccessOverride()
         #endif
 
@@ -154,7 +160,7 @@ final class ProSubscriptionManager {
 
         hasResolvedEntitlements = true
         updateProState(hasActiveProEntitlement, shouldNotify: !hadResolvedEntitlements)
-        return isProUser
+        return hasActiveProEntitlement
     }
 
     @discardableResult
@@ -168,7 +174,8 @@ final class ProSubscriptionManager {
                 throw ProSubscriptionError.purchaseFailed
             }
 
-            if isProUser {
+            if await refreshAccess() {
+                setDebugProAccessOverrideToUnlockedIfNeeded()
                 return ProSubscriptionPurchaseResult.alreadyActive
             }
 
@@ -188,11 +195,12 @@ final class ProSubscriptionManager {
                 }
 
                 await transaction.finish()
-                await refreshAccess()
-                guard isProUser else {
+                let hasActiveProEntitlement = await refreshAccess()
+                guard hasActiveProEntitlement else {
                     throw ProSubscriptionError.purchaseFailed
                 }
 
+                setDebugProAccessOverrideToUnlockedIfNeeded()
                 return ProSubscriptionPurchaseResult.purchased
             case .userCancelled:
                 return ProSubscriptionPurchaseResult.cancelled
@@ -228,6 +236,9 @@ final class ProSubscriptionManager {
 
             try await AppStore.sync()
             let isActive = await refreshAccess()
+            if isActive {
+                setDebugProAccessOverrideToUnlockedIfNeeded()
+            }
             return isActive
                 ? ProSubscriptionRestoreResult.restored
                 : ProSubscriptionRestoreResult.noActivePurchase
@@ -339,12 +350,29 @@ final class ProSubscriptionManager {
     private func postChangeNotification() {
         NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
     }
+
+    private func setDebugProAccessOverrideToUnlockedIfNeeded() {
+        #if DEBUG
+        guard debugProAccessOverride != nil else {
+            return
+        }
+
+        setDebugProAccessOverride(true)
+        #endif
+    }
 }
 
 #if DEBUG
 extension ProSubscriptionManager {
     private enum DebugDefaults {
+        static let proAccessMockEnabledKey = "studio.pj.PTrack.debug.proAccessMockEnabled"
         static let proAccessOverrideKey = "studio.pj.PTrack.debug.proAccessOverride"
+    }
+
+    func setDebugProAccessMockEnabled(_ isEnabled: Bool) {
+        debugProAccessMockEnabled = isEnabled
+        UserDefaults.standard.set(isEnabled, forKey: DebugDefaults.proAccessMockEnabledKey)
+        postChangeNotification()
     }
 
     func setDebugProAccessOverride(_ isProUser: Bool) {
@@ -352,6 +380,10 @@ extension ProSubscriptionManager {
         hasResolvedEntitlements = true
         UserDefaults.standard.set(isProUser, forKey: DebugDefaults.proAccessOverrideKey)
         postChangeNotification()
+    }
+
+    private static func loadDebugProAccessMockEnabled() -> Bool {
+        UserDefaults.standard.bool(forKey: DebugDefaults.proAccessMockEnabledKey)
     }
 
     private static func loadDebugProAccessOverride() -> Bool? {

@@ -55,6 +55,7 @@ enum AppTextKey: String {
     case deleteRoute
     case deleteRouteMessage
     case debugProAccessLocked
+    case debugProAccessMockEnabled
     case debugProAccessSimulation
     case debugProAccessUnlocked
     case developerWebsite
@@ -310,6 +311,7 @@ enum AppLocalization {
             .deleteRoute: "删除路线？",
             .deleteRouteMessage: "删除后无法恢复。",
             .debugProAccessLocked: "未解锁",
+            .debugProAccessMockEnabled: "启用 Pro 模拟",
             .debugProAccessSimulation: "模拟 Pro 功能解锁",
             .debugProAccessUnlocked: "已解锁",
             .developerWebsite: "开发者网站",
@@ -519,6 +521,7 @@ enum AppLocalization {
             .deleteRoute: "ルートを削除しますか？",
             .deleteRouteMessage: "削除すると元に戻せません。",
             .debugProAccessLocked: "未解放",
+            .debugProAccessMockEnabled: "Pro 模擬を有効化",
             .debugProAccessSimulation: "Pro 状態をシミュレート",
             .debugProAccessUnlocked: "解放済み",
             .developerWebsite: "開発者サイト",
@@ -728,6 +731,7 @@ enum AppLocalization {
             .deleteRoute: "경로를 삭제할까요?",
             .deleteRouteMessage: "삭제하면 되돌릴 수 없습니다.",
             .debugProAccessLocked: "잠금됨",
+            .debugProAccessMockEnabled: "Pro 시뮬레이션 켜기",
             .debugProAccessSimulation: "Pro 상태 시뮬레이션",
             .debugProAccessUnlocked: "잠금 해제됨",
             .developerWebsite: "개발자 웹사이트",
@@ -937,6 +941,7 @@ enum AppLocalization {
             .deleteRoute: "Delete Route?",
             .deleteRouteMessage: "This cannot be undone.",
             .debugProAccessLocked: "Locked",
+            .debugProAccessMockEnabled: "Enable Pro Mock",
             .debugProAccessSimulation: "Simulate Pro Access",
             .debugProAccessUnlocked: "Unlocked",
             .developerWebsite: "Developer Website",

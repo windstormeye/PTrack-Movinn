@@ -46,6 +46,7 @@ final class DeveloperToolsViewController: UITableViewController {
     }
 
     private let cellReuseIdentifier = "DeveloperToolCell"
+    private let proMockSwitch = UISwitch()
 
     init() {
         super.init(style: .insetGrouped)
@@ -69,6 +70,8 @@ final class DeveloperToolsViewController: UITableViewController {
     private func configureViews() {
         view.backgroundColor = .systemGroupedBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: cellReuseIdentifier)
+        proMockSwitch.onTintColor = AppColors.movinnGreen
+        proMockSwitch.addTarget(self, action: #selector(handleProMockSwitchValueChanged), for: .valueChanged)
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .done,
             target: self,
@@ -108,6 +111,11 @@ final class DeveloperToolsViewController: UITableViewController {
         dismiss(animated: true)
     }
 
+    @objc private func handleProMockSwitchValueChanged() {
+        ProSubscriptionManager.shared.setDebugProAccessMockEnabled(proMockSwitch.isOn)
+        tableView.reloadSections(IndexSet(integer: Section.proAccess.rawValue), with: .automatic)
+    }
+
     override func numberOfSections(in tableView: UITableView) -> Int {
         Section.allCases.count
     }
@@ -115,7 +123,7 @@ final class DeveloperToolsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         switch Section.allCases[section] {
         case .proAccess:
-            return ProAccessOption.allCases.count
+            return 1 + ProAccessOption.allCases.count
         }
     }
 
@@ -133,13 +141,35 @@ final class DeveloperToolsViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: cellReuseIdentifier, for: indexPath)
         switch Section.allCases[indexPath.section] {
         case .proAccess:
-            let option = ProAccessOption.allCases[indexPath.row]
+            if indexPath.row == 0 {
+                var content = cell.defaultContentConfiguration()
+                content.text = AppLocalization.text(.debugProAccessMockEnabled)
+                content.image = UIImage(systemName: "switch.2")
+                content.imageProperties.tintColor = AppColors.movinnGreen
+                cell.contentConfiguration = content
+                cell.accessoryType = .none
+                cell.selectionStyle = .default
+                proMockSwitch.isOn = ProSubscriptionManager.shared.isDebugProAccessMockEnabled
+                cell.accessoryView = proMockSwitch
+                cell.tintColor = AppColors.movinnGreen
+                return cell
+            }
+
+            let option = ProAccessOption.allCases[indexPath.row - 1]
+            let isMockEnabled = ProSubscriptionManager.shared.isDebugProAccessMockEnabled
             var content = cell.defaultContentConfiguration()
             content.text = AppLocalization.text(option.titleKey)
             content.image = UIImage(systemName: option.iconName)
-            content.imageProperties.tintColor = option.isProUser ? AppColors.movinnGreen : .secondaryLabel
+            content.textProperties.color = isMockEnabled ? .label : .secondaryLabel
+            content.imageProperties.tintColor = isMockEnabled
+                ? (option.isProUser ? AppColors.movinnGreen : .secondaryLabel)
+                : .tertiaryLabel
             cell.contentConfiguration = content
-            cell.accessoryType = ProSubscriptionManager.shared.isProUser == option.isProUser ? .checkmark : .none
+            cell.accessoryView = nil
+            cell.accessoryType = isMockEnabled && ProSubscriptionManager.shared.debugProAccessOverrideValue == option.isProUser
+                ? .checkmark
+                : .none
+            cell.selectionStyle = isMockEnabled ? .default : .none
             cell.tintColor = AppColors.movinnGreen
         }
         return cell
@@ -149,7 +179,17 @@ final class DeveloperToolsViewController: UITableViewController {
         tableView.deselectRow(at: indexPath, animated: true)
         switch Section.allCases[indexPath.section] {
         case .proAccess:
-            let option = ProAccessOption.allCases[indexPath.row]
+            if indexPath.row == 0 {
+                proMockSwitch.setOn(!proMockSwitch.isOn, animated: true)
+                handleProMockSwitchValueChanged()
+                return
+            }
+
+            guard ProSubscriptionManager.shared.isDebugProAccessMockEnabled else {
+                return
+            }
+
+            let option = ProAccessOption.allCases[indexPath.row - 1]
             ProSubscriptionManager.shared.setDebugProAccessOverride(option.isProUser)
             tableView.reloadSections(IndexSet(integer: indexPath.section), with: .automatic)
         }
