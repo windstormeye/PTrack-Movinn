@@ -72,7 +72,6 @@ class ViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let moreButton = UIButton(type: .system)
     private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
-    private var totalDistanceTrailingToLoadingConstraint: Constraint?
     private var totalDistanceTrailingToMoreConstraint: Constraint?
     private let routeBookLocateButton = UIButton(type: .system)
     private let routeBookPanelSheetViewController = RouteBookPanelSheetViewController()
@@ -167,6 +166,7 @@ class ViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateFullScreenInsets()
+        positionLoadingIndicatorNextToTotalDistanceText()
     }
 
     override var preferredStatusBarStyle: UIStatusBarStyle {
@@ -490,14 +490,8 @@ class ViewController: UIViewController {
 
         totalDistanceLabel.snp.makeConstraints { make in
             make.leading.equalTo(titleAccentLabel.snp.trailing).offset(10)
-            totalDistanceTrailingToLoadingConstraint = make.trailing.lessThanOrEqualTo(loadingIndicator.snp.leading).offset(-8).constraint
             totalDistanceTrailingToMoreConstraint = make.trailing.lessThanOrEqualTo(moreButton.snp.leading).offset(-10).constraint
             make.lastBaseline.equalTo(titleLabel.snp.lastBaseline).offset(-3)
-        }
-
-        loadingIndicator.snp.makeConstraints { make in
-            make.centerY.equalTo(totalDistanceLabel)
-            make.trailing.equalTo(moreButton.snp.leading).offset(-10)
         }
 
         moreButton.snp.makeConstraints { make in
@@ -833,6 +827,8 @@ class ViewController: UIViewController {
 
     private func configureLoadingIndicator() {
         loadingIndicator.hidesWhenStopped = true
+        loadingIndicator.translatesAutoresizingMaskIntoConstraints = true
+        loadingIndicator.sizeToFit()
         updateHeaderReadAuthorizationState()
     }
 
@@ -935,14 +931,36 @@ class ViewController: UIViewController {
             && !isRouteBookModeActive
 
         if shouldShowLoadingIndicator {
-            totalDistanceTrailingToMoreConstraint?.deactivate()
-            totalDistanceTrailingToLoadingConstraint?.activate()
+            totalDistanceTrailingToMoreConstraint?.activate()
             loadingIndicator.startAnimating()
+            positionLoadingIndicatorNextToTotalDistanceText()
         } else {
             loadingIndicator.stopAnimating()
-            totalDistanceTrailingToLoadingConstraint?.deactivate()
             totalDistanceTrailingToMoreConstraint?.activate()
         }
+    }
+
+    private func positionLoadingIndicatorNextToTotalDistanceText() {
+        guard loadingIndicator.isAnimating,
+              !totalDistanceLabel.isHidden,
+              !totalDistanceLabel.frame.isEmpty else {
+            return
+        }
+
+        headerView.layoutIfNeeded()
+        loadingIndicator.sizeToFit()
+
+        let text = totalDistanceLabel.text ?? ""
+        let textWidth = ceil((text as NSString).size(withAttributes: [
+            .font: totalDistanceLabel.font ?? UIFont.systemFont(ofSize: 11, weight: .medium)
+        ]).width)
+        let spacing: CGFloat = 5
+        let indicatorSize = loadingIndicator.bounds.size
+        let desiredX = totalDistanceLabel.frame.minX + textWidth + spacing
+        let maxX = moreButton.frame.minX - 10 - indicatorSize.width
+        let x = max(totalDistanceLabel.frame.minX, min(desiredX, maxX))
+        let y = totalDistanceLabel.frame.midY - indicatorSize.height / 2
+        loadingIndicator.frame = CGRect(origin: CGPoint(x: x, y: y), size: indicatorSize)
     }
 
     private func updateFullScreenInsets(force: Bool = false) {
