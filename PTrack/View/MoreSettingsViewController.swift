@@ -30,7 +30,7 @@ final class MoreSettingsViewController: UIViewController {
         var items: [SettingsItem] {
             switch self {
             case .uiSettings:
-                var items: [SettingsItem] = [.appLanguage, .appearanceSettings]
+                var items: [SettingsItem] = [.appLanguage, .appearanceSettings, .widgets]
                 if RouteCollectionCloudSyncSettings.isFeatureAvailable {
                     items.append(.iCloudRouteSync)
                 }
@@ -46,6 +46,7 @@ final class MoreSettingsViewController: UIViewController {
     private enum SettingsItem {
         case appLanguage
         case appearanceSettings
+        case widgets
         case iCloudRouteSync
         case appleHealth
         case strava
@@ -58,6 +59,8 @@ final class MoreSettingsViewController: UIViewController {
                 return .appLanguage
             case .appearanceSettings:
                 return .appearanceSettings
+            case .widgets:
+                return .widgets
             case .iCloudRouteSync:
                 return .iCloudRouteSync
             case .appleHealth:
@@ -77,6 +80,8 @@ final class MoreSettingsViewController: UIViewController {
                 return "translate"
             case .appearanceSettings:
                 return "circle.lefthalf.filled"
+            case .widgets:
+                return "square.grid.2x2"
             case .iCloudRouteSync:
                 return "icloud"
             case .appleHealth:
@@ -297,7 +302,7 @@ final class MoreSettingsViewController: UIViewController {
             }
         case .iCloudRouteSync:
             return RouteCollectionCloudSyncSettings.isEnabled ? .connected : nil
-        case .appLanguage, .appearanceSettings, .developerWebsite:
+        case .appLanguage, .appearanceSettings, .widgets, .developerWebsite:
             return nil
         }
     }
@@ -355,6 +360,11 @@ final class MoreSettingsViewController: UIViewController {
         }
 
         present(alertController, animated: true)
+    }
+
+    private func showWidgetSettings() {
+        let viewController = WidgetSettingsViewController()
+        navigationController?.pushViewController(viewController, animated: true)
     }
 
     private func configurePopoverPresentation(
@@ -710,7 +720,7 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
                 title: AppLocalization.text(item.titleKey),
                 indicatorColor: indicatorColor
             )
-        case .appLanguage, .appearanceSettings, .developerWebsite:
+        case .appLanguage, .appearanceSettings, .widgets, .developerWebsite:
             cell.configureSystemIcon(
                 iconName: item.iconName,
                 title: AppLocalization.text(item.titleKey),
@@ -749,6 +759,8 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
             presentLanguagePicker(from: indexPath)
         case .appearanceSettings:
             presentAppearancePicker(from: indexPath)
+        case .widgets:
+            showWidgetSettings()
         case .iCloudRouteSync:
             handleRouteCollectionCloudSyncSelection()
         case .appleHealth:

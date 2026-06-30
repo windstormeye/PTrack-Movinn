@@ -187,6 +187,17 @@ enum AppTextKey: String {
     case virtualRunning
     case walking
     case walkingHiking
+    case widgets
+    case widgetSmallWeeklyGoal
+    case widgetWeeklyChart
+    case widgetMonthlyCalendar
+    case widgetAnnualTrajectory
+    case widgetLocationMaps
+    case widgetWorldMap
+    case widgetChinaMap
+    case widgetChinaCityWorkoutFormat
+    case widgetWeeklyGoalDistance
+    case kilometers
     case workoutStart
     case workoutEnd
     case endNotFound
@@ -404,6 +415,17 @@ enum AppLocalization {
             .virtualRunning: "虚拟跑步",
             .walking: "行走",
             .walkingHiking: "行走/徒步",
+            .widgets: "小组件",
+            .widgetSmallWeeklyGoal: "本周圆环数据",
+            .widgetWeeklyChart: "本周柱状图",
+            .widgetMonthlyCalendar: "月度日历",
+            .widgetAnnualTrajectory: "年度轨迹",
+            .widgetLocationMaps: "运动地图",
+            .widgetWorldMap: "世界地图",
+            .widgetChinaMap: "中国地图",
+            .widgetChinaCityWorkoutFormat: "去过 %d/%d 个城市运动",
+            .widgetWeeklyGoalDistance: "每周目标距离",
+            .kilometers: "公里",
             .workoutStart: "运动起点",
             .workoutEnd: "运动终点",
             .endNotFound: "未找到终点",
@@ -575,6 +597,17 @@ enum AppLocalization {
             .virtualRunning: "バーチャルランニング",
             .walking: "ウォーキング",
             .walkingHiking: "ウォーキング/ハイキング",
+            .widgets: "ウィジェット",
+            .widgetSmallWeeklyGoal: "今週のリングデータ",
+            .widgetWeeklyChart: "今週の棒グラフ",
+            .widgetMonthlyCalendar: "月間カレンダー",
+            .widgetAnnualTrajectory: "年間トレンド",
+            .widgetLocationMaps: "運動マップ",
+            .widgetWorldMap: "世界地図",
+            .widgetChinaMap: "中国地図",
+            .widgetChinaCityWorkoutFormat: "%d/%d都市で運動",
+            .widgetWeeklyGoalDistance: "週間目標距離",
+            .kilometers: "km",
             .workoutStart: "ワークアウト開始地点",
             .workoutEnd: "ワークアウト終了地点",
             .endNotFound: "ゴール地点が見つかりません",
@@ -746,6 +779,17 @@ enum AppLocalization {
             .virtualRunning: "가상 달리기",
             .walking: "걷기",
             .walkingHiking: "걷기/하이킹",
+            .widgets: "위젯",
+            .widgetSmallWeeklyGoal: "이번 주 링 데이터",
+            .widgetWeeklyChart: "이번 주 막대 차트",
+            .widgetMonthlyCalendar: "월간 달력",
+            .widgetAnnualTrajectory: "연간 궤적",
+            .widgetLocationMaps: "운동 지도",
+            .widgetWorldMap: "세계 지도",
+            .widgetChinaMap: "중국 지도",
+            .widgetChinaCityWorkoutFormat: "%d/%d개 도시에서 운동",
+            .widgetWeeklyGoalDistance: "주간 목표 거리",
+            .kilometers: "km",
             .workoutStart: "운동 시작점",
             .workoutEnd: "운동 종료점",
             .endNotFound: "종료점을 찾을 수 없음",
@@ -917,6 +961,17 @@ enum AppLocalization {
             .virtualRunning: "Virtual Running",
             .walking: "Walking",
             .walkingHiking: "Walking/Hiking",
+            .widgets: "Widgets",
+            .widgetSmallWeeklyGoal: "Weekly Ring Data",
+            .widgetWeeklyChart: "Weekly Bar Chart",
+            .widgetMonthlyCalendar: "Monthly Calendar",
+            .widgetAnnualTrajectory: "Annual Trace",
+            .widgetLocationMaps: "Workout Maps",
+            .widgetWorldMap: "World Map",
+            .widgetChinaMap: "China Map",
+            .widgetChinaCityWorkoutFormat: "Worked out in %d/%d cities",
+            .widgetWeeklyGoalDistance: "Weekly Goal Distance",
+            .kilometers: "km",
             .workoutStart: "Workout Start",
             .workoutEnd: "Workout End",
             .endNotFound: "End not found",

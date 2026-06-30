@@ -1364,7 +1364,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     var mapRouteDirectionIndicatorColor: UIColor {
-        selectedMapStyle == .dark ? .black : .white
+        .black
     }
 
     private func refreshRouteOverlayStrokeColor() {

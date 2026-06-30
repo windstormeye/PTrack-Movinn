@@ -72,6 +72,8 @@ class ViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let moreButton = UIButton(type: .system)
     private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
+    private var totalDistanceTrailingToLoadingConstraint: Constraint?
+    private var totalDistanceTrailingToMoreConstraint: Constraint?
     private let routeBookLocateButton = UIButton(type: .system)
     private let routeBookPanelSheetViewController = RouteBookPanelSheetViewController()
     private let routeBookPanelView = UIVisualEffectView(effect: ViewController.makeRouteBookPanelGlassEffect())
@@ -488,14 +490,14 @@ class ViewController: UIViewController {
 
         totalDistanceLabel.snp.makeConstraints { make in
             make.leading.equalTo(titleAccentLabel.snp.trailing).offset(10)
-            make.trailing.lessThanOrEqualTo(loadingIndicator.snp.leading).offset(-8)
+            totalDistanceTrailingToLoadingConstraint = make.trailing.lessThanOrEqualTo(loadingIndicator.snp.leading).offset(-8).constraint
+            totalDistanceTrailingToMoreConstraint = make.trailing.lessThanOrEqualTo(moreButton.snp.leading).offset(-10).constraint
             make.lastBaseline.equalTo(titleLabel.snp.lastBaseline).offset(-3)
         }
 
         loadingIndicator.snp.makeConstraints { make in
-            make.leading.equalTo(totalDistanceLabel.snp.trailing).offset(8)
             make.centerY.equalTo(totalDistanceLabel)
-            make.trailing.lessThanOrEqualTo(moreButton.snp.leading).offset(-10)
+            make.trailing.equalTo(moreButton.snp.leading).offset(-10)
         }
 
         moreButton.snp.makeConstraints { make in
@@ -928,12 +930,18 @@ class ViewController: UIViewController {
     }
 
     private func updateLoadingIndicatorVisibility() {
-        if (activeLoadingOperationCount > 0 || isNewDataSyncInProgress),
-           hasReadableDataSourceAuthorization,
-           !isRouteBookModeActive {
+        let shouldShowLoadingIndicator = (activeLoadingOperationCount > 0 || isNewDataSyncInProgress)
+            && hasReadableDataSourceAuthorization
+            && !isRouteBookModeActive
+
+        if shouldShowLoadingIndicator {
+            totalDistanceTrailingToMoreConstraint?.deactivate()
+            totalDistanceTrailingToLoadingConstraint?.activate()
             loadingIndicator.startAnimating()
         } else {
             loadingIndicator.stopAnimating()
+            totalDistanceTrailingToLoadingConstraint?.deactivate()
+            totalDistanceTrailingToMoreConstraint?.activate()
         }
     }
 
@@ -1322,6 +1330,7 @@ class ViewController: UIViewController {
         collectionView.reloadData()
         prewarmInitialRouteSources()
         restorePersistedRouteBookModeIfNeeded()
+        refreshWidgetSnapshot()
         if shouldBackfillCacheSummary {
             cacheSaveQueue.async { [cacheStore = self.cacheStore, workouts] in
                 cacheStore.saveSummary(for: workouts)
@@ -1841,6 +1850,8 @@ class ViewController: UIViewController {
                         dirtyWorkoutIDs: dirtyWorkoutIDs,
                         deletedWorkoutIDs: deletedWorkoutIDs
                     )
+                } else {
+                    self.refreshWidgetSnapshot()
                 }
 
                 let shouldScheduleNextSave = self.needsCacheSaveAfterCurrentSave
@@ -1867,6 +1878,10 @@ class ViewController: UIViewController {
             dirtyCacheWorkoutIDs.remove(workoutID)
             deletedCacheWorkoutIDs.insert(workoutID)
         }
+    }
+
+    private func refreshWidgetSnapshot() {
+        PTrackWidgetSnapshotStore.refresh(with: workouts)
     }
 
     private func prewarmInitialRouteSources() {
@@ -2731,8 +2746,8 @@ extension ViewController: MKMapViewDelegate {
 
         let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
         renderer.strokeColor = .black
-        renderer.directionIndicatorColor = .white
-        renderer.lineWidth = 3
+        renderer.directionIndicatorColor = .black
+        renderer.lineWidth = 2.4
         renderer.lineJoin = .round
         renderer.lineCap = .round
         return renderer

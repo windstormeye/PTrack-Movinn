@@ -51,6 +51,7 @@ struct CoordinateRegionMapFeature {
     let displayName: String
     let rings: [[CLLocationCoordinate2D]]
     let bounds: CoordinateRegionMapBounds
+    let isCity: Bool
 }
 
 final class CoordinateRegionManager {
@@ -624,11 +625,21 @@ private struct GeoBoundaryFeature {
             return nil
         }
 
+        let provinceCode = adcode.map { adcode in
+            adcode / 10_000 * 10_000
+        } ?? parentAdcode.map { parentAdcode in
+            parentAdcode / 10_000 * 10_000
+        }
+        let directAdminProvinceCodes: Set<Int> = [110000, 120000, 310000, 500000]
+        let isDirectAdminProvince = level == .province
+            && provinceCode.map { directAdminProvinceCodes.contains($0) } == true
+
         return CoordinateRegionMapFeature(
             identifiers: identifiers,
             displayName: localizedName ?? name,
             rings: rings,
-            bounds: boundingBox.mapBounds
+            bounds: boundingBox.mapBounds,
+            isCity: level == .city || isDirectAdminProvince
         )
     }
 
