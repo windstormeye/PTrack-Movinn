@@ -75,7 +75,6 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
             return
         }
 
-        let browser = RouteMediaBrowserViewController(mediaItems: routeMediaItems, initialIndex: index)
-        navigationController?.pushViewController(browser, animated: true)
+        showRouteMediaBrowser(at: index)
     }
 }

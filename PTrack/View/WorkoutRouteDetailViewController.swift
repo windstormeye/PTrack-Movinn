@@ -496,6 +496,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
+    func showRouteMediaBrowser(at index: Int) {
+        guard routeMediaItems.indices.contains(index) else {
+            return
+        }
+
+        let mediaItems = routeMediaItems
+        hidePanelSheetForImmediateNavigation { [weak self] in
+            let browser = RouteMediaBrowserViewController(mediaItems: mediaItems, initialIndex: index)
+            self?.navigationController?.pushViewController(browser, animated: true)
+        }
+    }
+
     private func refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: Bool = true) {
         guard presentationMode == .workout else {
             navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
@@ -1201,6 +1213,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
         panelSheetViewController.dismiss(animated: true) { [weak self] in
             self?.suppressPanelSheetPresentation = false
             completion()
+        }
+    }
+
+    private func hidePanelSheetForImmediateNavigation(_ navigate: @escaping () -> Void) {
+        guard presentedViewController === panelSheetViewController else {
+            suppressPanelSheetPresentation = false
+            navigate()
+            return
+        }
+
+        suppressPanelSheetPresentation = true
+        hasPresentedPanelSheet = false
+        panelSheetViewController.dismiss(animated: false) { [weak self] in
+            self?.suppressPanelSheetPresentation = false
+            navigate()
         }
     }
 

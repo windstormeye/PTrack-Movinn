@@ -63,6 +63,14 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         return gesture
     }()
 
+    private lazy var imageSingleTapGesture: UITapGestureRecognizer = {
+        let gesture = UITapGestureRecognizer(target: self, action: #selector(handleImageSingleTap))
+        gesture.numberOfTapsRequired = 1
+        gesture.cancelsTouchesInView = false
+        gesture.delegate = self
+        return gesture
+    }()
+
     private lazy var livePhotoTapGesture: UITapGestureRecognizer = {
         let gesture = UITapGestureRecognizer(target: self, action: #selector(playLivePhoto))
         gesture.delegate = self
@@ -233,6 +241,8 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         playButton.isHidden = true
         playButton.addTarget(self, action: #selector(toggleVideoPlayback), for: .touchUpInside)
 
+        imageSingleTapGesture.require(toFail: imageDoubleTapGesture)
+        imageScrollView.addGestureRecognizer(imageSingleTapGesture)
         imageScrollView.addGestureRecognizer(imageDoubleTapGesture)
         livePhotoView.addGestureRecognizer(livePhotoTapGesture)
         videoContainerView.addGestureRecognizer(videoTapGesture)
@@ -507,6 +517,14 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         imageScrollView.zoom(to: zoomRect, animated: true)
     }
 
+    @objc private func handleImageSingleTap() {
+        guard !imageScrollView.isHidden else {
+            return
+        }
+
+        delegate?.routeMediaBrowserCellDidRequestDismiss(self)
+    }
+
     @objc private func handleBlankAreaTap() {
         delegate?.routeMediaBrowserCellDidRequestDismiss(self)
     }
@@ -762,7 +780,7 @@ extension RouteMediaBrowserCell: UIScrollViewDelegate, UIGestureRecognizerDelega
             return isBlackArea(at: point)
         }
 
-        if gestureRecognizer === imageDoubleTapGesture {
+        if gestureRecognizer === imageSingleTapGesture || gestureRecognizer === imageDoubleTapGesture {
             guard let contentRect = displayedImageContentRect() else {
                 return false
             }
