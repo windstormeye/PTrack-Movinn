@@ -1363,6 +1363,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         selectedMapStyle == .dark ? .white : .black
     }
 
+    var mapRouteDirectionIndicatorColor: UIColor {
+        selectedMapStyle == .dark ? .black : .white
+    }
+
     private func refreshRouteOverlayStrokeColor() {
         guard let routePolyline,
               let renderer = mapView.renderer(for: routePolyline) as? MKPolylineRenderer else {
@@ -1370,6 +1374,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         renderer.strokeColor = mapRouteStrokeColor
+        if let directionRenderer = renderer as? RouteDirectionPolylineRenderer {
+            directionRenderer.directionIndicatorColor = mapRouteDirectionIndicatorColor
+        }
         renderer.setNeedsDisplay()
     }
 

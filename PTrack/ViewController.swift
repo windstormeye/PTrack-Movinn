@@ -2729,8 +2729,9 @@ extension ViewController: MKMapViewDelegate {
             return MKOverlayRenderer(overlay: overlay)
         }
 
-        let renderer = MKPolylineRenderer(polyline: polyline)
+        let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
         renderer.strokeColor = .black
+        renderer.directionIndicatorColor = .white
         renderer.lineWidth = 3
         renderer.lineJoin = .round
         renderer.lineCap = .round

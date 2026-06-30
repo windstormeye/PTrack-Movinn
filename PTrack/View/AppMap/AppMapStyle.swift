@@ -111,3 +111,130 @@ enum AppMapStyle {
         }
     }
 }
+
+final class RouteDirectionPolylineRenderer: MKPolylineRenderer {
+    var directionIndicatorColor: UIColor = .white
+    var directionIndicatorSpacing: CGFloat = 92
+    var directionIndicatorLength: CGFloat = 10
+    var directionIndicatorWidth: CGFloat = 8
+    var minimumRouteLengthForIndicators: CGFloat = 64
+    var maximumIndicatorCount = 180
+
+    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
+        super.draw(mapRect, zoomScale: zoomScale, in: context)
+        drawDirectionIndicators(zoomScale: zoomScale, in: context)
+    }
+
+    private func drawDirectionIndicators(zoomScale: MKZoomScale, in context: CGContext) {
+        guard polyline.pointCount > 1, zoomScale > 0 else {
+            return
+        }
+
+        let points = routeDrawingPoints()
+        let routeLength = totalLength(for: points)
+        let screenRouteLength = routeLength * zoomScale
+        guard screenRouteLength >= minimumRouteLengthForIndicators else {
+            return
+        }
+
+        let indicatorCount = min(
+            maximumIndicatorCount,
+            max(1, Int(screenRouteLength / directionIndicatorSpacing))
+        )
+        let interval = routeLength / CGFloat(indicatorCount + 1)
+        guard interval.isFinite, interval > 0 else {
+            return
+        }
+
+        context.saveGState()
+        context.setAllowsAntialiasing(true)
+        context.setShouldAntialias(true)
+        context.setFillColor(directionIndicatorColor.cgColor)
+
+        var nextDistance = interval
+        var traversedDistance: CGFloat = 0
+        var drawnCount = 0
+
+        for index in 0..<(points.count - 1) {
+            let startPoint = points[index]
+            let endPoint = points[index + 1]
+            let deltaX = endPoint.x - startPoint.x
+            let deltaY = endPoint.y - startPoint.y
+            let segmentLength = hypot(deltaX, deltaY)
+            guard segmentLength.isFinite, segmentLength > 0 else {
+                continue
+            }
+
+            while nextDistance <= traversedDistance + segmentLength, drawnCount < indicatorCount {
+                let distanceInSegment = nextDistance - traversedDistance
+                let progress = distanceInSegment / segmentLength
+                let tip = CGPoint(
+                    x: startPoint.x + deltaX * progress,
+                    y: startPoint.y + deltaY * progress
+                )
+                let unit = CGVector(dx: deltaX / segmentLength, dy: deltaY / segmentLength)
+                drawIndicator(at: tip, direction: unit, zoomScale: zoomScale, in: context)
+
+                drawnCount += 1
+                nextDistance += interval
+            }
+
+            traversedDistance += segmentLength
+        }
+
+        context.restoreGState()
+    }
+
+    private func routeDrawingPoints() -> [CGPoint] {
+        let mapPoints = polyline.points()
+        return (0..<polyline.pointCount).map { index in
+            point(for: mapPoints[index])
+        }
+    }
+
+    private func totalLength(for points: [CGPoint]) -> CGFloat {
+        guard points.count > 1 else {
+            return 0
+        }
+
+        return (0..<(points.count - 1)).reduce(CGFloat(0)) { length, index in
+            let startPoint = points[index]
+            let endPoint = points[index + 1]
+            return length + hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y)
+        }
+    }
+
+    private func drawIndicator(
+        at tip: CGPoint,
+        direction: CGVector,
+        zoomScale: MKZoomScale,
+        in context: CGContext
+    ) {
+        let length = directionIndicatorLength / zoomScale
+        let halfWidth = directionIndicatorWidth / zoomScale / 2
+        guard length.isFinite, halfWidth.isFinite, length > 0, halfWidth > 0 else {
+            return
+        }
+
+        let tailCenter = CGPoint(
+            x: tip.x - direction.dx * length,
+            y: tip.y - direction.dy * length
+        )
+        let perpendicular = CGVector(dx: -direction.dy, dy: direction.dx)
+        let leftPoint = CGPoint(
+            x: tailCenter.x + perpendicular.dx * halfWidth,
+            y: tailCenter.y + perpendicular.dy * halfWidth
+        )
+        let rightPoint = CGPoint(
+            x: tailCenter.x - perpendicular.dx * halfWidth,
+            y: tailCenter.y - perpendicular.dy * halfWidth
+        )
+
+        context.beginPath()
+        context.move(to: tip)
+        context.addLine(to: leftPoint)
+        context.addLine(to: rightPoint)
+        context.closePath()
+        context.fillPath()
+    }
+}
