@@ -1092,10 +1092,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
             metricsSpacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
             metricsSpacerView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             distanceLabel.setContentHuggingPriority(.required, for: .horizontal)
-            durationLabel.setContentHuggingPriority(.required, for: .horizontal)
             metricsStackView.addArrangedSubview(distanceLabel)
             metricsStackView.addArrangedSubview(metricsSpacerView)
-            metricsStackView.addArrangedSubview(durationLabel)
         } else {
             metricsStackView.addArrangedSubview(distanceLabel)
             metricsStackView.addArrangedSubview(durationLabel)
@@ -1765,6 +1763,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         distanceLabel.text = panelDistanceText()
         distanceLabel.isHidden = distanceLabel.text == nil
+
+        guard presentationMode != .routeCollection else {
+            durationLabel.text = nil
+            durationLabel.isHidden = true
+            return
+        }
 
         durationLabel.text = panelDurationText()
         durationLabel.isHidden = durationLabel.text == nil

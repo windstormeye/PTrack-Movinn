@@ -18,6 +18,11 @@ class ViewController: UIViewController {
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
+    private enum RouteBookPanelDetent {
+        case minimum
+        case medium
+    }
+
     private let store = HealthWorkoutStore()
     private let cacheStore = WorkoutCacheStore()
     let newWorkoutBadgeStore = NewWorkoutBadgeStore()
@@ -68,6 +73,12 @@ class ViewController: UIViewController {
     private let moreButton = UIButton(type: .system)
     private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
     private let routeBookLocateButton = UIButton(type: .system)
+    private let routeBookPanelSheetViewController = RouteBookPanelSheetViewController()
+    private let routeBookPanelView = UIVisualEffectView(effect: ViewController.makeRouteBookPanelGlassEffect())
+    private let routeBookPanelMetricsStackView = UIStackView()
+    private let routeBookPanelDistanceLabel = UILabel()
+    private let routeBookPanelDetailStackView = UIStackView()
+    private let routeBookReplayRulerView = WorkoutRouteReplayRulerView()
     private let emptyDataSourceView = HomeDataSourceEmptyView()
     private let defaultColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
@@ -81,9 +92,25 @@ class ViewController: UIViewController {
     private let homePreviewCoordinateLimit = 240
     private let stravaIncrementalLookback: TimeInterval = 7 * 24 * 60 * 60
     private let pullRefreshTriggerDistance: CGFloat = 86
+    private let routeBookPanelHeight: CGFloat = 68
+    private let routeBookPanelDetailContentTopSpacing: CGFloat = 24
+    private let routeBookReplayRulerViewHeight: CGFloat = 98
+    private let routeBookPanelMediumBottomPadding: CGFloat = 18
+    private let routeBookPanelPrimaryContentSize: CGFloat = 28
+    private let routeBookPanelExpandedPrimaryContentTop: CGFloat = 33
+    private let routeBookPanelMinimumPrimaryContentScale: CGFloat = 0.88
+    private let routeBookLocateButtonPanelSpacing: CGFloat = 18
+    private let routeBookMaximumElevationSampleCount = 120
+    private var hasPresentedRouteBookPanelSheet = false
+    private var selectedRouteBookPanelDetent: RouteBookPanelDetent = .minimum
+    private var routeBookPanelMetricsCenterYConstraint: Constraint?
+    private var routeBookLocateButtonBottomConstraint: Constraint?
+    private var routeBookPresentedPanelHeight: CGFloat = 68
     private var isRouteBookModeActive = false
     private var routeBookWorkout: TrackedWorkout?
     private var routeBookPolyline: MKPolyline?
+    private var routeBookReplayCoordinates: [CLLocationCoordinate2D] = []
+    private var routeBookReplayDistances: [CLLocationDistance] = []
     private var shouldCenterRouteBookOnNextLocation = false
     private var routeBookLastLocation: CLLocation?
     private var routeBookLastHeadingDegrees: CLLocationDirection?
@@ -95,6 +122,8 @@ class ViewController: UIViewController {
         pendingFlushWorkItem?.cancel()
         pendingCacheSaveWorkItem?.cancel()
         stopRouteBookLocationAndHeadingUpdates()
+        routeBookPanelSheetViewController.sheetPresentationController?.delegate = nil
+        routeBookPanelSheetViewController.onViewDidLayout = nil
         routeBookLocationManager.delegate = nil
         routeBookMapView.delegate = nil
         routeBookMapView.showsUserLocation = false
@@ -142,6 +171,24 @@ class ViewController: UIViewController {
         isRouteBookModeActive ? .darkContent : AppAppearanceStore.shared.preferredStatusBarStyle(for: traitCollection)
     }
 
+    private static let routeBookMinimumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
+        "RouteBookPanelMinimum"
+    )
+    private static let routeBookMediumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
+        "RouteBookPanelMedium"
+    )
+
+    private static func makeRouteBookPanelGlassEffect() -> UIVisualEffect {
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = true
+            effect.tintColor = AppColors.background(alpha: 0.06)
+            return effect
+        }
+
+        return UIBlurEffect(style: .systemThinMaterial)
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(true, animated: animated)
@@ -153,9 +200,11 @@ class ViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         updateFullScreenInsets(force: true)
+        presentRouteBookPanelSheetIfNeeded()
         openRouteCollectionIfRequested()
         DispatchQueue.main.async { [weak self] in
             self?.updateFullScreenInsets(force: true)
+            self?.presentRouteBookPanelSheetIfNeeded()
             self?.openRouteCollectionIfRequested()
         }
     }
@@ -267,7 +316,78 @@ class ViewController: UIViewController {
             make.edges.equalToSuperview()
         }
 
+        configureRouteBookPanelView()
         configureRouteBookLocateButton()
+    }
+
+    private func configureRouteBookPanelView() {
+        routeBookPanelSheetViewController.view.backgroundColor = .clear
+        routeBookPanelSheetViewController.view.isOpaque = false
+        routeBookPanelSheetViewController.modalPresentationStyle = .pageSheet
+        routeBookPanelSheetViewController.isModalInPresentation = true
+        routeBookPanelSheetViewController.onViewDidLayout = { [weak self] height in
+            self?.updateRouteBookLocateButtonForPanelHeight(height, animated: false)
+        }
+
+        routeBookPanelView.backgroundColor = .clear
+        routeBookPanelView.layer.cornerRadius = 0
+        routeBookPanelView.layer.masksToBounds = true
+        routeBookPanelView.layer.borderWidth = 0
+
+        let distanceFont = UIFont.preferredFont(forTextStyle: .headline)
+        routeBookPanelDistanceLabel.font = distanceFont
+        routeBookPanelDistanceLabel.textAlignment = .right
+        routeBookPanelDistanceLabel.adjustsFontSizeToFitWidth = true
+        routeBookPanelDistanceLabel.minimumScaleFactor = 0.78
+        routeBookPanelDistanceLabel.numberOfLines = 1
+        routeBookPanelDistanceLabel.setContentHuggingPriority(.required, for: .horizontal)
+        routeBookPanelDistanceLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let metricsSpacerView = UIView()
+        metricsSpacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        metricsSpacerView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        routeBookPanelMetricsStackView.axis = .horizontal
+        routeBookPanelMetricsStackView.alignment = .center
+        routeBookPanelMetricsStackView.distribution = .fill
+        routeBookPanelMetricsStackView.spacing = 12
+        routeBookPanelMetricsStackView.addArrangedSubview(routeBookPanelDistanceLabel)
+        routeBookPanelMetricsStackView.addArrangedSubview(metricsSpacerView)
+
+        routeBookPanelDetailStackView.axis = .vertical
+        routeBookPanelDetailStackView.spacing = 0
+        routeBookPanelDetailStackView.alpha = 1
+
+        routeBookReplayRulerView.configure(totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: 0))
+        routeBookPanelDetailStackView.addArrangedSubview(routeBookReplayRulerView)
+
+        updateRouteBookPanelAppearanceColors()
+
+        routeBookPanelSheetViewController.view.addSubview(routeBookPanelView)
+        routeBookPanelView.contentView.addSubview(routeBookPanelMetricsStackView)
+        routeBookPanelView.contentView.addSubview(routeBookPanelDetailStackView)
+
+        routeBookPanelView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        routeBookPanelMetricsStackView.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview().inset(18)
+            routeBookPanelMetricsCenterYConstraint = make.centerY.equalTo(routeBookPanelView.snp.top)
+                .offset(routeBookPanelMetricsCenterYOffset(for: routeBookPanelHeight))
+                .constraint
+        }
+
+        routeBookPanelDetailStackView.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview().inset(18)
+            make.top.equalTo(routeBookPanelView.snp.top).offset(routeBookPanelDetailStackTopOffset)
+        }
+
+        routeBookReplayRulerView.snp.makeConstraints { make in
+            make.height.equalTo(routeBookReplayRulerViewHeight)
+        }
+
+        applyRouteBookPanelDetent(.minimum, animated: false)
     }
 
     private func configureRouteBookLocateButton() {
@@ -293,7 +413,9 @@ class ViewController: UIViewController {
 
         routeBookLocateButton.snp.makeConstraints { make in
             make.trailing.equalTo(view.safeAreaLayoutGuide.snp.trailing).inset(18)
-            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(30)
+            routeBookLocateButtonBottomConstraint = make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
+                .inset(routeBookPanelHeight + routeBookLocateButtonPanelSpacing)
+                .constraint
             make.size.equalTo(48)
         }
     }
@@ -419,6 +541,185 @@ class ViewController: UIViewController {
         configuration.baseForegroundColor = .label
         configuration.baseBackgroundColor = AppColors.background(alpha: 0.92)
         routeBookLocateButton.configuration = configuration
+    }
+
+    private func updateRouteBookPanelAppearanceColors() {
+        routeBookPanelView.effect = Self.makeRouteBookPanelGlassEffect()
+        if #available(iOS 26.0, *) {
+            routeBookPanelView.contentView.backgroundColor = .clear
+        } else {
+            routeBookPanelView.contentView.backgroundColor = AppColors.background(alpha: 0.08)
+        }
+        routeBookPanelDistanceLabel.textColor = AppColors.foreground(alpha: 0.92)
+    }
+
+    private var routeBookModalPresentationHost: UIViewController {
+        if presentedViewController === routeBookPanelSheetViewController {
+            return routeBookPanelSheetViewController
+        }
+
+        return self
+    }
+
+    private func presentRouteBookPanelSheetIfNeeded() {
+        guard isRouteBookModeActive,
+              !hasPresentedRouteBookPanelSheet,
+              presentedViewController == nil,
+              view.window != nil,
+              (navigationController?.topViewController ?? self) === self,
+              transitionCoordinator == nil,
+              navigationController?.transitionCoordinator == nil else {
+            return
+        }
+
+        if let sheetPresentationController = routeBookPanelSheetViewController.sheetPresentationController {
+            sheetPresentationController.detents = [
+                .custom(identifier: Self.routeBookMinimumPanelDetentIdentifier) { [weak self] _ in
+                    self?.routeBookPanelContentHeight(for: .minimum) ?? 68
+                },
+                .custom(identifier: Self.routeBookMediumPanelDetentIdentifier) { [weak self] _ in
+                    self?.routeBookPanelContentHeight(for: .medium) ?? 187
+                }
+            ]
+            sheetPresentationController.selectedDetentIdentifier = routeBookPanelDetentIdentifier(for: selectedRouteBookPanelDetent)
+            sheetPresentationController.largestUndimmedDetentIdentifier = Self.routeBookMediumPanelDetentIdentifier
+            sheetPresentationController.prefersGrabberVisible = true
+            sheetPresentationController.prefersScrollingExpandsWhenScrolledToEdge = false
+            sheetPresentationController.preferredCornerRadius = 28
+            sheetPresentationController.delegate = self
+        }
+
+        hasPresentedRouteBookPanelSheet = true
+        present(routeBookPanelSheetViewController, animated: false)
+    }
+
+    private func dismissRouteBookPanelSheetIfNeeded(animated: Bool) {
+        guard hasPresentedRouteBookPanelSheet ||
+              presentedViewController === routeBookPanelSheetViewController else {
+            hasPresentedRouteBookPanelSheet = false
+            return
+        }
+
+        hasPresentedRouteBookPanelSheet = false
+        routeBookPanelSheetViewController.dismiss(animated: animated)
+    }
+
+    private func routeBookPanelDetentIdentifier(
+        for detent: RouteBookPanelDetent
+    ) -> UISheetPresentationController.Detent.Identifier {
+        switch detent {
+        case .minimum:
+            return Self.routeBookMinimumPanelDetentIdentifier
+        case .medium:
+            return Self.routeBookMediumPanelDetentIdentifier
+        }
+    }
+
+    private func routeBookPanelContentHeight(for detent: RouteBookPanelDetent) -> CGFloat {
+        switch detent {
+        case .minimum:
+            return routeBookPanelHeight
+        case .medium:
+            return routeBookPanelMediumHeight
+        }
+    }
+
+    private var routeBookPanelMediumHeight: CGFloat {
+        routeBookPanelExpandedPrimaryContentCenterY
+            + routeBookPanelDetailContentTopSpacing
+            + routeBookReplayRulerViewHeight
+            + routeBookPanelMediumBottomPadding
+    }
+
+    private var routeBookPanelExpandedPrimaryContentCenterY: CGFloat {
+        routeBookPanelExpandedPrimaryContentTop + routeBookPanelPrimaryContentSize / 2
+    }
+
+    private var routeBookPanelDetailStackTopOffset: CGFloat {
+        routeBookPanelExpandedPrimaryContentCenterY + routeBookPanelDetailContentTopSpacing
+    }
+
+    private func routeBookPanelDetailProgress(for height: CGFloat) -> CGFloat {
+        let minimumHeight = routeBookPanelContentHeight(for: .minimum)
+        let mediumHeight = routeBookPanelContentHeight(for: .medium)
+        guard mediumHeight > minimumHeight else {
+            return 1
+        }
+
+        return min(max((height - minimumHeight) / (mediumHeight - minimumHeight), 0), 1)
+    }
+
+    private func routeBookPanelMetricsCenterYOffset(for height: CGFloat) -> CGFloat {
+        let minimumCenterY = routeBookPanelHeight / 2
+        let progress = routeBookPanelDetailProgress(for: height)
+        return minimumCenterY + (routeBookPanelExpandedPrimaryContentCenterY - minimumCenterY) * progress
+    }
+
+    private func updateRouteBookPanelMetricsScale(for height: CGFloat) {
+        let progress = routeBookPanelDetailProgress(for: height)
+        let scale = routeBookPanelMinimumPrimaryContentScale
+            + (1 - routeBookPanelMinimumPrimaryContentScale) * progress
+        routeBookPanelMetricsStackView.transform = CGAffineTransform(scaleX: scale, y: scale)
+    }
+
+    private func applyRouteBookPanelDetent(_ detent: RouteBookPanelDetent, animated: Bool) {
+        selectedRouteBookPanelDetent = detent
+        let height = routeBookPanelContentHeight(for: detent)
+        routeBookPanelMetricsCenterYConstraint?.update(offset: routeBookPanelMetricsCenterYOffset(for: height))
+        updateRouteBookLocateButtonForPanelHeight(height, animated: animated)
+
+        switch detent {
+        case .minimum:
+            routeBookReplayRulerView.setProgress(0)
+        case .medium:
+            updateRouteBookReplayProgressForCurrentLocation()
+        }
+
+        let changes = {
+            self.updateRouteBookPanelMetricsScale(for: height)
+            self.routeBookPanelSheetViewController.view.layoutIfNeeded()
+            self.view.layoutIfNeeded()
+        }
+
+        guard animated else {
+            changes()
+            return
+        }
+
+        UIView.animate(
+            withDuration: 0.36,
+            delay: 0,
+            usingSpringWithDamping: 0.86,
+            initialSpringVelocity: 0.7,
+            options: [.allowUserInteraction, .beginFromCurrentState],
+            animations: changes
+        )
+    }
+
+    private func updateRouteBookLocateButtonForPanelHeight(_ height: CGFloat, animated: Bool) {
+        guard height > 0 else {
+            return
+        }
+
+        let panelHeight = max(height, routeBookPanelHeight)
+        guard abs(routeBookPresentedPanelHeight - panelHeight) > 0.5 else {
+            return
+        }
+
+        routeBookPresentedPanelHeight = panelHeight
+        routeBookLocateButtonBottomConstraint?.update(inset: panelHeight + routeBookLocateButtonPanelSpacing)
+
+        guard animated else {
+            view.layoutIfNeeded()
+            return
+        }
+
+        UIView.animate(
+            withDuration: 0.24,
+            delay: 0,
+            options: [.allowUserInteraction, .beginFromCurrentState],
+            animations: { self.view.layoutIfNeeded() }
+        )
     }
 
     private func configureRouteBookScaleView() {
@@ -760,6 +1061,7 @@ class ViewController: UIViewController {
 
     @objc private func handleLanguageDidChange() {
         updateTotalDistanceText()
+        updateRouteBookPanelText()
         emptyDataSourceView.updateLocalizedText()
         updateHeaderMoreButtonMode()
         collectionView.reloadData()
@@ -820,6 +1122,7 @@ class ViewController: UIViewController {
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
             viewController.updateHeaderAppearanceColors()
             viewController.updateRouteBookLocateButtonAppearance()
+            viewController.updateRouteBookPanelAppearanceColors()
             viewController.collectionView?.reloadData()
         }
     }
@@ -1882,12 +2185,227 @@ class ViewController: UIViewController {
 
         routeBookWorkout = workout
         isRouteBookModeActive = true
+        applyRouteBookPanelDetent(.minimum, animated: false)
+        updateRouteBookPanelText()
         applyRouteBookInterfaceState()
 
         drawRouteBookRoute(coordinates)
         requestRouteBookLocationAuthorizationIfNeeded()
         updateRouteBookLocateButtonState()
         updateHeaderReadAuthorizationState()
+    }
+
+    private func updateRouteBookPanelText() {
+        guard let routeBookWorkout else {
+            routeBookPanelDistanceLabel.text = nil
+            routeBookPanelDistanceLabel.isHidden = true
+            routeBookReplayCoordinates = []
+            routeBookReplayDistances = []
+            routeBookReplayRulerView.configure(
+                totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: 0),
+                elevationSamples: []
+            )
+            routeBookReplayRulerView.setProgress(0)
+            return
+        }
+
+        routeBookPanelDistanceLabel.text = routeBookPanelDistanceText(for: routeBookWorkout)
+        routeBookPanelDistanceLabel.isHidden = routeBookPanelDistanceLabel.text == nil
+        configureRouteBookReplayRuler(for: routeBookWorkout)
+    }
+
+    private func routeBookPanelDistanceText(for workout: TrackedWorkout) -> String? {
+        let distanceText: String
+        if workout.distanceMeters >= 1000 {
+            distanceText = String(format: "%.1f km", workout.distanceMeters / 1000)
+        } else if workout.distanceMeters > 0 {
+            distanceText = AppLocalization.format(.distanceMetersFormat, workout.distanceMeters)
+        } else {
+            return nil
+        }
+
+        guard let elevationGainText = routeBookPanelElevationGainText(for: workout) else {
+            return distanceText
+        }
+
+        return "\(distanceText) / \(elevationGainText)"
+    }
+
+    private func routeBookPanelElevationGainText(for workout: TrackedWorkout) -> String? {
+        guard let elevationGainMeters = workout.displayElevationGainMeters,
+              elevationGainMeters.isFinite,
+              elevationGainMeters > 0 else {
+            return nil
+        }
+
+        let roundedElevationGain = elevationGainMeters.rounded()
+        if AppLanguageStore.shared.language == .chinese {
+            return "爬升\(Int(roundedElevationGain)) 米"
+        }
+
+        return AppLocalization.format(.elevationGainFormat, roundedElevationGain)
+    }
+
+    private func configureRouteBookReplayRuler(for workout: TrackedWorkout) {
+        let routeCoordinates = workout.routeDetailCoordinates
+        let coordinates = CoordinateTransformer.displayCoordinates(for: routeCoordinates.map(\.coordinate))
+        let replayDistances = routeBookCumulativeDistances(for: coordinates)
+        let totalDistance = workout.distanceMeters > 0
+            ? workout.distanceMeters
+            : (replayDistances.last ?? 0)
+        let elevationSamples = routeBookElevationSamples(
+            distances: replayDistances,
+            altitudes: routeCoordinates.map(\.altitudeMeters),
+            maximumCount: routeBookMaximumElevationSampleCount
+        )
+
+        routeBookReplayRulerView.configure(
+            totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: totalDistance),
+            elevationSamples: elevationSamples
+        )
+        routeBookReplayRulerView.setProgress(0)
+        routeBookReplayCoordinates = coordinates
+        routeBookReplayDistances = replayDistances
+        if selectedRouteBookPanelDetent == .medium {
+            updateRouteBookReplayProgressForCurrentLocation()
+        }
+    }
+
+    private func routeBookReplayTotalDistanceText(totalMeters: CLLocationDistance) -> String {
+        let kilometers = max(totalMeters, 0) / 1000
+        if kilometers >= 100 {
+            return String(format: "%.0fkm", kilometers)
+        }
+        if kilometers >= 10 {
+            return String(format: "%.1fkm", kilometers)
+        }
+        return String(format: "%.2fkm", kilometers)
+    }
+
+    private func routeBookCumulativeDistances(
+        for coordinates: [CLLocationCoordinate2D]
+    ) -> [CLLocationDistance] {
+        guard let firstCoordinate = coordinates.first else {
+            return []
+        }
+
+        var distances: [CLLocationDistance] = [0]
+        distances.reserveCapacity(coordinates.count)
+
+        var totalDistance: CLLocationDistance = 0
+        var previousLocation = CLLocation(latitude: firstCoordinate.latitude, longitude: firstCoordinate.longitude)
+
+        for coordinate in coordinates.dropFirst() {
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            totalDistance += location.distance(from: previousLocation)
+            distances.append(totalDistance)
+            previousLocation = location
+        }
+
+        return distances
+    }
+
+    private func routeBookElevationSamples(
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        maximumCount: Int
+    ) -> [RouteElevationSample] {
+        guard distances.count == altitudes.count else {
+            return []
+        }
+
+        let samples = altitudes.enumerated().compactMap { index, altitude -> RouteElevationSample? in
+            guard let altitude else {
+                return nil
+            }
+            return RouteElevationSample(distanceMeters: distances[index], altitudeMeters: altitude)
+        }
+
+        return routeBookDownsampleElevationSamples(samples, maximumCount: maximumCount)
+    }
+
+    private func routeBookDownsampleElevationSamples(
+        _ samples: [RouteElevationSample],
+        maximumCount: Int
+    ) -> [RouteElevationSample] {
+        guard samples.count > maximumCount, maximumCount > 2 else {
+            return samples
+        }
+
+        let step = Double(samples.count - 1) / Double(maximumCount - 1)
+        return (0..<maximumCount).map { index in
+            samples[Int(round(Double(index) * step))]
+        }
+    }
+
+    private func updateRouteBookReplayProgressForCurrentLocation() {
+        guard let progress = routeBookReplayProgressForCurrentLocation() else {
+            return
+        }
+
+        routeBookReplayRulerView.setProgress(progress)
+    }
+
+    private func routeBookReplayProgressForCurrentLocation() -> CGFloat? {
+        guard routeBookReplayCoordinates.count == routeBookReplayDistances.count,
+              routeBookReplayCoordinates.count > 1,
+              let totalDistance = routeBookReplayDistances.last,
+              totalDistance > 0,
+              let location = routeBookCurrentLocation() else {
+            return nil
+        }
+
+        let displayCoordinate = CoordinateTransformer.displayCoordinate(for: location.coordinate)
+        guard CLLocationCoordinate2DIsValid(displayCoordinate) else {
+            return nil
+        }
+
+        let userPoint = MKMapPoint(displayCoordinate)
+        var nearestDistanceSquared = Double.greatestFiniteMagnitude
+        var nearestRouteDistance: CLLocationDistance = 0
+
+        for index in 0..<(routeBookReplayCoordinates.count - 1) {
+            let startPoint = MKMapPoint(routeBookReplayCoordinates[index])
+            let endPoint = MKMapPoint(routeBookReplayCoordinates[index + 1])
+            let deltaX = endPoint.x - startPoint.x
+            let deltaY = endPoint.y - startPoint.y
+            let segmentLengthSquared = deltaX * deltaX + deltaY * deltaY
+            let projection: Double
+            if segmentLengthSquared > 0 {
+                let userDeltaX = userPoint.x - startPoint.x
+                let userDeltaY = userPoint.y - startPoint.y
+                projection = min(max((userDeltaX * deltaX + userDeltaY * deltaY) / segmentLengthSquared, 0), 1)
+            } else {
+                projection = 0
+            }
+
+            let projectedX = startPoint.x + deltaX * projection
+            let projectedY = startPoint.y + deltaY * projection
+            let distanceX = userPoint.x - projectedX
+            let distanceY = userPoint.y - projectedY
+            let distanceSquared = distanceX * distanceX + distanceY * distanceY
+            guard distanceSquared < nearestDistanceSquared else {
+                continue
+            }
+
+            nearestDistanceSquared = distanceSquared
+            let segmentRouteDistance = routeBookReplayDistances[index + 1] - routeBookReplayDistances[index]
+            nearestRouteDistance = routeBookReplayDistances[index] + segmentRouteDistance * projection
+        }
+
+        return CGFloat(min(max(nearestRouteDistance / totalDistance, 0), 1))
+    }
+
+    private func routeBookCurrentLocation() -> CLLocation? {
+        routeBookLastLocation ?? routeBookMapView.userLocation.location ?? routeBookLocationManager.location
+    }
+
+    private func updateRouteBookReplayProgressIfPanelIsExpanded() {
+        guard selectedRouteBookPanelDetent == .medium else {
+            return
+        }
+
+        updateRouteBookReplayProgressForCurrentLocation()
     }
 
     private func drawRouteBookRoute(_ coordinates: [CLLocationCoordinate2D]) {
@@ -1904,7 +2422,7 @@ class ViewController: UIViewController {
             edgePadding: UIEdgeInsets(
                 top: 150,
                 left: 44,
-                bottom: 72 + AppMapContainerView.defaultBottomLogoAvoidanceOffset,
+                bottom: routeBookPanelContentHeight(for: .medium) + 44 + AppMapContainerView.defaultBottomLogoAvoidanceOffset,
                 right: 44
             ),
             animated: false
@@ -2051,7 +2569,7 @@ class ViewController: UIViewController {
 
             UIApplication.shared.open(url)
         })
-        present(alertController, animated: true)
+        routeBookModalPresentationHost.present(alertController, animated: true)
     }
 
     private func presentRouteBookExitAlert() {
@@ -2070,7 +2588,7 @@ class ViewController: UIViewController {
         ) { [weak self] _ in
             self?.exitRouteBookMode()
         })
-        present(alertController, animated: true)
+        routeBookModalPresentationHost.present(alertController, animated: true)
     }
 
     private func exitRouteBookMode() {
@@ -2088,6 +2606,7 @@ class ViewController: UIViewController {
             routeBookMapView.removeOverlay(routeBookPolyline)
         }
         routeBookPolyline = nil
+        updateRouteBookPanelText()
 
         routeBookMapContainerView.isHidden = true
         applyRouteBookInterfaceState()
@@ -2116,7 +2635,9 @@ class ViewController: UIViewController {
             view.bringSubviewToFront(headerView)
             view.bringSubviewToFront(routeBookScaleView)
             view.bringSubviewToFront(routeBookLocateButton)
+            presentRouteBookPanelSheetIfNeeded()
         } else {
+            dismissRouteBookPanelSheetIfNeeded(animated: false)
             view.bringSubviewToFront(headerView)
             updateEmptyDataSourceVisibility()
         }
@@ -2141,6 +2662,29 @@ class ViewController: UIViewController {
         routeBookScaleView.scaleVisibility = isVisible ? .visible : .hidden
         routeBookScaleView.isHidden = !isVisible
         routeBookScaleView.alpha = isVisible ? 1 : 0
+    }
+}
+
+extension ViewController: UISheetPresentationControllerDelegate {
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard presentationController.presentedViewController === routeBookPanelSheetViewController else {
+            return
+        }
+
+        hasPresentedRouteBookPanelSheet = false
+    }
+
+    func sheetPresentationControllerDidChangeSelectedDetentIdentifier(
+        _ sheetPresentationController: UISheetPresentationController
+    ) {
+        guard sheetPresentationController.presentedViewController === routeBookPanelSheetViewController else {
+            return
+        }
+
+        let detent: RouteBookPanelDetent = sheetPresentationController.selectedDetentIdentifier == Self.routeBookMediumPanelDetentIdentifier
+            ? .medium
+            : .minimum
+        applyRouteBookPanelDetent(detent, animated: true)
     }
 }
 
@@ -2202,6 +2746,7 @@ extension ViewController: MKMapViewDelegate {
         if let location = userLocation.location {
             routeBookLastLocation = location
             updateRouteBookUserLocationHeadingView()
+            updateRouteBookReplayProgressIfPanelIsExpanded()
         }
 
         if shouldCenterRouteBookOnNextLocation {
@@ -2249,6 +2794,7 @@ extension ViewController: CLLocationManagerDelegate {
         if let location = locations.last {
             routeBookLastLocation = location
             updateRouteBookUserLocationHeadingView()
+            updateRouteBookReplayProgressIfPanelIsExpanded()
         }
 
         if shouldCenterRouteBookOnNextLocation {
@@ -2320,6 +2866,15 @@ extension ViewController: CLLocationManagerDelegate {
 
         shouldCenterRouteBookOnNextLocation = false
         print("PTrack RouteBook: location update failed: \(error)")
+    }
+}
+
+private final class RouteBookPanelSheetViewController: UIViewController {
+    var onViewDidLayout: ((CGFloat) -> Void)?
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        onViewDidLayout?(view.bounds.height)
     }
 }
 
