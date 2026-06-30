@@ -6,6 +6,7 @@
 //
 
 import SnapKit
+import SwiftUI
 import UIKit
 
 final class WidgetSettingsViewController: UIViewController {
@@ -49,13 +50,32 @@ final class WidgetSettingsViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let scrollView = UIScrollView()
     private let contentView = UIView()
-    private let previewScrollView = UIScrollView()
-    private let previewStackView = UIStackView()
+    private let previewAreaView = UIView()
+    private let previewCollectionView: UICollectionView = {
+        let layout = UICollectionViewFlowLayout()
+        layout.scrollDirection = .horizontal
+        layout.minimumLineSpacing = 0
+        layout.minimumInteritemSpacing = 0
+
+        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collectionView.alwaysBounceHorizontal = true
+        collectionView.backgroundColor = .clear
+        collectionView.contentInsetAdjustmentBehavior = .never
+        collectionView.decelerationRate = .fast
+        collectionView.isPagingEnabled = true
+        collectionView.showsHorizontalScrollIndicator = false
+        collectionView.clipsToBounds = false
+        return collectionView
+    }()
+    private let previewPageControl = UIPageControl()
     private let goalCardView = UIView()
     private let goalTitleLabel = UILabel()
     private let goalTextField = UITextField()
     private let goalUnitLabel = UILabel()
     private let goalStepper = UIStepper()
+    private let goalStepperFeedbackGenerator = UISelectionFeedbackGenerator()
+    private var goalDoneButton: UIBarButtonItem?
+    private var widgetSnapshot = PTrackWidgetSnapshotReader.loadSnapshot()
     private let navigationBackgroundHeight: CGFloat = 124
 
     override func viewDidLoad() {
@@ -63,6 +83,7 @@ final class WidgetSettingsViewController: UIViewController {
         configureNavigationItem()
         configureViews()
         registerLanguageObserver()
+        registerKeyboardObservers()
         registerTraitChangeHandler()
         updateLocalizedText()
         updateGoalControls()
@@ -76,12 +97,14 @@ final class WidgetSettingsViewController: UIViewController {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         configureNavigationBar()
+        widgetSnapshot = PTrackWidgetSnapshotReader.loadSnapshot()
         updateGoalControls()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        previewScrollView.contentInset.right = 16
+        previewCollectionView.collectionViewLayout.invalidateLayout()
+        updatePreviewPageControlCurrentPage()
     }
 
     private func configureNavigationItem() {
@@ -116,13 +139,20 @@ final class WidgetSettingsViewController: UIViewController {
         scrollView.contentInset = UIEdgeInsets(top: navigationBackgroundHeight, left: 0, bottom: 28, right: 0)
         scrollView.scrollIndicatorInsets = scrollView.contentInset
 
-        previewScrollView.alwaysBounceHorizontal = true
-        previewScrollView.showsHorizontalScrollIndicator = false
-        previewScrollView.contentInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        previewCollectionView.dataSource = self
+        previewCollectionView.delegate = self
+        previewCollectionView.register(
+            WidgetPreviewCollectionViewCell.self,
+            forCellWithReuseIdentifier: WidgetPreviewCollectionViewCell.reuseIdentifier
+        )
 
-        previewStackView.axis = .horizontal
-        previewStackView.alignment = .fill
-        previewStackView.spacing = 12
+        previewPageControl.numberOfPages = SupportedWidget.allCases.count
+        previewPageControl.currentPage = 0
+        previewPageControl.hidesForSinglePage = true
+        previewPageControl.isUserInteractionEnabled = false
+        previewPageControl.currentPageIndicatorTintColor = AppColors.movinnGreen
+        previewPageControl.pageIndicatorTintColor = AppColors.foreground(alpha: 0.18)
+        previewPageControl.backgroundStyle = .minimal
 
         goalCardView.backgroundColor = AppColors.groupedCardBackground
         goalCardView.layer.cornerRadius = 8
@@ -142,6 +172,7 @@ final class WidgetSettingsViewController: UIViewController {
         goalTextField.minimumFontSize = 14
         goalTextField.delegate = self
         goalTextField.addTarget(self, action: #selector(handleGoalTextFieldEditingChanged), for: .editingChanged)
+        configureGoalKeyboardAccessory()
 
         goalUnitLabel.textColor = AppColors.foreground(alpha: 0.52)
         goalUnitLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -150,31 +181,19 @@ final class WidgetSettingsViewController: UIViewController {
         goalStepper.maximumValue = 9_999
         goalStepper.stepValue = 10
         goalStepper.addTarget(self, action: #selector(handleGoalStepperValueChanged), for: .valueChanged)
+        goalStepperFeedbackGenerator.prepare()
 
         view.addSubview(scrollView)
         view.addSubview(navigationBackgroundView)
         scrollView.addSubview(contentView)
-        contentView.addSubview(previewScrollView)
-        previewScrollView.addSubview(previewStackView)
+        contentView.addSubview(previewAreaView)
+        previewAreaView.addSubview(previewCollectionView)
+        previewAreaView.addSubview(previewPageControl)
         contentView.addSubview(goalCardView)
         goalCardView.addSubview(goalTitleLabel)
         goalCardView.addSubview(goalTextField)
         goalCardView.addSubview(goalUnitLabel)
         goalCardView.addSubview(goalStepper)
-
-        for widget in SupportedWidget.allCases {
-            let cardView = WidgetPreviewCardView()
-            cardView.configure(
-                widget: widget,
-                title: AppLocalization.text(widget.titleKey),
-                familyText: widget.familyText
-            )
-            previewStackView.addArrangedSubview(cardView)
-            cardView.snp.makeConstraints { make in
-                make.width.equalTo(176)
-                make.height.equalTo(198)
-            }
-        }
 
         scrollView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
@@ -188,24 +207,30 @@ final class WidgetSettingsViewController: UIViewController {
         contentView.snp.makeConstraints { make in
             make.edges.equalTo(scrollView.contentLayoutGuide)
             make.width.equalTo(scrollView.frameLayoutGuide)
+            make.height.greaterThanOrEqualTo(scrollView.frameLayoutGuide).offset(-(navigationBackgroundHeight + 28))
         }
 
-        previewScrollView.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(2)
+        previewAreaView.snp.makeConstraints { make in
+            make.top.leading.trailing.equalToSuperview()
+            make.bottom.equalTo(goalCardView.snp.top).offset(-18)
+        }
+
+        previewCollectionView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
-            make.height.equalTo(210)
+            make.centerY.equalToSuperview().offset(-22)
+            make.height.equalTo(356)
         }
 
-        previewStackView.snp.makeConstraints { make in
-            make.edges.equalTo(previewScrollView.contentLayoutGuide)
-            make.height.equalTo(previewScrollView.frameLayoutGuide)
+        previewPageControl.snp.makeConstraints { make in
+            make.bottom.equalToSuperview()
+            make.centerX.equalToSuperview()
+            make.height.equalTo(20)
         }
 
         goalCardView.snp.makeConstraints { make in
-            make.top.equalTo(previewScrollView.snp.bottom).offset(18)
             make.leading.trailing.equalToSuperview().inset(16)
             make.height.equalTo(96)
-            make.bottom.equalToSuperview()
+            make.bottom.equalToSuperview().inset(20)
         }
 
         goalTitleLabel.snp.makeConstraints { make in
@@ -242,6 +267,21 @@ final class WidgetSettingsViewController: UIViewController {
         )
     }
 
+    private func registerKeyboardObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleKeyboardWillChangeFrame),
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleKeyboardWillHide),
+            name: UIResponder.keyboardWillHideNotification,
+            object: nil
+        )
+    }
+
     private func registerTraitChangeHandler() {
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
             viewController.updateAppearanceColors()
@@ -256,19 +296,19 @@ final class WidgetSettingsViewController: UIViewController {
         title = AppLocalization.text(.widgets)
         goalTitleLabel.text = AppLocalization.text(.widgetWeeklyGoalDistance)
         goalUnitLabel.text = AppLocalization.text(.kilometers)
+        goalDoneButton?.title = AppLocalization.text(.ok)
 
-        for (index, cardView) in previewStackView.arrangedSubviews.enumerated() {
-            guard let cardView = cardView as? WidgetPreviewCardView,
-                  SupportedWidget.allCases.indices.contains(index) else {
+        updateWidgetPreviewCards()
+    }
+
+    private func updateWidgetPreviewCards() {
+        for cell in previewCollectionView.visibleCells {
+            guard let cell = cell as? WidgetPreviewCollectionViewCell,
+                  let indexPath = previewCollectionView.indexPath(for: cell) else {
                 continue
             }
 
-            let widget = SupportedWidget.allCases[index]
-            cardView.configure(
-                widget: widget,
-                title: AppLocalization.text(widget.titleKey),
-                familyText: widget.familyText
-            )
+            configurePreviewCell(cell, at: indexPath)
         }
     }
 
@@ -278,8 +318,10 @@ final class WidgetSettingsViewController: UIViewController {
         goalTextField.textColor = AppColors.solidForeground
         goalTextField.tintColor = AppColors.movinnGreen
         goalUnitLabel.textColor = AppColors.foreground(alpha: 0.52)
-        previewStackView.arrangedSubviews.forEach { view in
-            (view as? WidgetPreviewCardView)?.setNeedsDisplay()
+        previewPageControl.currentPageIndicatorTintColor = AppColors.movinnGreen
+        previewPageControl.pageIndicatorTintColor = AppColors.foreground(alpha: 0.18)
+        previewCollectionView.visibleCells.forEach { cell in
+            (cell as? WidgetPreviewCollectionViewCell)?.updateAppearance()
         }
     }
 
@@ -287,6 +329,7 @@ final class WidgetSettingsViewController: UIViewController {
         let kilometers = PTrackWidgetSettingsStore.weeklyGoalDistanceKilometers
         goalStepper.value = kilometers
         goalTextField.text = formattedGoalText(kilometers)
+        updateWidgetPreviewCards()
     }
 
     private func formattedGoalText(_ kilometers: Double) -> String {
@@ -298,8 +341,11 @@ final class WidgetSettingsViewController: UIViewController {
     }
 
     @objc private func handleGoalStepperValueChanged() {
+        goalStepperFeedbackGenerator.selectionChanged()
+        goalStepperFeedbackGenerator.prepare()
         PTrackWidgetSettingsStore.setWeeklyGoalDistanceKilometers(goalStepper.value)
         goalTextField.text = formattedGoalText(goalStepper.value)
+        updateWidgetPreviewCards()
     }
 
     @objc private func handleGoalTextFieldEditingChanged() {
@@ -330,6 +376,87 @@ final class WidgetSettingsViewController: UIViewController {
         PTrackWidgetSettingsStore.setWeeklyGoalDistanceKilometers(kilometers)
         updateGoalControls()
     }
+
+    private func configureGoalKeyboardAccessory() {
+        let toolbar = UIToolbar()
+        toolbar.sizeToFit()
+        let flexibleSpace = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+        let doneButton = UIBarButtonItem(
+            title: AppLocalization.text(.ok),
+            style: .done,
+            target: self,
+            action: #selector(handleGoalInputDoneButtonTapped)
+        )
+        goalDoneButton = doneButton
+        toolbar.items = [flexibleSpace, doneButton]
+        goalTextField.inputAccessoryView = toolbar
+    }
+
+    @objc private func handleGoalInputDoneButtonTapped() {
+        commitGoalTextFieldValue()
+        goalTextField.resignFirstResponder()
+    }
+
+    @objc private func handleKeyboardWillChangeFrame(_ notification: Notification) {
+        updateKeyboardAvoidance(with: notification, hidesKeyboard: false)
+    }
+
+    @objc private func handleKeyboardWillHide(_ notification: Notification) {
+        updateKeyboardAvoidance(with: notification, hidesKeyboard: true)
+    }
+
+    private func updateKeyboardAvoidance(with notification: Notification, hidesKeyboard: Bool) {
+        let keyboardFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
+        let keyboardFrameInView = view.convert(keyboardFrame, from: nil)
+        let keyboardOverlap = hidesKeyboard ? 0 : max(view.bounds.maxY - keyboardFrameInView.minY, 0)
+        let bottomInset = keyboardOverlap > 0 ? keyboardOverlap + 18 : 28
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curveRawValue = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue
+            ?? UInt(UIView.AnimationOptions.curveEaseInOut.rawValue)
+        let options = UIView.AnimationOptions(rawValue: curveRawValue << 16)
+
+        UIView.animate(withDuration: duration, delay: 0, options: options) {
+            self.scrollView.contentInset.bottom = bottomInset
+            var indicatorInsets = self.scrollView.verticalScrollIndicatorInsets
+            indicatorInsets.bottom = bottomInset
+            self.scrollView.verticalScrollIndicatorInsets = indicatorInsets
+            self.view.layoutIfNeeded()
+        } completion: { _ in
+            guard keyboardOverlap > 0, self.goalTextField.isFirstResponder else {
+                return
+            }
+
+            let visibleRect = self.goalCardView.frame.insetBy(dx: 0, dy: -12)
+            self.scrollView.scrollRectToVisible(visibleRect, animated: true)
+        }
+    }
+
+    private func configurePreviewCell(_ cell: WidgetPreviewCollectionViewCell, at indexPath: IndexPath) {
+        guard SupportedWidget.allCases.indices.contains(indexPath.item) else {
+            return
+        }
+
+        let widget = SupportedWidget.allCases[indexPath.item]
+        cell.configure(
+            widget: widget,
+            title: AppLocalization.text(widget.titleKey),
+            familyText: widget.familyText,
+            snapshot: widgetSnapshot,
+            goalDistanceMeters: PTrackWidgetSettingsStore.weeklyGoalDistanceMeters
+        )
+    }
+
+    private func updatePreviewPageControlCurrentPage() {
+        let pageWidth = previewCollectionView.bounds.width
+        guard pageWidth > 0 else {
+            previewPageControl.currentPage = 0
+            return
+        }
+
+        let rawPage = previewCollectionView.contentOffset.x / pageWidth
+        let page = Int(round(rawPage))
+        previewPageControl.currentPage = min(max(page, 0), SupportedWidget.allCases.count - 1)
+    }
 }
 
 extension WidgetSettingsViewController: UITextFieldDelegate {
@@ -343,10 +470,209 @@ extension WidgetSettingsViewController: UITextFieldDelegate {
     }
 }
 
-private final class WidgetPreviewCardView: UIView {
-    private var widget: WidgetSettingsViewController.SupportedWidget = .weeklyProgress
-    private let titleLabel = UILabel()
-    private let familyLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 3, left: 8, bottom: 3, right: 8))
+extension WidgetSettingsViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        SupportedWidget.allCases.count
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        cellForItemAt indexPath: IndexPath
+    ) -> UICollectionViewCell {
+        guard let cell = collectionView.dequeueReusableCell(
+            withReuseIdentifier: WidgetPreviewCollectionViewCell.reuseIdentifier,
+            for: indexPath
+        ) as? WidgetPreviewCollectionViewCell else {
+            return UICollectionViewCell()
+        }
+
+        configurePreviewCell(cell, at: indexPath)
+        return cell
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        willDisplay cell: UICollectionViewCell,
+        forItemAt indexPath: IndexPath
+    ) {
+        guard let cell = cell as? WidgetPreviewCollectionViewCell else {
+            return
+        }
+
+        configurePreviewCell(cell, at: indexPath)
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        sizeForItemAt indexPath: IndexPath
+    ) -> CGSize {
+        collectionView.bounds.size
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        minimumLineSpacingForSectionAt section: Int
+    ) -> CGFloat {
+        0
+    }
+
+    func collectionView(
+        _ collectionView: UICollectionView,
+        layout collectionViewLayout: UICollectionViewLayout,
+        insetForSectionAt section: Int
+    ) -> UIEdgeInsets {
+        .zero
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === previewCollectionView else {
+            return
+        }
+
+        updatePreviewPageControlCurrentPage()
+    }
+}
+
+private struct WidgetSettingsPreviewHostView: View {
+    let widget: WidgetSettingsViewController.SupportedWidget
+    let snapshot: PTrackWidgetSnapshot
+    let goalDistanceMeters: Double
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = fittedSize(in: proxy.size)
+            let cornerRadius = min(size.height * 0.22, 32)
+            content
+                .frame(width: size.width, height: size.height)
+                .background(WidgetSettingsPreviewBackgroundView())
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(borderColor, lineWidth: 1)
+                )
+                .shadow(color: shadowColor, radius: 12, x: 0, y: 5)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch widget {
+        case .weeklyProgress:
+            PTrackWeeklyProgressWidgetContentView(snapshot: snapshot, goalDistanceMeters: goalDistanceMeters)
+        case .weeklyChart:
+            PTrackWeeklyChartWidgetContentView(snapshot: snapshot)
+        case .monthlyCalendar:
+            PTrackMonthlyCalendarWidgetContentView(snapshot: snapshot)
+        case .annualTrajectory:
+            PTrackAnnualTrajectoryWidgetContentView(snapshot: snapshot)
+        case .worldMap:
+            PTrackLocationMapWidgetContentView(
+                snapshot: snapshot,
+                map: .world,
+                brightensDarkOutlinesInPreview: true
+            )
+        case .chinaMap:
+            PTrackLocationMapWidgetContentView(
+                snapshot: snapshot,
+                map: .china,
+                brightensDarkOutlinesInPreview: true
+            )
+        }
+    }
+
+    private func fittedSize(in bounds: CGSize) -> CGSize {
+        switch widget {
+        case .weeklyProgress, .monthlyCalendar:
+            return fittedSize(aspectRatio: 1, preferredHeight: widget == .weeklyProgress ? 158 : 300, in: bounds)
+        case .weeklyChart, .annualTrajectory, .worldMap, .chinaMap:
+            return fittedSize(aspectRatio: 2.08, preferredHeight: 158, in: bounds)
+        }
+    }
+
+    private func fittedSize(aspectRatio: CGFloat, preferredHeight: CGFloat, in bounds: CGSize) -> CGSize {
+        let maxWidth = max(bounds.width - 32, 1)
+        let maxHeight = max(bounds.height - 56, 1)
+        let height = min(preferredHeight, maxHeight, maxWidth / max(aspectRatio, 0.1))
+
+        return CGSize(width: height * aspectRatio, height: height)
+    }
+
+    private var borderColor: Color {
+        switch colorScheme {
+        case .dark:
+            return Color.white.opacity(0.14)
+        default:
+            return Color.black.opacity(0.10)
+        }
+    }
+
+    private var shadowColor: Color {
+        switch colorScheme {
+        case .dark:
+            return Color.black.opacity(0.26)
+        default:
+            return Color.black.opacity(0.12)
+        }
+    }
+}
+
+private struct WidgetSettingsPreviewBackgroundView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        LinearGradient(
+            colors: backgroundColors,
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .overlay(
+            LinearGradient(
+                colors: highlightColors,
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+    }
+
+    private var backgroundColors: [Color] {
+        switch colorScheme {
+        case .dark:
+            return [
+                Color(red: 0.15, green: 0.15, blue: 0.16),
+                Color(red: 0.11, green: 0.11, blue: 0.12)
+            ]
+        default:
+            return [
+                Color(red: 1.00, green: 1.00, blue: 1.00),
+                Color(red: 0.98, green: 0.98, blue: 0.99)
+            ]
+        }
+    }
+
+    private var highlightColors: [Color] {
+        switch colorScheme {
+        case .dark:
+            return [
+                Color.white.opacity(0.035),
+                Color.clear
+            ]
+        default:
+            return [
+                Color.white.opacity(0.58),
+                Color.clear
+            ]
+        }
+    }
+}
+
+private final class WidgetPreviewCollectionViewCell: UICollectionViewCell {
+    static let reuseIdentifier = "WidgetPreviewCollectionViewCell"
+
+    private var hostingController: UIHostingController<WidgetSettingsPreviewHostView>?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -361,240 +687,44 @@ private final class WidgetPreviewCardView: UIView {
     func configure(
         widget: WidgetSettingsViewController.SupportedWidget,
         title: String,
-        familyText: String
+        familyText: String,
+        snapshot: PTrackWidgetSnapshot,
+        goalDistanceMeters: Double
     ) {
-        self.widget = widget
-        titleLabel.text = title
-        familyLabel.text = familyText
-        setNeedsDisplay()
-    }
+        accessibilityLabel = "\(title), \(familyText)"
 
-    override func draw(_ rect: CGRect) {
-        super.draw(rect)
-
-        let previewRect = CGRect(
-            x: rect.minX + 14,
-            y: rect.minY + 46,
-            width: rect.width - 28,
-            height: rect.height - 62
+        let rootView = WidgetSettingsPreviewHostView(
+            widget: widget,
+            snapshot: snapshot,
+            goalDistanceMeters: goalDistanceMeters
         )
 
-        switch widget {
-        case .weeklyProgress:
-            drawWeeklyProgress(in: previewRect)
-        case .weeklyChart:
-            drawWeeklyChart(in: previewRect)
-        case .monthlyCalendar:
-            drawMonthlyCalendar(in: previewRect)
-        case .annualTrajectory:
-            drawAnnualTrajectory(in: previewRect)
-        case .worldMap:
-            drawWorldMap(in: previewRect)
-        case .chinaMap:
-            drawChinaMap(in: previewRect)
+        if let hostingController {
+            hostingController.rootView = rootView
+        } else {
+            let hostingController = UIHostingController(rootView: rootView)
+            hostingController.view.backgroundColor = .clear
+            hostingController.view.clipsToBounds = false
+            hostingController.view.isUserInteractionEnabled = false
+            contentView.addSubview(hostingController.view)
+            hostingController.view.snp.makeConstraints { make in
+                make.edges.equalToSuperview()
+            }
+            self.hostingController = hostingController
         }
+    }
+
+    func updateAppearance() {
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+        hostingController?.view.backgroundColor = .clear
     }
 
     private func configureViews() {
-        backgroundColor = AppColors.groupedCardBackground
-        layer.cornerRadius = 8
-        layer.masksToBounds = true
-        contentMode = .redraw
-
-        titleLabel.textColor = AppColors.solidForeground
-        titleLabel.font = .systemFont(ofSize: 14, weight: .bold)
-        titleLabel.adjustsFontSizeToFitWidth = true
-        titleLabel.minimumScaleFactor = 0.7
-
-        familyLabel.textColor = AppColors.movinnGreen
-        familyLabel.backgroundColor = AppColors.movinnGreen.withAlphaComponent(0.14)
-        familyLabel.layer.cornerRadius = 9
-        familyLabel.layer.masksToBounds = true
-        familyLabel.font = .systemFont(ofSize: 10, weight: .bold)
-        familyLabel.textAlignment = .center
-
-        addSubview(titleLabel)
-        addSubview(familyLabel)
-
-        titleLabel.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(12)
-            make.top.equalToSuperview().offset(12)
-            make.trailing.lessThanOrEqualTo(familyLabel.snp.leading).offset(-8)
-        }
-
-        familyLabel.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().inset(12)
-            make.centerY.equalTo(titleLabel)
-        }
-    }
-
-    private func drawWeeklyProgress(in rect: CGRect) {
-        let center = CGPoint(x: rect.midX, y: rect.midY - 2)
-        let radius = min(rect.width, rect.height) * 0.4
-        let lineWidth: CGFloat = 12
-        let basePath = UIBezierPath(
-            arcCenter: center,
-            radius: radius,
-            startAngle: -.pi / 2,
-            endAngle: .pi * 1.5,
-            clockwise: true
-        )
-        UIColor.systemGray4.setStroke()
-        basePath.lineWidth = lineWidth
-        basePath.lineCapStyle = .round
-        basePath.stroke()
-
-        let progressPath = UIBezierPath(
-            arcCenter: center,
-            radius: radius,
-            startAngle: -.pi / 2,
-            endAngle: -.pi / 2 + .pi * 1.34,
-            clockwise: true
-        )
-        AppColors.movinnGreen.setStroke()
-        progressPath.lineWidth = lineWidth
-        progressPath.lineCapStyle = .round
-        progressPath.stroke()
-
-        drawText(
-            "128",
-            in: CGRect(x: center.x - 42, y: center.y - 18, width: 84, height: 23),
-            font: .systemFont(ofSize: 22, weight: .bold),
-            color: AppColors.solidForeground,
-            alignment: .center
-        )
-        drawText(
-            "km",
-            in: CGRect(x: center.x - 42, y: center.y + 5, width: 84, height: 16),
-            font: .systemFont(ofSize: 10, weight: .bold),
-            color: AppColors.foreground(alpha: 0.46),
-            alignment: .center
-        )
-    }
-
-    private func drawWeeklyChart(in rect: CGRect) {
-        let values: [CGFloat] = [0.22, 0.58, 0.34, 0.76, 0.46, 0.86, 0.52]
-        let barWidth = rect.width / CGFloat(values.count) * 0.56
-        let maxHeight = rect.height - 26
-        for (index, value) in values.enumerated() {
-            let x = rect.minX + CGFloat(index) * rect.width / CGFloat(values.count) + barWidth * 0.38
-            let height = maxHeight * value
-            let barRect = CGRect(x: x, y: rect.maxY - height - 16, width: barWidth, height: height)
-            let path = UIBezierPath(roundedRect: barRect, cornerRadius: 4)
-            AppColors.movinnGreen.withAlphaComponent(index == 5 ? 1 : 0.72).setFill()
-            path.fill()
-        }
-    }
-
-    private func drawMonthlyCalendar(in rect: CGRect) {
-        let columns = 7
-        let rows = 6
-        let cellWidth = rect.width / CGFloat(columns)
-        let cellHeight = (rect.height - 22) / CGFloat(rows)
-        let highlightedIndexes: Set<Int> = [4, 7, 12, 18, 23, 30, 35, 38]
-
-        for row in 0..<rows {
-            for column in 0..<columns {
-                let index = row * columns + column
-                let center = CGPoint(
-                    x: rect.minX + CGFloat(column) * cellWidth + cellWidth / 2,
-                    y: rect.minY + 20 + CGFloat(row) * cellHeight + cellHeight / 2
-                )
-                let radius: CGFloat = highlightedIndexes.contains(index) ? 6 : 2.6
-                let path = UIBezierPath(
-                    ovalIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-                )
-                (highlightedIndexes.contains(index)
-                    ? AppColors.movinnGreen
-                    : AppColors.foreground(alpha: 0.16)
-                ).setFill()
-                path.fill()
-            }
-        }
-    }
-
-    private func drawAnnualTrajectory(in rect: CGRect) {
-        let firstValues: [CGFloat] = [0.1, 0.22, 0.18, 0.38, 0.46, 0.34, 0.64, 0.52, 0.76, 0.68, 0.82]
-        let secondValues: [CGFloat] = [0.2, 0.16, 0.32, 0.28, 0.52, 0.48, 0.58, 0.44, 0.66, 0.6, 0.7]
-        drawCurve(values: secondValues, in: rect.insetBy(dx: 4, dy: 20), color: AppColors.foreground(alpha: 0.24), lineWidth: 2)
-        drawCurve(values: firstValues, in: rect.insetBy(dx: 4, dy: 20), color: AppColors.movinnGreen, lineWidth: 3)
-    }
-
-    private func drawWorldMap(in rect: CGRect) {
-        let worldRect = rect.insetBy(dx: 2, dy: 20)
-        drawMapShape(in: worldRect, highlightPoints: [
-            CGPoint(x: worldRect.minX + worldRect.width * 0.72, y: worldRect.minY + worldRect.height * 0.44),
-            CGPoint(x: worldRect.minX + worldRect.width * 0.48, y: worldRect.minY + worldRect.height * 0.38)
-        ])
-    }
-
-    private func drawChinaMap(in rect: CGRect) {
-        let chinaRect = CGRect(
-            x: rect.minX + rect.width * 0.16,
-            y: rect.minY + rect.height * 0.12,
-            width: rect.width * 0.68,
-            height: rect.height * 0.76
-        )
-        drawMapShape(in: chinaRect, highlightPoints: [
-            CGPoint(x: chinaRect.minX + chinaRect.width * 0.62, y: chinaRect.minY + chinaRect.height * 0.48)
-        ])
-    }
-
-    private func drawMapShape(in rect: CGRect, highlightPoints: [CGPoint]) {
-        let path = UIBezierPath(roundedRect: rect, cornerRadius: 8)
-        AppColors.foreground(alpha: 0.08).setFill()
-        path.fill()
-        AppColors.foreground(alpha: 0.12).setStroke()
-        path.lineWidth = 1
-        path.stroke()
-
-        for point in highlightPoints {
-            let markerPath = UIBezierPath(ovalIn: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
-            AppColors.movinnGreen.setFill()
-            markerPath.fill()
-        }
-    }
-
-    private func drawCurve(values: [CGFloat], in rect: CGRect, color: UIColor, lineWidth: CGFloat) {
-        guard values.count > 1 else {
-            return
-        }
-
-        let path = UIBezierPath()
-        for (index, value) in values.enumerated() {
-            let point = CGPoint(
-                x: rect.minX + CGFloat(index) / CGFloat(values.count - 1) * rect.width,
-                y: rect.maxY - value * rect.height
-            )
-            if index == 0 {
-                path.move(to: point)
-            } else {
-                path.addLine(to: point)
-            }
-        }
-        color.setStroke()
-        path.lineWidth = lineWidth
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-        path.stroke()
-    }
-
-    private func drawText(
-        _ text: String,
-        in rect: CGRect,
-        font: UIFont,
-        color: UIColor,
-        alignment: NSTextAlignment
-    ) {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = alignment
-        (text as NSString).draw(
-            in: rect,
-            withAttributes: [
-                .font: font,
-                .foregroundColor: color,
-                .paragraphStyle: paragraphStyle
-            ]
-        )
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+        contentView.clipsToBounds = false
+        clipsToBounds = false
+        isAccessibilityElement = true
     }
 }

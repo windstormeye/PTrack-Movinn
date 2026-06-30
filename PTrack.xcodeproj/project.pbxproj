@@ -87,6 +87,11 @@
 			path = PTrack;
 			sourceTree = "<group>";
 		};
+		0C0B3CF12FF3A38A008D5AC4 /* WidgetShared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PTrack/WidgetShared;
+			sourceTree = "<group>";
+		};
 		0C0B3BD92FF37044008D5AC4 /* Widget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -137,6 +142,7 @@
 			isa = PBXGroup;
 			children = (
 				0C039D372FDBF7C10090C542 /* PTrack */,
+				0C0B3CF12FF3A38A008D5AC4 /* WidgetShared */,
 				0C7A00022FE25A0000000002 /* PTrackShareExtension */,
 				0C0B3BD92FF37044008D5AC4 /* Widget */,
 				0C0B3BD42FF37044008D5AC4 /* Frameworks */,
@@ -206,6 +212,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				0C0B3BD92FF37044008D5AC4 /* Widget */,
+				0C0B3CF12FF3A38A008D5AC4 /* WidgetShared */,
 			);
 			name = WidgetExtension;
 			packageProductDependencies = (

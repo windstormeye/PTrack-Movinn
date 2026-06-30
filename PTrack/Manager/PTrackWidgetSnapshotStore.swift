@@ -9,87 +9,12 @@ import CoreLocation
 import UIKit
 import WidgetKit
 
-enum PTrackWidgetConstants {
-    static let appGroupIdentifier = "group.studio.pj.app.PTrack"
-    static let snapshotFileName = "widget-snapshot.json"
-    static let worldMapImageFileName = "widget-world-map.png"
-    static let chinaMapImageFileName = "widget-china-map.png"
-    static let weeklyGoalDistanceMetersKey = "studio.pj.PTrack.widget.weeklyGoalDistanceMeters"
-    static let defaultWeeklyGoalDistanceMeters = 200_000.0
-}
-
-enum PTrackWidgetSettingsStore {
-    static var weeklyGoalDistanceMeters: Double {
-        let value = sharedDefaults.double(forKey: PTrackWidgetConstants.weeklyGoalDistanceMetersKey)
-        guard value > 0 else {
-            return PTrackWidgetConstants.defaultWeeklyGoalDistanceMeters
-        }
-
-        return value
-    }
-
-    static var weeklyGoalDistanceKilometers: Double {
-        weeklyGoalDistanceMeters / 1_000
-    }
-
+extension PTrackWidgetSettingsStore {
     static func setWeeklyGoalDistanceKilometers(_ kilometers: Double) {
         let sanitizedKilometers = min(max(kilometers, 1), 9_999)
         sharedDefaults.set(sanitizedKilometers * 1_000, forKey: PTrackWidgetConstants.weeklyGoalDistanceMetersKey)
         WidgetCenter.shared.reloadAllTimelines()
     }
-
-    private static var sharedDefaults: UserDefaults {
-        UserDefaults(suiteName: PTrackWidgetConstants.appGroupIdentifier) ?? .standard
-    }
-}
-
-struct PTrackWidgetSnapshot: Codable {
-    struct WeekSummary: Codable {
-        let distanceMeters: Double
-        let durationSeconds: TimeInterval
-    }
-
-    struct WeeklyRow: Codable {
-        let index: Int
-        let title: String
-        let distanceMeters: Double
-        let durationSeconds: TimeInterval
-    }
-
-    struct MonthDay: Codable {
-        let day: Int
-        let isCurrentMonth: Bool
-        let isToday: Bool
-        let symbolNames: [String]
-    }
-
-    struct MonthCalendar: Codable {
-        let title: String
-        let summaryDistanceMeters: Double
-        let summaryDurationSeconds: TimeInterval
-        let weekdayTitles: [String]
-        let days: [MonthDay]
-    }
-
-    struct AnnualSeries: Codable {
-        let year: Int
-        let weeklyDistanceMeters: [Double]
-        let weeklyDurationSeconds: [TimeInterval]
-        let visibleWeekCount: Int
-        let totalDistanceMeters: Double
-        let totalDurationSeconds: TimeInterval
-    }
-
-    let generatedAt: Date
-    let languageRawValue: String?
-    let weekSummary: WeekSummary
-    let weeklyRows: [WeeklyRow]
-    let monthCalendar: MonthCalendar
-    let annualSeries: [AnnualSeries]
-    let worldMapImageFileName: String?
-    let chinaMapImageFileName: String?
-    let chinaVisitedCityCount: Int?
-    let chinaTotalCityCount: Int?
 }
 
 enum PTrackWidgetSnapshotStore {
@@ -185,12 +110,42 @@ enum PTrackWidgetSnapshotStore {
             highlightedIdentifiers: locationSummary.worldHighlightedIdentifiers,
             fileName: PTrackWidgetConstants.worldMapImageFileName,
             containerURL: containerURL,
+            size: CGSize(width: 720, height: 340),
+            drawsForDarkAppearance: false
+        )
+        let worldMapDarkFileName = writeMapImage(
+            scope: .world,
+            highlightedIdentifiers: locationSummary.worldHighlightedIdentifiers,
+            fileName: PTrackWidgetConstants.worldMapDarkImageFileName,
+            containerURL: containerURL,
+            size: CGSize(width: 720, height: 340),
+            drawsForDarkAppearance: true
+        )
+        let worldMapPreviewOutlineFileName = writeMapOutlineImage(
+            scope: .world,
+            fileName: PTrackWidgetConstants.worldMapPreviewOutlineImageFileName,
+            containerURL: containerURL,
             size: CGSize(width: 720, height: 340)
         )
         let chinaMapFileName = writeMapImage(
             scope: .china,
             highlightedIdentifiers: locationSummary.chinaHighlightedIdentifiers,
             fileName: PTrackWidgetConstants.chinaMapImageFileName,
+            containerURL: containerURL,
+            size: CGSize(width: 420, height: 340),
+            drawsForDarkAppearance: false
+        )
+        let chinaMapDarkFileName = writeMapImage(
+            scope: .china,
+            highlightedIdentifiers: locationSummary.chinaHighlightedIdentifiers,
+            fileName: PTrackWidgetConstants.chinaMapDarkImageFileName,
+            containerURL: containerURL,
+            size: CGSize(width: 420, height: 340),
+            drawsForDarkAppearance: true
+        )
+        let chinaMapPreviewOutlineFileName = writeMapOutlineImage(
+            scope: .china,
+            fileName: PTrackWidgetConstants.chinaMapPreviewOutlineImageFileName,
             containerURL: containerURL,
             size: CGSize(width: 420, height: 340)
         )
@@ -212,7 +167,11 @@ enum PTrackWidgetSnapshotStore {
                 calendar: calendar
             ),
             worldMapImageFileName: worldMapFileName,
+            worldMapDarkImageFileName: worldMapDarkFileName,
+            worldMapPreviewOutlineImageFileName: worldMapPreviewOutlineFileName,
             chinaMapImageFileName: chinaMapFileName,
+            chinaMapDarkImageFileName: chinaMapDarkFileName,
+            chinaMapPreviewOutlineImageFileName: chinaMapPreviewOutlineFileName,
             chinaVisitedCityCount: locationSummary.chinaVisitedCityCount,
             chinaTotalCityCount: locationSummary.chinaTotalCityCount
         )
@@ -529,7 +488,8 @@ enum PTrackWidgetSnapshotStore {
         highlightedIdentifiers: Set<String>,
         fileName: String,
         containerURL: URL,
-        size: CGSize
+        size: CGSize,
+        drawsForDarkAppearance: Bool
     ) -> String? {
         let features = CoordinateRegionManager.shared.mapFeatures(for: scope)
         let image = renderMapImage(
@@ -538,7 +498,34 @@ enum PTrackWidgetSnapshotStore {
             highlightedIdentifiers: highlightedIdentifiers,
             size: size,
             scale: 2,
-            drawsForDarkAppearance: false
+            drawsForDarkAppearance: drawsForDarkAppearance
+        )
+
+        guard let data = image.pngData() else {
+            return nil
+        }
+
+        do {
+            try data.write(to: containerURL.appendingPathComponent(fileName), options: [.atomic])
+            return fileName
+        } catch {
+            print("PTrack Widget: failed to write \(fileName): \(error)")
+            return nil
+        }
+    }
+
+    private static func writeMapOutlineImage(
+        scope: CoordinateRegionMapScope,
+        fileName: String,
+        containerURL: URL,
+        size: CGSize
+    ) -> String? {
+        let features = CoordinateRegionManager.shared.mapFeatures(for: scope)
+        let image = renderMapOutlineImage(
+            scope: scope,
+            features: features,
+            size: size,
+            scale: 2
         )
 
         guard let data = image.pngData() else {
@@ -582,11 +569,15 @@ enum PTrackWidgetSnapshotStore {
                 scope: scope,
                 in: rect.insetBy(dx: 3, dy: 3)
             )
-            let foregroundColor = drawsForDarkAppearance ? UIColor.white : UIColor.black
-            let baseFillColor = foregroundColor.withAlphaComponent(0.075)
-            let baseStrokeColor = UIColor(white: 0.24, alpha: 0.72)
+            let baseFillColor = (drawsForDarkAppearance ? UIColor.white : UIColor.black)
+                .withAlphaComponent(drawsForDarkAppearance ? 0.082 : 0.075)
+            let baseStrokeColor = drawsForDarkAppearance
+                ? UIColor.white.withAlphaComponent(0.58)
+                : UIColor(white: 0.24, alpha: 0.72)
             let highlightedFillColor = AppColors.movinnGreen
-            let highlightedStrokeColor = UIColor(white: 0.30, alpha: 0.72)
+            let highlightedStrokeColor = drawsForDarkAppearance
+                ? UIColor.white.withAlphaComponent(0.66)
+                : UIColor(white: 0.30, alpha: 0.72)
 
             for feature in features {
                 let path = path(for: feature, bounds: bounds, targetRect: targetRect)
@@ -599,6 +590,45 @@ enum PTrackWidgetSnapshotStore {
                 path.fill()
                 (isHighlighted ? highlightedStrokeColor : baseStrokeColor).setStroke()
                 path.lineWidth = isHighlighted ? 0.7 : 0.4
+                path.stroke()
+            }
+        }
+    }
+
+    private static func renderMapOutlineImage(
+        scope: CoordinateRegionMapScope,
+        features: [CoordinateRegionMapFeature],
+        size: CGSize,
+        scale: CGFloat
+    ) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        return renderer.image { _ in
+            let rect = CGRect(origin: .zero, size: size)
+            guard !features.isEmpty,
+                  let bounds = drawingBounds(for: features, scope: scope),
+                  bounds.width > 0,
+                  bounds.height > 0 else {
+                return
+            }
+
+            let targetRect = fittedRect(
+                for: bounds,
+                scope: scope,
+                in: rect.insetBy(dx: 3, dy: 3)
+            )
+
+            UIColor.white.withAlphaComponent(0.74).setStroke()
+            for feature in features {
+                let path = path(for: feature, bounds: bounds, targetRect: targetRect)
+                guard !path.isEmpty else {
+                    continue
+                }
+
+                path.lineWidth = scope == .world ? 0.54 : 0.62
                 path.stroke()
             }
         }
