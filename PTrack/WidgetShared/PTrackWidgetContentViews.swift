@@ -282,20 +282,43 @@ struct PTrackLocationMapWidgetContentView: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .clipped()
 
-                if map == .china {
-                    Text(chinaCityWorkoutText)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(PTrackWidgetPalette.foreground)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(PTrackWidgetPalette.background.opacity(0.82), in: Capsule())
-                        .padding(.leading, 9)
-                        .padding(.bottom, 8)
-                }
+                Text(locationWorkoutText)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(PTrackWidgetPalette.foreground)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(PTrackWidgetPalette.background.opacity(0.82), in: Capsule())
+                    .padding(.leading, 9)
+                    .padding(.bottom, 8)
             }
         }
+    }
+
+    private var locationWorkoutText: String {
+        switch map {
+        case .world:
+            return worldCountryWorkoutText
+        case .china:
+            return chinaCityWorkoutText
+        }
+    }
+
+    private var worldCountryWorkoutText: String {
+        snapshot.text.format(
+            .widgetWorldCountryWorkoutFormat,
+            snapshot.worldVisitedCountryCount ?? 0,
+            snapshot.worldTotalCountryCount ?? 0
+        )
+    }
+
+    private var chinaCityWorkoutText: String {
+        snapshot.text.format(
+            .widgetChinaCityWorkoutFormat,
+            snapshot.chinaVisitedCityCount ?? 0,
+            snapshot.chinaTotalCityCount ?? 0
+        )
     }
 
     private var preferredMapImage: UIImage? {
@@ -334,14 +357,6 @@ struct PTrackLocationMapWidgetContentView: View {
         case .china:
             return snapshot.chinaMapPreviewOutlineImageFileName
         }
-    }
-
-    private var chinaCityWorkoutText: String {
-        snapshot.text.format(
-            .widgetChinaCityWorkoutFormat,
-            snapshot.chinaVisitedCityCount ?? 0,
-            snapshot.chinaTotalCityCount ?? 0
-        )
     }
 
     private var mapScale: CGFloat {

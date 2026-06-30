@@ -96,6 +96,7 @@ nonisolated enum PTrackWidgetTextKey {
     case widgetAnnualTrajectoryDescription
     case widgetWorldMap
     case widgetWorldMapDescription
+    case widgetWorldCountryWorkoutFormat
     case widgetChinaMap
     case widgetChinaMapDescription
     case widgetChinaCityWorkoutFormat
@@ -220,6 +221,7 @@ nonisolated struct PTrackWidgetText {
             .widgetAnnualTrajectoryDescription: "显示今年和去年每周运动曲线。",
             .widgetWorldMap: "世界地图",
             .widgetWorldMapDescription: "点亮运动过的世界地图区域。",
+            .widgetWorldCountryWorkoutFormat: "去过 %d/%d 个国家运动",
             .widgetChinaMap: "中国地图",
             .widgetChinaMapDescription: "点亮运动过的中国地图区域。",
             .widgetChinaCityWorkoutFormat: "去过 %d/%d 个城市运动",
@@ -240,6 +242,7 @@ nonisolated struct PTrackWidgetText {
             .widgetAnnualTrajectoryDescription: "今年と去年の週ごとの運動曲線を表示します。",
             .widgetWorldMap: "世界地図",
             .widgetWorldMapDescription: "運動した世界の地域をハイライトします。",
+            .widgetWorldCountryWorkoutFormat: "%d/%dか国で運動",
             .widgetChinaMap: "中国地図",
             .widgetChinaMapDescription: "運動した中国の地域をハイライトします。",
             .widgetChinaCityWorkoutFormat: "%d/%d都市で運動",
@@ -260,6 +263,7 @@ nonisolated struct PTrackWidgetText {
             .widgetAnnualTrajectoryDescription: "올해와 작년의 주간 운동 곡선을 표시합니다.",
             .widgetWorldMap: "세계 지도",
             .widgetWorldMapDescription: "운동한 세계 지역을 밝게 표시합니다.",
+            .widgetWorldCountryWorkoutFormat: "%d/%d개 국가에서 운동",
             .widgetChinaMap: "중국 지도",
             .widgetChinaMapDescription: "운동한 중국 지역을 밝게 표시합니다.",
             .widgetChinaCityWorkoutFormat: "%d/%d개 도시에서 운동",
@@ -280,6 +284,7 @@ nonisolated struct PTrackWidgetText {
             .widgetAnnualTrajectoryDescription: "Shows weekly curves for this year and last year.",
             .widgetWorldMap: "World Map",
             .widgetWorldMapDescription: "Highlights world regions where you have worked out.",
+            .widgetWorldCountryWorkoutFormat: "Worked out in %d/%d countries",
             .widgetChinaMap: "China Map",
             .widgetChinaMapDescription: "Highlights China regions where you have worked out.",
             .widgetChinaCityWorkoutFormat: "Worked out in %d/%d cities",
@@ -348,6 +353,8 @@ nonisolated struct PTrackWidgetSnapshot: Codable {
     let worldMapImageFileName: String?
     let worldMapDarkImageFileName: String?
     let worldMapPreviewOutlineImageFileName: String?
+    let worldVisitedCountryCount: Int?
+    let worldTotalCountryCount: Int?
     let chinaMapImageFileName: String?
     let chinaMapDarkImageFileName: String?
     let chinaMapPreviewOutlineImageFileName: String?
@@ -415,6 +422,8 @@ nonisolated struct PTrackWidgetSnapshot: Codable {
             worldMapImageFileName: nil,
             worldMapDarkImageFileName: nil,
             worldMapPreviewOutlineImageFileName: nil,
+            worldVisitedCountryCount: 12,
+            worldTotalCountryCount: 177,
             chinaMapImageFileName: nil,
             chinaMapDarkImageFileName: nil,
             chinaMapPreviewOutlineImageFileName: nil,

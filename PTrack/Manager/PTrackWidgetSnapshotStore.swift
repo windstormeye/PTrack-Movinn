@@ -169,6 +169,8 @@ enum PTrackWidgetSnapshotStore {
             worldMapImageFileName: worldMapFileName,
             worldMapDarkImageFileName: worldMapDarkFileName,
             worldMapPreviewOutlineImageFileName: worldMapPreviewOutlineFileName,
+            worldVisitedCountryCount: locationSummary.worldVisitedCountryCount,
+            worldTotalCountryCount: locationSummary.worldTotalCountryCount,
             chinaMapImageFileName: chinaMapFileName,
             chinaMapDarkImageFileName: chinaMapDarkFileName,
             chinaMapPreviewOutlineImageFileName: chinaMapPreviewOutlineFileName,
@@ -366,6 +368,8 @@ enum PTrackWidgetSnapshotStore {
     private struct LocationSummary {
         let worldHighlightedIdentifiers: Set<String>
         let chinaHighlightedIdentifiers: Set<String>
+        let worldVisitedCountryCount: Int
+        let worldTotalCountryCount: Int
         let chinaVisitedCityCount: Int
         let chinaTotalCityCount: Int
     }
@@ -376,8 +380,13 @@ enum PTrackWidgetSnapshotStore {
     ) -> LocationSummary {
         var worldHighlightedIdentifiers = Set<String>()
         var chinaHighlightedIdentifiers = Set<String>()
+        var worldVisitedCountryIdentifiers = Set<String>()
         var chinaVisitedCityIdentifiers = Set<String>()
         let regionManager = CoordinateRegionManager.shared
+        let worldTotalCountryCount = Set(
+            regionManager.mapFeatures(for: .world)
+                .compactMap { normalizedIdentifier($0.displayName) }
+        ).count
         let chinaTotalCityCount = regionManager.mapFeatures(for: .china).filter(\.isCity).count
 
         for workout in workouts where !isVirtualWorkout(workout) {
@@ -394,6 +403,10 @@ enum PTrackWidgetSnapshotStore {
                     ],
                     to: &worldHighlightedIdentifiers
                 )
+                if let countryIdentifier = normalizedIdentifier(region.countryCode)
+                    ?? normalizedIdentifier(region.countryName) {
+                    worldVisitedCountryIdentifiers.insert(countryIdentifier)
+                }
 
                 guard region.isChina else {
                     continue
@@ -420,6 +433,8 @@ enum PTrackWidgetSnapshotStore {
         return LocationSummary(
             worldHighlightedIdentifiers: worldHighlightedIdentifiers,
             chinaHighlightedIdentifiers: chinaHighlightedIdentifiers,
+            worldVisitedCountryCount: worldVisitedCountryIdentifiers.count,
+            worldTotalCountryCount: worldTotalCountryCount,
             chinaVisitedCityCount: chinaVisitedCityIdentifiers.count,
             chinaTotalCityCount: chinaTotalCityCount
         )

@@ -222,6 +222,7 @@ enum AppTextKey: String {
     case widgetAnnualTrajectory
     case widgetLocationMaps
     case widgetWorldMap
+    case widgetWorldCountryWorkoutFormat
     case widgetChinaMap
     case widgetChinaCityWorkoutFormat
     case widgetWeeklyGoalDistance
@@ -478,6 +479,7 @@ enum AppLocalization {
             .widgetAnnualTrajectory: "年度轨迹",
             .widgetLocationMaps: "运动地图",
             .widgetWorldMap: "世界地图",
+            .widgetWorldCountryWorkoutFormat: "去过 %d/%d 个国家运动",
             .widgetChinaMap: "中国地图",
             .widgetChinaCityWorkoutFormat: "去过 %d/%d 个城市运动",
             .widgetWeeklyGoalDistance: "每周目标距离",
@@ -688,6 +690,7 @@ enum AppLocalization {
             .widgetAnnualTrajectory: "年間トレンド",
             .widgetLocationMaps: "運動マップ",
             .widgetWorldMap: "世界地図",
+            .widgetWorldCountryWorkoutFormat: "%d/%dか国で運動",
             .widgetChinaMap: "中国地図",
             .widgetChinaCityWorkoutFormat: "%d/%d都市で運動",
             .widgetWeeklyGoalDistance: "週間目標距離",
@@ -898,6 +901,7 @@ enum AppLocalization {
             .widgetAnnualTrajectory: "연간 궤적",
             .widgetLocationMaps: "운동 지도",
             .widgetWorldMap: "세계 지도",
+            .widgetWorldCountryWorkoutFormat: "%d/%d개 국가에서 운동",
             .widgetChinaMap: "중국 지도",
             .widgetChinaCityWorkoutFormat: "%d/%d개 도시에서 운동",
             .widgetWeeklyGoalDistance: "주간 목표 거리",
@@ -1108,6 +1112,7 @@ enum AppLocalization {
             .widgetAnnualTrajectory: "Annual Trace",
             .widgetLocationMaps: "Workout Maps",
             .widgetWorldMap: "World Map",
+            .widgetWorldCountryWorkoutFormat: "Worked out in %d/%d countries",
             .widgetChinaMap: "China Map",
             .widgetChinaCityWorkoutFormat: "Worked out in %d/%d cities",
             .widgetWeeklyGoalDistance: "Weekly Goal Distance",
