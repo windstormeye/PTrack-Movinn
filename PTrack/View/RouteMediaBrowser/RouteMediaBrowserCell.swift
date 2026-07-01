@@ -33,9 +33,13 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
     private let progressSlider = UISlider()
     private let currentTimeLabel = UILabel()
     private let durationLabel = UILabel()
+    private let cloudLoadingStackView = UIStackView()
+    private let cloudLoadingIndicator = UIActivityIndicatorView(style: .large)
+    private let cloudLoadingLabel = UILabel()
     private let imageManager = PHImageManager.default()
 
     private var representedAssetID: String?
+    private var coverImageRequestID: PHImageRequestID = PHInvalidImageRequestID
     private var imageRequestID: PHImageRequestID = PHInvalidImageRequestID
     private var livePhotoRequestID: PHImageRequestID = PHInvalidImageRequestID
     private var videoRequestID: PHImageRequestID = PHInvalidImageRequestID
@@ -47,6 +51,7 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
     private var lastImageScrollSize: CGSize = .zero
     private var currentAssetPixelSize: CGSize = .zero
     private var mediaKind: MediaKind?
+    private var hasResolvedPrimaryMedia = false
 
     private lazy var blankAreaTapGesture: UITapGestureRecognizer = {
         let gesture = UITapGestureRecognizer(target: self, action: #selector(handleBlankAreaTap))
@@ -112,6 +117,7 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         representedAssetID = nil
         currentAssetPixelSize = .zero
         mediaKind = nil
+        hasResolvedPrimaryMedia = false
         imageView.image = nil
         resetImageZoom()
         livePhotoView.stopPlayback()
@@ -130,11 +136,13 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         playButton.alpha = 1
         videoControlsView.isHidden = true
         liveBadgeView.isHidden = true
+        setCloudLoadingVisible(false)
     }
 
     func prepareForDismissal() {
         cancelRequests()
         representedAssetID = nil
+        hasResolvedPrimaryMedia = false
         imageView.image = nil
         livePhotoView.stopPlayback()
         livePhotoView.livePhoto = nil
@@ -145,6 +153,7 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         player = nil
         hidePlayButtonWorkItem?.cancel()
         hidePlayButtonWorkItem = nil
+        setCloudLoadingVisible(false)
     }
 
     override func layoutSubviews() {
@@ -156,22 +165,28 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
     func configure(with mediaItem: RouteMediaItem) {
         representedAssetID = mediaItem.id
         currentAssetPixelSize = CGSize(width: mediaItem.asset.pixelWidth, height: mediaItem.asset.pixelHeight)
-        imageScrollView.isHidden = true
+        hasResolvedPrimaryMedia = false
+        imageScrollView.isHidden = false
         livePhotoView.isHidden = true
         liveBadgeView.isHidden = true
         videoContainerView.isHidden = true
         videoControlsView.isHidden = true
         playButton.isHidden = true
+        setCloudLoadingVisible(false)
         resetImageZoom()
+        configureCoverImage(with: mediaItem.asset)
 
         if mediaItem.isVideo {
             mediaKind = .video
+            setCloudLoadingVisible(true)
             configureVideo(with: mediaItem.asset)
         } else if mediaItem.isLivePhoto {
             mediaKind = .livePhoto
+            setCloudLoadingVisible(true)
             configureLivePhoto(with: mediaItem.asset)
         } else {
             mediaKind = .image
+            setCloudLoadingVisible(true)
             configureImage(with: mediaItem.asset)
         }
     }
@@ -241,6 +256,19 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         playButton.isHidden = true
         playButton.addTarget(self, action: #selector(toggleVideoPlayback), for: .touchUpInside)
 
+        cloudLoadingStackView.axis = .vertical
+        cloudLoadingStackView.alignment = .center
+        cloudLoadingStackView.spacing = 10
+        cloudLoadingStackView.isHidden = true
+        cloudLoadingStackView.isUserInteractionEnabled = false
+        cloudLoadingIndicator.color = .white
+        cloudLoadingIndicator.hidesWhenStopped = true
+        cloudLoadingLabel.text = "加载中"
+        cloudLoadingLabel.textColor = UIColor.white.withAlphaComponent(0.88)
+        cloudLoadingLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        cloudLoadingLabel.textAlignment = .center
+        cloudLoadingLabel.isUserInteractionEnabled = false
+
         imageSingleTapGesture.require(toFail: imageDoubleTapGesture)
         imageScrollView.addGestureRecognizer(imageSingleTapGesture)
         imageScrollView.addGestureRecognizer(imageDoubleTapGesture)
@@ -258,6 +286,9 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         liveBadgeView.addSubview(liveBadgeLabel)
         contentView.addSubview(liveBadgeView)
         contentView.addSubview(playButton)
+        cloudLoadingStackView.addArrangedSubview(cloudLoadingIndicator)
+        cloudLoadingStackView.addArrangedSubview(cloudLoadingLabel)
+        contentView.addSubview(cloudLoadingStackView)
         videoControlsView.addSubview(currentTimeLabel)
         videoControlsView.addSubview(progressSlider)
         videoControlsView.addSubview(durationLabel)
@@ -328,6 +359,43 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
             make.center.equalToSuperview()
             make.size.equalTo(74)
         }
+
+        cloudLoadingStackView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+        }
+    }
+
+    private func configureCoverImage(with asset: PHAsset) {
+        if let cachedImage = RouteMediaThumbnailCache.image(for: asset.localIdentifier) {
+            imageView.image = cachedImage
+        }
+
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .opportunistic
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = true
+
+        coverImageRequestID = imageManager.requestImage(
+            for: asset,
+            targetSize: coverTargetSize(),
+            contentMode: .aspectFit,
+            options: options
+        ) { [weak self] image, _ in
+            DispatchQueue.main.async {
+                guard let self,
+                      self.representedAssetID == asset.localIdentifier,
+                      let image else {
+                    return
+                }
+
+                RouteMediaThumbnailCache.store(image, for: asset.localIdentifier)
+
+                if !self.hasResolvedPrimaryMedia {
+                    self.imageView.image = image
+                    self.updateImageLayoutIfNeeded()
+                }
+            }
+        }
     }
 
     private func configureImage(with asset: PHAsset) {
@@ -338,73 +406,116 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         options.deliveryMode = .opportunistic
         options.resizeMode = .fast
         options.isNetworkAccessAllowed = true
+        options.progressHandler = { [weak self] progress, error, _, _ in
+            self?.handleCloudDownloadProgress(progress, error: error, for: asset)
+        }
 
         imageRequestID = imageManager.requestImage(
             for: asset,
             targetSize: mediaTargetSize(),
             contentMode: .aspectFit,
             options: options
-        ) { [weak self] image, _ in
-            guard self?.representedAssetID == asset.localIdentifier else {
-                return
-            }
+        ) { [weak self] image, info in
+            DispatchQueue.main.async {
+                guard let self, self.representedAssetID == asset.localIdentifier else {
+                    return
+                }
 
-            self?.imageView.image = image
+                if let image {
+                    self.hasResolvedPrimaryMedia = true
+                    self.imageView.image = image
+                }
+
+                self.updateCloudLoadingAfterRequestResult(info: info, hasResolvedMedia: image != nil)
+            }
         }
     }
 
     private func configureLivePhoto(with asset: PHAsset) {
-        livePhotoView.isHidden = false
+        imageScrollView.isHidden = false
+        livePhotoView.isHidden = true
         liveBadgeView.isHidden = false
 
         let options = PHLivePhotoRequestOptions()
         options.deliveryMode = .opportunistic
         options.isNetworkAccessAllowed = true
+        options.progressHandler = { [weak self] progress, error, _, _ in
+            self?.handleCloudDownloadProgress(progress, error: error, for: asset)
+        }
 
         livePhotoRequestID = imageManager.requestLivePhoto(
             for: asset,
             targetSize: mediaTargetSize(),
             contentMode: .aspectFit,
             options: options
-        ) { [weak self] livePhoto, _ in
-            guard self?.representedAssetID == asset.localIdentifier else {
-                return
-            }
+        ) { [weak self] livePhoto, info in
+            DispatchQueue.main.async {
+                guard let self, self.representedAssetID == asset.localIdentifier else {
+                    return
+                }
 
-            self?.livePhotoView.livePhoto = livePhoto
+                if let livePhoto {
+                    self.hasResolvedPrimaryMedia = true
+                    self.livePhotoView.livePhoto = livePhoto
+                    self.imageScrollView.isHidden = true
+                    self.livePhotoView.isHidden = false
+                }
+
+                self.updateCloudLoadingAfterRequestResult(info: info, hasResolvedMedia: livePhoto != nil)
+            }
         }
     }
 
     private func configureVideo(with asset: PHAsset) {
-        videoContainerView.isHidden = false
-        videoControlsView.isHidden = false
-        playButton.isHidden = false
+        imageScrollView.isHidden = false
+        videoContainerView.isHidden = true
+        videoControlsView.isHidden = true
+        playButton.isHidden = true
         playButton.alpha = 1
         updatePlayButtonImage(isPlaying: false)
 
         let options = PHVideoRequestOptions()
         options.deliveryMode = .automatic
         options.isNetworkAccessAllowed = true
+        options.progressHandler = { [weak self] progress, error, _, _ in
+            self?.handleCloudDownloadProgress(progress, error: error, for: asset)
+        }
 
-        videoRequestID = imageManager.requestAVAsset(forVideo: asset, options: options) { [weak self] avAsset, _, _ in
+        videoRequestID = imageManager.requestAVAsset(forVideo: asset, options: options) { [weak self] avAsset, _, info in
             DispatchQueue.main.async {
-                guard self?.representedAssetID == asset.localIdentifier, let avAsset else {
+                guard let self, self.representedAssetID == asset.localIdentifier else {
                     return
                 }
+
+                self.updateCloudLoadingAfterRequestResult(info: info, hasResolvedMedia: avAsset != nil)
+
+                guard let avAsset else {
+                    return
+                }
+
+                self.hasResolvedPrimaryMedia = true
+                self.imageScrollView.isHidden = true
+                self.videoContainerView.isHidden = false
+                self.videoControlsView.isHidden = false
+                self.playButton.isHidden = false
+                self.updateLayoutBeforeInstallingPlayerLayer()
 
                 let playerItem = AVPlayerItem(asset: avAsset)
                 let player = AVPlayer(playerItem: playerItem)
                 let playerLayer = AVPlayerLayer(player: player)
                 playerLayer.videoGravity = .resizeAspect
-                playerLayer.frame = self?.videoStageView.bounds ?? .zero
+                playerLayer.frame = self.videoStageView.bounds
 
-                self?.removePlayerObservers()
-                self?.playerLayer?.removeFromSuperlayer()
-                self?.player = player
-                self?.playerLayer = playerLayer
-                self?.videoStageView.layer.insertSublayer(playerLayer, at: 0)
-                self?.installPlayerObservers(for: player, item: playerItem)
-                self?.updateVideoProgress(for: .zero)
+                self.removePlayerObservers()
+                self.playerLayer?.removeFromSuperlayer()
+                self.player = player
+                self.playerLayer = playerLayer
+                self.videoStageView.layer.insertSublayer(playerLayer, at: 0)
+                self.installPlayerObservers(for: player, item: playerItem)
+                self.updateVideoProgress(for: .zero)
+                self.playButton.isHidden = false
+                self.playButton.alpha = 1
+                self.updatePlayButtonImage(isPlaying: false)
             }
         }
     }
@@ -620,6 +731,96 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: workItem)
     }
 
+    private func updateLayoutBeforeInstallingPlayerLayer() {
+        contentView.layoutIfNeeded()
+        videoContainerView.layoutIfNeeded()
+        videoStageView.layoutIfNeeded()
+    }
+
+    private func handleCloudDownloadProgress(_ progress: Double, error: Error?, for asset: PHAsset) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.representedAssetID == asset.localIdentifier else {
+                return
+            }
+
+            self.setCloudLoadingVisible(error == nil && progress < 1)
+        }
+    }
+
+    private func updateCloudLoadingAfterRequestResult(info: [AnyHashable: Any]?, hasResolvedMedia: Bool) {
+        if shouldShowCloudLoading(info: info, hasResolvedMedia: hasResolvedMedia) {
+            setCloudLoadingVisible(true)
+            return
+        }
+
+        if (hasResolvedMedia && !isDegradedResult(info)) || isFinalRequestResult(info) {
+            setCloudLoadingVisible(false)
+        }
+    }
+
+    private func shouldShowCloudLoading(info: [AnyHashable: Any]?, hasResolvedMedia: Bool) -> Bool {
+        if isCancelledResult(info) || requestError(from: info) != nil {
+            return false
+        }
+
+        guard isCloudResult(info) else {
+            return false
+        }
+
+        return !hasResolvedMedia || isDegradedResult(info)
+    }
+
+    private func isFinalRequestResult(_ info: [AnyHashable: Any]?) -> Bool {
+        if isCancelledResult(info) || requestError(from: info) != nil {
+            return true
+        }
+
+        return !isDegradedResult(info)
+    }
+
+    private func isCloudResult(_ info: [AnyHashable: Any]?) -> Bool {
+        infoBoolValue(info, for: PHImageResultIsInCloudKey)
+    }
+
+    private func isDegradedResult(_ info: [AnyHashable: Any]?) -> Bool {
+        infoBoolValue(info, for: PHImageResultIsDegradedKey)
+    }
+
+    private func isCancelledResult(_ info: [AnyHashable: Any]?) -> Bool {
+        infoBoolValue(info, for: PHImageCancelledKey)
+    }
+
+    private func requestError(from info: [AnyHashable: Any]?) -> Error? {
+        info?[PHImageErrorKey] as? Error
+    }
+
+    private func infoBoolValue(_ info: [AnyHashable: Any]?, for key: String) -> Bool {
+        if let value = info?[key] as? Bool {
+            return value
+        }
+
+        if let value = info?[key] as? NSNumber {
+            return value.boolValue
+        }
+
+        return false
+    }
+
+    private func setCloudLoadingVisible(_ isVisible: Bool) {
+        cloudLoadingStackView.isHidden = !isVisible
+
+        if isVisible {
+            if mediaKind == .video {
+                hidePlayButtonWorkItem?.cancel()
+                playButton.isHidden = true
+            }
+            contentView.bringSubviewToFront(cloudLoadingStackView)
+            cloudLoadingIndicator.startAnimating()
+        } else {
+            cloudLoadingIndicator.stopAnimating()
+        }
+    }
+
     private func resetImageZoom() {
         imageScrollView.setZoomScale(1, animated: false)
         imageScrollView.contentOffset = .zero
@@ -739,6 +940,10 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
     }
 
     private func cancelRequests() {
+        if coverImageRequestID != PHInvalidImageRequestID {
+            imageManager.cancelImageRequest(coverImageRequestID)
+            coverImageRequestID = PHInvalidImageRequestID
+        }
         if imageRequestID != PHInvalidImageRequestID {
             imageManager.cancelImageRequest(imageRequestID)
             imageRequestID = PHInvalidImageRequestID
@@ -761,6 +966,13 @@ final class RouteMediaBrowserCell: UICollectionViewCell {
         }
 
         return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+
+    private func coverTargetSize() -> CGSize {
+        let scale = max(traitCollection.displayScale, 2)
+        let longestSide = max(contentView.bounds.width, contentView.bounds.height)
+        let targetSide = min(max(longestSide * scale * 0.45, 420), 900)
+        return CGSize(width: targetSide, height: targetSide)
     }
 }
 

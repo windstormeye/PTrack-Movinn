@@ -77,6 +77,10 @@ final class WidgetSettingsViewController: UIViewController {
     private var goalDoneButton: UIBarButtonItem?
     private var widgetSnapshot = PTrackWidgetSnapshotReader.loadSnapshot()
     private let navigationBackgroundHeight: CGFloat = 124
+    private let defaultBottomInset: CGFloat = 28
+    private let goalCardHeight: CGFloat = 96
+    private let goalCardBottomInset: CGFloat = 20
+    private let previewGoalSpacing: CGFloat = 18
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -133,10 +137,12 @@ final class WidgetSettingsViewController: UIViewController {
         navigationBackgroundView.effect = nil
         navigationBackgroundView.contentView.backgroundColor = .clear
 
-        scrollView.alwaysBounceVertical = true
+        scrollView.alwaysBounceVertical = false
+        scrollView.bounces = false
+        scrollView.showsVerticalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.keyboardDismissMode = .interactive
-        scrollView.contentInset = UIEdgeInsets(top: navigationBackgroundHeight, left: 0, bottom: 28, right: 0)
+        scrollView.contentInset = UIEdgeInsets(top: navigationBackgroundHeight, left: 0, bottom: defaultBottomInset, right: 0)
         scrollView.scrollIndicatorInsets = scrollView.contentInset
 
         previewCollectionView.dataSource = self
@@ -207,12 +213,12 @@ final class WidgetSettingsViewController: UIViewController {
         contentView.snp.makeConstraints { make in
             make.edges.equalTo(scrollView.contentLayoutGuide)
             make.width.equalTo(scrollView.frameLayoutGuide)
-            make.height.greaterThanOrEqualTo(scrollView.frameLayoutGuide).offset(-(navigationBackgroundHeight + 28))
+            make.height.equalTo(scrollView.frameLayoutGuide).offset(-(navigationBackgroundHeight + defaultBottomInset))
         }
 
         previewAreaView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
-            make.bottom.equalTo(goalCardView.snp.top).offset(-18)
+            make.bottom.equalTo(goalCardView.snp.top).offset(-previewGoalSpacing)
         }
 
         previewCollectionView.snp.makeConstraints { make in
@@ -229,8 +235,8 @@ final class WidgetSettingsViewController: UIViewController {
 
         goalCardView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview().inset(16)
-            make.height.equalTo(96)
-            make.bottom.equalToSuperview().inset(20)
+            make.height.equalTo(goalCardHeight)
+            make.bottom.equalToSuperview().inset(goalCardBottomInset)
         }
 
         goalTitleLabel.snp.makeConstraints { make in
@@ -409,7 +415,7 @@ final class WidgetSettingsViewController: UIViewController {
         let keyboardFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue ?? .zero
         let keyboardFrameInView = view.convert(keyboardFrame, from: nil)
         let keyboardOverlap = hidesKeyboard ? 0 : max(view.bounds.maxY - keyboardFrameInView.minY, 0)
-        let bottomInset = keyboardOverlap > 0 ? keyboardOverlap + 18 : 28
+        let bottomInset = keyboardOverlap > 0 ? keyboardOverlap + 18 : defaultBottomInset
         let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
         let curveRawValue = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue
             ?? UInt(UIView.AnimationOptions.curveEaseInOut.rawValue)

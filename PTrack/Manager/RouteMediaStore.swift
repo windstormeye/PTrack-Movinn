@@ -22,6 +22,7 @@ final class RouteMediaStore {
     static func clearMemoryCache() {
         resultCache.removeAllObjects()
         imageManager.stopCachingImagesForAllAssets()
+        RouteMediaThumbnailCache.removeAllImages()
     }
 
     func loadMedia(

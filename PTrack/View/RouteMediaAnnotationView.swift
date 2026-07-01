@@ -81,11 +81,17 @@ final class RouteMediaAnnotationView: MKAnnotationView {
             contentMode: .aspectFill,
             options: options
         ) { [weak self] image, _ in
-            guard self?.representedAssetID == mediaItem.id else {
-                return
-            }
+            DispatchQueue.main.async {
+                guard self?.representedAssetID == mediaItem.id else {
+                    return
+                }
 
-            self?.imageView.image = image
+                if let image {
+                    RouteMediaThumbnailCache.store(image, for: mediaItem.id)
+                }
+
+                self?.imageView.image = image
+            }
         }
     }
 
