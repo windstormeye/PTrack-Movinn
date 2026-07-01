@@ -32,6 +32,15 @@ final class StravaManager: NSObject {
         case needsReauthorization
     }
 
+    struct LoadResult {
+        let workouts: [TrackedWorkout]
+        let failedActivityCount: Int
+
+        var didCompleteWithoutActivityFailures: Bool {
+            failedActivityCount == 0
+        }
+    }
+
     init(defaults: UserDefaults = .standard, networkManager: NetworkManager = .shared) {
         self.defaults = defaults
         self.networkManager = networkManager
@@ -86,6 +95,25 @@ final class StravaManager: NSObject {
         onNewDataDetected: ((Int) async -> Void)? = nil,
         onTrackedWorkout: ((TrackedWorkout) async -> Void)? = nil
     ) async throws -> [TrackedWorkout] {
+        let result = try await loadTrackedWorkoutResult(
+            after: startDate,
+            excludingStravaActivityIDs: excludingStravaActivityIDs,
+            pageLimit: pageLimit,
+            perPage: perPage,
+            onNewDataDetected: onNewDataDetected,
+            onTrackedWorkout: onTrackedWorkout
+        )
+        return result.workouts
+    }
+
+    func loadTrackedWorkoutResult(
+        after startDate: Date? = nil,
+        excludingStravaActivityIDs: Set<Int64> = [],
+        pageLimit: Int? = nil,
+        perPage: Int = 200,
+        onNewDataDetected: ((Int) async -> Void)? = nil,
+        onTrackedWorkout: ((TrackedWorkout) async -> Void)? = nil
+    ) async throws -> LoadResult {
         log(
             "load tracked workouts started, after: \(Self.debugDateString(startDate)), excluded cached IDs: \(excludingStravaActivityIDs.count), pageLimit: \(pageLimit.map(String.init) ?? "nil"), perPage: \(perPage)"
         )
@@ -114,6 +142,7 @@ final class StravaManager: NSObject {
         var trackedWorkouts: [TrackedWorkout] = []
         trackedWorkouts.reserveCapacity(supportedActivities.count)
         var importedActivityIDs = Set<Int64>()
+        var failedActivityCount = 0
 
         for (index, activity) in supportedActivities.enumerated() {
             guard importedActivityIDs.insert(activity.id).inserted else {
@@ -135,14 +164,22 @@ final class StravaManager: NSObject {
                 } else {
                     log("skipped activity \(activity.id), streams did not contain enough route data")
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
+                if Self.requiresReauthorization(error) {
+                    throw error
+                }
+                failedActivityCount += 1
                 log("failed to load streams for activity \(activity.id): \(error.localizedDescription)")
             }
         }
 
         let sortedWorkouts = trackedWorkouts.sorted { $0.startDate > $1.startDate }
-        log("load tracked workouts completed, converted routes: \(sortedWorkouts.count)")
-        return sortedWorkouts
+        log(
+            "load tracked workouts completed, converted routes: \(sortedWorkouts.count), activity failures: \(failedActivityCount)"
+        )
+        return LoadResult(workouts: sortedWorkouts, failedActivityCount: failedActivityCount)
     }
 
     func authorize(

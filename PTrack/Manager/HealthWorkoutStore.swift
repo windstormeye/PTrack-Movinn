@@ -30,6 +30,15 @@ final class HealthWorkoutStore {
         case settingsRequired
     }
 
+    struct LoadResult {
+        let trackedWorkoutCount: Int
+        let failedRouteLoadCount: Int
+
+        var didCompleteWithoutRouteFailures: Bool {
+            failedRouteLoadCount == 0
+        }
+    }
+
     private enum DefaultsKey {
         static let authorizationRequested = "studio.pj.PTrack.health.authorizationRequested"
         static let authorizationNeedsAttention = "studio.pj.PTrack.health.authorizationNeedsAttention"
@@ -286,7 +295,7 @@ final class HealthWorkoutStore {
         excludingIDs excludedIDs: Set<String>,
         onNewDataDetected: ((Int) -> Void)? = nil,
         onTrackedWorkout: @escaping (TrackedWorkout) -> Void,
-        completion: @escaping (Result<Int, Error>) -> Void
+        completion: @escaping (Result<LoadResult, Error>) -> Void
     ) {
         let types: [HKWorkoutActivityType] = [.cycling, .hiking, .walking, .running]
         let typePredicates = types.map { HKQuery.predicateForWorkouts(with: $0) }
@@ -393,14 +402,15 @@ final class HealthWorkoutStore {
     private func loadRoutes(
         for workouts: [HKWorkout],
         onTrackedWorkout: @escaping (TrackedWorkout) -> Void,
-        completion: @escaping (Result<Int, Error>) -> Void
+        completion: @escaping (Result<LoadResult, Error>) -> Void
     ) {
         guard !workouts.isEmpty else {
-            completion(.success(0))
+            completion(.success(LoadResult(trackedWorkoutCount: 0, failedRouteLoadCount: 0)))
             return
         }
 
         var trackedWorkoutCount = 0
+        var failedRouteLoadCount = 0
         var firstError: Error?
 
         func loadNextWorkout(at index: Int) {
@@ -408,7 +418,10 @@ final class HealthWorkoutStore {
                 if let firstError, trackedWorkoutCount == 0 {
                     completion(.failure(firstError))
                 } else {
-                    completion(.success(trackedWorkoutCount))
+                    completion(.success(LoadResult(
+                        trackedWorkoutCount: trackedWorkoutCount,
+                        failedRouteLoadCount: failedRouteLoadCount
+                    )))
                 }
                 return
             }
@@ -419,6 +432,9 @@ final class HealthWorkoutStore {
             loadRouteDetails(for: workout) { result in
                 switch result {
                 case .success(let routeDetails):
+                    if routeDetails.hasPartialFailures {
+                        failedRouteLoadCount += 1
+                    }
                     print(
                         "PTrack HealthKit: \(workout.workoutActivityType.rawValue) \(workout.startDate) route locations: \(routeDetails.locations.count)"
                     )
@@ -444,6 +460,7 @@ final class HealthWorkoutStore {
                     print(
                         "PTrack HealthKit: route load failed for \(workout.workoutActivityType.rawValue) \(workout.startDate): \(error)"
                     )
+                    failedRouteLoadCount += 1
                     if firstError == nil {
                         firstError = error
                     }
@@ -490,7 +507,11 @@ final class HealthWorkoutStore {
         completion: @escaping (Result<LoadedWorkoutRouteDetails, Error>) -> Void
     ) {
         guard !routes.isEmpty else {
-            completion(.success(LoadedWorkoutRouteDetails(locations: [], segments: [])))
+            completion(.success(LoadedWorkoutRouteDetails(
+                locations: [],
+                segments: [],
+                hasPartialFailures: false
+            )))
             return
         }
 
@@ -549,7 +570,8 @@ final class HealthWorkoutStore {
             } else {
                 completion(.success(LoadedWorkoutRouteDetails(
                     locations: allLocations.sorted { $0.timestamp < $1.timestamp },
-                    segments: segments.sorted { $0.startDate < $1.startDate }
+                    segments: segments.sorted { $0.startDate < $1.startDate },
+                    hasPartialFailures: firstError != nil
                 )))
             }
         }
@@ -639,6 +661,7 @@ final class HealthWorkoutStore {
 private struct LoadedWorkoutRouteDetails {
     let locations: [CLLocation]
     let segments: [TrackedWorkoutRouteSegment]
+    let hasPartialFailures: Bool
 }
 
 private struct HealthQuantityMetricSpec {

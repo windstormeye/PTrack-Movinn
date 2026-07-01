@@ -127,6 +127,7 @@ enum AppTextKey: String {
     case photoMatching
     case privacyPolicy
     case promotionBadge
+    case proCodeRedemption
     case proFeatureHeatmap
     case proFeatureMultiLivePhotoExport
     case proFeatureMoreComing
@@ -390,6 +391,7 @@ enum AppLocalization {
             .photoMatching: "照片匹配",
             .privacyPolicy: "隐私政策",
             .promotionBadge: "促销",
+            .proCodeRedemption: "代码兑换",
             .proFeatureHeatmap: "查看运动路线热图",
             .proFeatureMultiLivePhotoExport: "多张 Live Photo 导出",
             .proFeatureMoreComing: "未来更多功能",
@@ -607,6 +609,7 @@ enum AppLocalization {
             .photoMatching: "写真照合",
             .privacyPolicy: "プライバシー",
             .promotionBadge: "セール",
+            .proCodeRedemption: "コードを使う",
             .proFeatureHeatmap: "ルートヒートマップ",
             .proFeatureMultiLivePhotoExport: "複数の Live Photo 書き出し",
             .proFeatureMoreComing: "今後の機能",
@@ -824,6 +827,7 @@ enum AppLocalization {
             .photoMatching: "사진 매칭",
             .privacyPolicy: "개인정보",
             .promotionBadge: "할인",
+            .proCodeRedemption: "코드 등록",
             .proFeatureHeatmap: "경로 히트맵 보기",
             .proFeatureMultiLivePhotoExport: "여러 Live Photo 내보내기",
             .proFeatureMoreComing: "더 많은 기능 예정",
@@ -1041,6 +1045,7 @@ enum AppLocalization {
             .photoMatching: "Photo Matching",
             .privacyPolicy: "Privacy",
             .promotionBadge: "SALE",
+            .proCodeRedemption: "Redeem Code",
             .proFeatureHeatmap: "View route heatmaps",
             .proFeatureMultiLivePhotoExport: "Export multiple Live Photos",
             .proFeatureMoreComing: "More features soon",

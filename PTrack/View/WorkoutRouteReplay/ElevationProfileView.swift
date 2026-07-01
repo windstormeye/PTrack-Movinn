@@ -66,10 +66,6 @@ final class ElevationProfileView: UIView {
     private func configureLayers() {
         isOpaque = false
 
-        fillGradientLayer.colors = [
-            UIColor.label.withAlphaComponent(0.11).cgColor,
-            UIColor.label.withAlphaComponent(0).cgColor
-        ]
         fillGradientLayer.locations = [0, 1]
         fillGradientLayer.startPoint = CGPoint(x: 0.5, y: 0)
         fillGradientLayer.endPoint = CGPoint(x: 0.5, y: 1)
@@ -81,7 +77,6 @@ final class ElevationProfileView: UIView {
         fillGradientLayer.mask = fillLayer
 
         curveLayer.fillColor = UIColor.clear.cgColor
-        curveLayer.strokeColor = UIColor.label.withAlphaComponent(0.76).cgColor
         curveLayer.lineWidth = 2
         curveLayer.lineJoin = .round
         curveLayer.lineCap = .round
@@ -99,6 +94,11 @@ final class ElevationProfileView: UIView {
         [peakLabel, heartRatePeakLabel, powerPeakLabel, temperaturePeakLabel].forEach { label in
             addSubview(label)
         }
+
+        applyDynamicColors()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
+            view.applyDynamicColors()
+        }
     }
 
     private func configureMarkerLabel(
@@ -111,10 +111,23 @@ final class ElevationProfileView: UIView {
         label.textAlignment = .center
         label.isHidden = true
         label.accessibilityLabel = accessibilityLabel
-        label.layer.shadowColor = UIColor.systemBackground.cgColor
         label.layer.shadowOpacity = 0.82
         label.layer.shadowRadius = 2
         label.layer.shadowOffset = .zero
+    }
+
+    private func applyDynamicColors() {
+        let foregroundColor = UIColor.label.resolvedColor(with: traitCollection)
+        let backgroundColor = UIColor.systemBackground.resolvedColor(with: traitCollection)
+
+        fillGradientLayer.colors = [
+            foregroundColor.withAlphaComponent(0.11).cgColor,
+            foregroundColor.withAlphaComponent(0).cgColor
+        ]
+        curveLayer.strokeColor = foregroundColor.withAlphaComponent(0.76).cgColor
+        [peakLabel, heartRatePeakLabel, powerPeakLabel, temperaturePeakLabel].forEach { label in
+            label.layer.shadowColor = backgroundColor.cgColor
+        }
     }
 
     private func updatePathIfNeeded() {

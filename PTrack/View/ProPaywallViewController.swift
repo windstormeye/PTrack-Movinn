@@ -7,11 +7,18 @@
 
 import SafariServices
 import SnapKit
+import StoreKit
 import UIKit
 
 final class ProPaywallViewController: UIViewController {
+    private enum LegalURL {
+        static let privacyPolicy = "https://my.feishu.cn/wiki/DJMww5y8biIWrckzlmOcKigznEh"
+        static let termsOfUse = "https://my.feishu.cn/wiki/VidDwr1DGiTPeyk2Hegcl5V9nog"
+    }
+
     private let onPurchaseCompleted: (() -> Void)?
     private let backgroundView = AnimatedProGradientView()
+    private let codeRedemptionButton = UIButton(type: .system)
     private let closeButton = UIButton(type: .system)
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -88,12 +95,14 @@ final class ProPaywallViewController: UIViewController {
         featuresStackView.alignment = .fill
         featuresStackView.distribution = .fill
 
+        configureCodeRedemptionButton()
         configureCloseButton()
         configurePurchaseButton()
         configureLinks()
 
         view.addSubview(backgroundView)
         view.addSubview(scrollView)
+        view.addSubview(codeRedemptionButton)
         view.addSubview(closeButton)
         view.addSubview(bottomContainerView)
         scrollView.addSubview(contentView)
@@ -106,6 +115,12 @@ final class ProPaywallViewController: UIViewController {
 
         backgroundView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
+        }
+
+        codeRedemptionButton.snp.makeConstraints { make in
+            make.centerY.equalTo(closeButton)
+            make.leading.equalToSuperview().inset(20)
+            make.height.equalTo(28)
         }
 
         closeButton.snp.makeConstraints { make in
@@ -165,6 +180,28 @@ final class ProPaywallViewController: UIViewController {
         }
     }
 
+    private func configureCodeRedemptionButton() {
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(
+            systemName: "giftcard",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        )
+        configuration.imagePadding = 4
+        configuration.baseForegroundColor = .white
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 9, bottom: 5, trailing: 10)
+        configuration.background.backgroundColor = UIColor.white.withAlphaComponent(0.12)
+        configuration.background.cornerRadius = 14
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .systemFont(ofSize: 12, weight: .semibold)
+            return outgoing
+        }
+        codeRedemptionButton.configuration = configuration
+        codeRedemptionButton.tintColor = .white
+        codeRedemptionButton.titleLabel?.adjustsFontSizeToFitWidth = true
+        codeRedemptionButton.titleLabel?.minimumScaleFactor = 0.78
+    }
+
     private func configureCloseButton() {
         var configuration = UIButton.Configuration.plain()
         configuration.image = UIImage(
@@ -211,6 +248,7 @@ final class ProPaywallViewController: UIViewController {
     }
 
     private func configureActions() {
+        codeRedemptionButton.addTarget(self, action: #selector(handleCodeRedemption), for: .touchUpInside)
         closeButton.addTarget(self, action: #selector(dismissSelf), for: .touchUpInside)
         purchaseButton.addTarget(self, action: #selector(handlePurchase), for: .touchUpInside)
         privacyButton.addTarget(self, action: #selector(openPrivacyPolicy), for: .touchUpInside)
@@ -260,6 +298,7 @@ final class ProPaywallViewController: UIViewController {
         ))
 
         privacyButton.setTitle(AppLocalization.text(.privacyPolicy), for: .normal)
+        codeRedemptionButton.configuration?.title = AppLocalization.text(.proCodeRedemption)
         restoreButton.setTitle(AppLocalization.text(.restorePurchases), for: .normal)
         termsButton.setTitle(AppLocalization.text(.termsOfUse), for: .normal)
         purchasePromoBadgeView.configure(text: AppLocalization.text(.promotionBadge))
@@ -322,9 +361,11 @@ final class ProPaywallViewController: UIViewController {
 
     private func updateLinkButtonsEnabledState() {
         let isEnabled = !isPurchasing && !isRestoring
+        codeRedemptionButton.isEnabled = isEnabled
         privacyButton.isEnabled = isEnabled
         restoreButton.isEnabled = isEnabled
         termsButton.isEnabled = isEnabled
+        codeRedemptionButton.alpha = isEnabled ? 1 : 0.58
         linksStackView.alpha = isEnabled ? 1 : 0.58
     }
 
@@ -345,8 +386,8 @@ final class ProPaywallViewController: UIViewController {
         present(alertController, animated: true)
     }
 
-    private func openPlaceholderURL() {
-        guard let url = URL(string: "https://www.baidu.com") else {
+    private func openLegalPage(urlString: String) {
+        guard let url = URL(string: urlString) else {
             return
         }
 
@@ -357,6 +398,14 @@ final class ProPaywallViewController: UIViewController {
 
     @objc private func dismissSelf() {
         dismiss(animated: true)
+    }
+
+    @objc private func handleCodeRedemption() {
+        guard !isPurchasing, !isRestoring else {
+            return
+        }
+
+        SKPaymentQueue.default().presentCodeRedemptionSheet()
     }
 
     @objc private func handlePurchase() {
@@ -424,11 +473,11 @@ final class ProPaywallViewController: UIViewController {
     }
 
     @objc private func openPrivacyPolicy() {
-        openPlaceholderURL()
+        openLegalPage(urlString: LegalURL.privacyPolicy)
     }
 
     @objc private func openTerms() {
-        openPlaceholderURL()
+        openLegalPage(urlString: LegalURL.termsOfUse)
     }
 
     @objc private func handleLanguageDidChange() {

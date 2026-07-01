@@ -1620,7 +1620,7 @@ class ViewController: UIViewController {
 
         Task { [weak self] in
             do {
-                let importedWorkouts = try await StravaManager.shared.loadTrackedWorkouts(
+                let importResult = try await StravaManager.shared.loadTrackedWorkoutResult(
                     after: startDate,
                     excludingStravaActivityIDs: excludingStravaActivityIDs,
                     onNewDataDetected: { [weak self] _ in
@@ -1641,6 +1641,7 @@ class ViewController: UIViewController {
                         }
                     }
                 )
+                let importedWorkouts = importResult.workouts
 
                 guard let self else {
                     return
@@ -1651,10 +1652,13 @@ class ViewController: UIViewController {
                     self.scheduleCacheSave(delay: 0)
                     print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
                 }
-                self.markStravaHistoricalBackfillCompletedIfNeeded(after: startDate)
+                self.markStravaHistoricalBackfillCompletedIfNeeded(
+                    after: startDate,
+                    didCompleteWithoutActivityFailures: importResult.didCompleteWithoutActivityFailures
+                )
 
                 print(
-                    "PTrack Strava: import completed, loaded routes: \(importedWorkouts.count), flushed: \(didFlushPendingWorkouts)"
+                    "PTrack Strava: import completed, loaded routes: \(importedWorkouts.count), activity failures: \(importResult.failedActivityCount), flushed: \(didFlushPendingWorkouts)"
                 )
                 self.isStravaSyncInProgress = false
                 self.setStravaNewDataSyncInProgress(false)
@@ -1706,8 +1710,12 @@ class ViewController: UIViewController {
         return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
     }
 
-    private func markStravaHistoricalBackfillCompletedIfNeeded(after startDate: Date?) {
+    private func markStravaHistoricalBackfillCompletedIfNeeded(
+        after startDate: Date?,
+        didCompleteWithoutActivityFailures: Bool
+    ) {
         guard startDate == nil,
+              didCompleteWithoutActivityFailures,
               !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) else {
             return
         }
@@ -2052,16 +2060,21 @@ class ViewController: UIViewController {
         }
     }
 
-    private func handleLoadResult(_ result: Result<Int, Error>) {
+    private func handleLoadResult(_ result: Result<HealthWorkoutStore.LoadResult, Error>) {
         let didRunHistoricalBackfill = isCurrentHealthHistoricalBackfill
         isCurrentHealthHistoricalBackfill = false
         isHealthSyncInProgress = false
         setHealthNewDataSyncInProgress(false)
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
-        case .success(let count):
-            print("PTrack HealthKit: route query completed, loaded routes: \(count)")
-            markHealthHistoricalBackfillCompletedIfNeeded(didRunHistoricalBackfill: didRunHistoricalBackfill)
+        case .success(let loadResult):
+            print(
+                "PTrack HealthKit: route query completed, loaded routes: \(loadResult.trackedWorkoutCount), route failures: \(loadResult.failedRouteLoadCount)"
+            )
+            markHealthHistoricalBackfillCompletedIfNeeded(
+                didRunHistoricalBackfill: didRunHistoricalBackfill,
+                didCompleteWithoutRouteFailures: loadResult.didCompleteWithoutRouteFailures
+            )
             newWorkoutBadgeStore.markInitialSyncCompleted()
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")
@@ -2079,8 +2092,12 @@ class ViewController: UIViewController {
         runPendingStravaSyncAfterHealthIfNeeded()
     }
 
-    private func markHealthHistoricalBackfillCompletedIfNeeded(didRunHistoricalBackfill: Bool) {
+    private func markHealthHistoricalBackfillCompletedIfNeeded(
+        didRunHistoricalBackfill: Bool,
+        didCompleteWithoutRouteFailures: Bool
+    ) {
         guard didRunHistoricalBackfill,
+              didCompleteWithoutRouteFailures,
               !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) else {
             return
         }
