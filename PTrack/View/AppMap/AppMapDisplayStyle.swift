@@ -55,6 +55,14 @@ final class AppMapDisplayStyleStore {
         setStyle(style, forKey: Keys.routeDetailStyle)
     }
 
+    func routeBookStyle() -> AppMapDisplayStyle {
+        style(forKey: Keys.routeBookStyle)
+    }
+
+    func setRouteBookStyle(_ style: AppMapDisplayStyle) {
+        setStyle(style, forKey: Keys.routeBookStyle)
+    }
+
     private func style(forKey key: String) -> AppMapDisplayStyle {
         guard let rawValue = defaults.string(forKey: key),
               let style = AppMapDisplayStyle(rawValue: rawValue) else {
@@ -71,5 +79,6 @@ final class AppMapDisplayStyleStore {
     private enum Keys {
         static let heatmapStyle = "studio.pj.PTrack.mapStyle.heatmap"
         static let routeDetailStyle = "studio.pj.PTrack.mapStyle.routeDetail"
+        static let routeBookStyle = "studio.pj.PTrack.mapStyle.routeBook"
     }
 }

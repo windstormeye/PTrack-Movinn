@@ -79,6 +79,7 @@ class ViewController: UIViewController {
     private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
     private var totalDistanceTrailingToMoreConstraint: Constraint?
     private let routeBookLocateButton = UIButton(type: .system)
+    private let routeBookMapStyleButton = UIButton(type: .system)
     private let routeBookPanelSheetViewController = RouteBookPanelSheetViewController()
     private let routeBookPanelView = UIVisualEffectView(effect: ViewController.makeRouteBookPanelGlassEffect())
     private let routeBookPanelMetricsStackView = UIStackView()
@@ -121,6 +122,7 @@ class ViewController: UIViewController {
     private var routeBookLastLocation: CLLocation?
     private var routeBookLastHeadingDegrees: CLLocationDirection?
     private var routeBookHeadingDisplayDegrees: CLLocationDirection?
+    private var selectedRouteBookMapStyle = AppMapDisplayStyleStore.shared.routeBookStyle()
     private var shouldClearRouteImportIndicatorsOnNextHomeAppear = false
     private var isHealthAuthorizationRecoveryCheckInProgress = false
     private var isCurrentHealthHistoricalBackfill = false
@@ -315,8 +317,7 @@ class ViewController: UIViewController {
         routeBookLocationManager.desiredAccuracy = kCLLocationAccuracyBest
         routeBookLocationManager.headingFilter = 5
 
-        AppMapStyle.apply(.appDefault, to: routeBookMapView)
-        AppMapStyle.setToneOverlay(routeBookMapToneOverlay, visible: true, on: routeBookMapView)
+        applyRouteBookMapStyle(selectedRouteBookMapStyle, persistsSelection: false)
 
         view.addSubview(routeBookMapContainerView)
         view.sendSubviewToBack(routeBookMapContainerView)
@@ -327,6 +328,7 @@ class ViewController: UIViewController {
 
         configureRouteBookPanelView()
         configureRouteBookLocateButton()
+        configureRouteBookMapStyleButton()
     }
 
     private func configureRouteBookPanelView() {
@@ -400,22 +402,11 @@ class ViewController: UIViewController {
     }
 
     private func configureRouteBookLocateButton() {
-        var configuration = UIButton.Configuration.filled()
-        configuration.image = UIImage(
-            systemName: "location.fill",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
-        )
-        configuration.baseForegroundColor = .label
-        configuration.baseBackgroundColor = AppColors.background(alpha: 0.92)
-        configuration.cornerStyle = .capsule
-        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-
+        let configuration = routeBookFloatingButtonConfiguration(systemName: "location.fill")
         routeBookLocateButton.configuration = configuration
         routeBookLocateButton.isHidden = true
-        routeBookLocateButton.layer.shadowColor = UIColor.black.cgColor
-        routeBookLocateButton.layer.shadowOpacity = 0.14
-        routeBookLocateButton.layer.shadowRadius = 12
-        routeBookLocateButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+        routeBookLocateButton.accessibilityLabel = AppLocalization.text(.navigation)
+        applyRouteBookFloatingButtonShadow(to: routeBookLocateButton)
         routeBookLocateButton.addTarget(self, action: #selector(handleRouteBookLocateButtonTap), for: .touchUpInside)
 
         view.addSubview(routeBookLocateButton)
@@ -427,6 +418,92 @@ class ViewController: UIViewController {
                 .constraint
             make.size.equalTo(48)
         }
+    }
+
+    private func configureRouteBookMapStyleButton() {
+        let configuration = routeBookFloatingButtonConfiguration(systemName: "map")
+        routeBookMapStyleButton.configuration = configuration
+        routeBookMapStyleButton.isHidden = true
+        routeBookMapStyleButton.menu = makeRouteBookMapStyleMenu()
+        routeBookMapStyleButton.showsMenuAsPrimaryAction = true
+        routeBookMapStyleButton.accessibilityLabel = AppLocalization.text(.mapStyle)
+        applyRouteBookFloatingButtonShadow(to: routeBookMapStyleButton)
+
+        view.addSubview(routeBookMapStyleButton)
+
+        routeBookMapStyleButton.snp.makeConstraints { make in
+            make.trailing.equalTo(routeBookLocateButton)
+            make.bottom.equalTo(routeBookLocateButton.snp.top).offset(-12)
+            make.size.equalTo(48)
+        }
+    }
+
+    private func routeBookFloatingButtonConfiguration(systemName: String) -> UIButton.Configuration {
+        var configuration = UIButton.Configuration.filled()
+        configuration.image = UIImage(
+            systemName: systemName,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        )
+        configuration.baseForegroundColor = .label
+        configuration.baseBackgroundColor = AppColors.background(alpha: 0.92)
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+        return configuration
+    }
+
+    private func applyRouteBookFloatingButtonShadow(to button: UIButton) {
+        button.layer.shadowColor = UIColor.black.cgColor
+        button.layer.shadowOpacity = 0.14
+        button.layer.shadowRadius = 12
+        button.layer.shadowOffset = CGSize(width: 0, height: 4)
+    }
+
+    private func makeRouteBookMapStyleMenu() -> UIMenu {
+        UIMenu(
+            title: AppLocalization.text(.mapStyle),
+            children: AppMapDisplayStyle.menuCases.map { style in
+                UIAction(
+                    title: style.title,
+                    state: style == selectedRouteBookMapStyle ? .on : .off
+                ) { [weak self] _ in
+                    self?.applyRouteBookMapStyle(style)
+                }
+            }
+        )
+    }
+
+    private func applyRouteBookMapStyle(_ style: AppMapDisplayStyle, persistsSelection: Bool = true) {
+        selectedRouteBookMapStyle = style
+        if persistsSelection {
+            AppMapDisplayStyleStore.shared.setRouteBookStyle(style)
+        }
+
+        AppMapStyle.apply(style, to: routeBookMapView)
+        AppMapStyle.setToneOverlay(routeBookMapToneOverlay, visible: style == .appDefault, on: routeBookMapView)
+        routeBookMapStyleButton.menu = makeRouteBookMapStyleMenu()
+        refreshRouteBookOverlayStrokeColor()
+    }
+
+    private var routeBookRouteStrokeColor: UIColor {
+        switch selectedRouteBookMapStyle {
+        case .dark, .satellite:
+            return .white
+        case .appDefault, .standard:
+            return .black
+        }
+    }
+
+    private func refreshRouteBookOverlayStrokeColor() {
+        guard let routeBookPolyline,
+              let renderer = routeBookMapView.renderer(for: routeBookPolyline) as? MKPolylineRenderer else {
+            return
+        }
+
+        renderer.strokeColor = routeBookRouteStrokeColor
+        if let directionRenderer = renderer as? RouteDirectionPolylineRenderer {
+            directionRenderer.directionIndicatorColor = routeBookRouteStrokeColor
+        }
+        renderer.setNeedsDisplay()
     }
 
     private func configureHeaderView() {
@@ -544,6 +621,14 @@ class ViewController: UIViewController {
         configuration.baseForegroundColor = .label
         configuration.baseBackgroundColor = AppColors.background(alpha: 0.92)
         routeBookLocateButton.configuration = configuration
+
+        guard var mapStyleConfiguration = routeBookMapStyleButton.configuration else {
+            return
+        }
+
+        mapStyleConfiguration.baseForegroundColor = .label
+        mapStyleConfiguration.baseBackgroundColor = AppColors.background(alpha: 0.92)
+        routeBookMapStyleButton.configuration = mapStyleConfiguration
     }
 
     private func updateRouteBookPanelAppearanceColors() {
@@ -1119,6 +1204,8 @@ class ViewController: UIViewController {
         updateTotalDistanceText()
         updateRouteBookPanelText()
         emptyDataSourceView.updateLocalizedText()
+        routeBookMapStyleButton.menu = makeRouteBookMapStyleMenu()
+        routeBookMapStyleButton.accessibilityLabel = AppLocalization.text(.mapStyle)
         updateHeaderMoreButtonMode()
         collectionView.reloadData()
     }
@@ -2736,6 +2823,7 @@ class ViewController: UIViewController {
 
         routeBookMapContainerView.isHidden = !isRouteBookModeActive
         routeBookLocateButton.isHidden = !isRouteBookModeActive
+        routeBookMapStyleButton.isHidden = !isRouteBookModeActive
         setRouteBookScaleViewVisible(isRouteBookModeActive)
         routeGridView.isHidden = isRouteBookModeActive
         collectionView.isHidden = isRouteBookModeActive
@@ -2748,6 +2836,7 @@ class ViewController: UIViewController {
             emptyDataSourceView.isHidden = true
             view.bringSubviewToFront(headerView)
             view.bringSubviewToFront(routeBookScaleView)
+            view.bringSubviewToFront(routeBookMapStyleButton)
             view.bringSubviewToFront(routeBookLocateButton)
             presentRouteBookPanelSheetIfNeeded()
         } else {
@@ -2844,8 +2933,8 @@ extension ViewController: MKMapViewDelegate {
         }
 
         let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
-        renderer.strokeColor = .black
-        renderer.directionIndicatorColor = .black
+        renderer.strokeColor = routeBookRouteStrokeColor
+        renderer.directionIndicatorColor = routeBookRouteStrokeColor
         renderer.lineWidth = 2.4
         renderer.lineJoin = .round
         renderer.lineCap = .round
