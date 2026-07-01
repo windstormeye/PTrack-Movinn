@@ -61,6 +61,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let photoCollectionView: UICollectionView
     private let toolBarView = RouteShareToolBarView()
     private var colorToolButton: UIButton { toolBarView.colorButton }
+    private var calorieFoodToolButton: UIButton { toolBarView.calorieFoodButton }
     private var aspectRatioToolButton: UIButton { toolBarView.aspectRatioButton }
     private var mapStyleToolButton: UIButton { toolBarView.mapStyleButton }
     private var collageToolButton: UIButton { toolBarView.collageButton }
@@ -808,12 +809,14 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func configureToolsView() {
         configureColorToolButton()
         configureAspectRatioToolButton()
+        configureCalorieFoodToolButton()
         configureDeleteToolButton()
         configureAddToolButtons()
         configureCollageToolButton()
         configureCollageStyleToolButton()
         configureLivePhotoToolButton()
         aspectRatioToolButton.showsMenuAsPrimaryAction = true
+        calorieFoodToolButton.showsMenuAsPrimaryAction = true
         mapStyleToolButton.showsMenuAsPrimaryAction = true
         configureMapStyleButton()
 
@@ -885,6 +888,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         updateLocalizedText()
         configureColorToolButton()
         configureAspectRatioToolButton()
+        configureCalorieFoodToolButton()
         configureMapStyleButton()
     }
 
@@ -893,6 +897,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         metricsModuleView.updateLocalizedText(for: workout)
         configureColorToolButton()
         configureAspectRatioToolButton()
+        configureCalorieFoodToolButton()
         configureDeleteToolButton()
         configureAddToolButtons()
         configureCollageToolButton()
@@ -952,6 +957,45 @@ final class WorkoutRouteShareViewController: UIViewController {
                 self?.applyColor(at: index)
             }
         })
+    }
+
+    private func configureCalorieFoodToolButton() {
+        let hasMetricsSelection = selectedPreviewModule == .metrics && !metricsModuleView.isHidden
+        let hasCalories = workout.displayEnergyBurnedKilocalories.map {
+            $0.isFinite && $0 > 0
+        } ?? false
+        var configuration = toolButtonConfiguration(
+            title: AppLocalization.text(.calories),
+            imageName: "flame"
+        )
+        if metricsModuleView.calorieFoodOption != nil {
+            configuration.baseForegroundColor = AppColors.movinnGreen
+        }
+
+        calorieFoodToolButton.configuration = configuration
+        calorieFoodToolButton.isEnabled = hasMetricsSelection && hasCalories
+        calorieFoodToolButton.alpha = hasMetricsSelection && hasCalories ? 1 : 0.38
+        calorieFoodToolButton.showsMenuAsPrimaryAction = true
+
+        let disabledAttributes: UIMenuElement.Attributes = hasMetricsSelection && hasCalories ? [] : [.disabled]
+        let hideAction = UIAction(
+            title: AppLocalization.text(.disable),
+            attributes: disabledAttributes,
+            state: metricsModuleView.calorieFoodOption == nil ? .on : .off
+        ) { [weak self] _ in
+            self?.applyCalorieFoodOption(nil)
+        }
+        let foodActions = RouteShareCalorieFoodOption.allCases.map { option in
+            UIAction(
+                title: option.menuTitle,
+                attributes: disabledAttributes,
+                state: metricsModuleView.calorieFoodOption == option ? .on : .off
+            ) { [weak self] _ in
+                self?.applyCalorieFoodOption(option)
+            }
+        }
+
+        calorieFoodToolButton.menu = UIMenu(children: [hideAction] + foodActions)
     }
 
     private func configureAspectRatioToolButton() {
@@ -1092,6 +1136,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         applySelectionStyle(to: routeModuleView, isSelected: selectedPreviewModule == .route)
         applySelectionStyle(to: metricsModuleView, isSelected: selectedPreviewModule == .metrics)
         configureColorToolButton()
+        configureCalorieFoodToolButton()
         updateToolBarVisibility()
     }
 
@@ -2022,6 +2067,16 @@ final class WorkoutRouteShareViewController: UIViewController {
         configureColorToolButton()
     }
 
+    private func applyCalorieFoodOption(_ option: RouteShareCalorieFoodOption?) {
+        guard selectedPreviewModule == .metrics else {
+            return
+        }
+
+        metricsModuleView.setCalorieFoodOption(option)
+        configureCalorieFoodToolButton()
+        updateSelectionChromeFrames()
+    }
+
     @objc private func deleteSelectedModule() {
         switch selectedPreviewModule {
         case .route:
@@ -2614,6 +2669,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
 
         mapStyleToolButton.isHidden = !isMapBackground
+        calorieFoodToolButton.isHidden = selectedPreviewModule != .metrics
         collageToolButton.isHidden = true
         collageStyleToolButton.isHidden = !isCollageBackground
         deleteToolButton.isHidden = true
@@ -2625,6 +2681,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         let visibleButtonCount = [
             colorToolButton,
+            calorieFoodToolButton,
             aspectRatioToolButton,
             mapStyleToolButton,
             collageToolButton,

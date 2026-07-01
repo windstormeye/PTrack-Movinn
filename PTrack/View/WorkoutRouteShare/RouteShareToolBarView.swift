@@ -10,6 +10,7 @@ import UIKit
 
 final class RouteShareToolBarView: UIView {
     let colorButton = UIButton(type: .system)
+    let calorieFoodButton = UIButton(type: .system)
     let aspectRatioButton = UIButton(type: .system)
     let mapStyleButton = UIButton(type: .system)
     let collageButton = UIButton(type: .system)
@@ -38,6 +39,7 @@ final class RouteShareToolBarView: UIView {
     func visibleButtonCount() -> Int {
         [
             colorButton,
+            calorieFoodButton,
             aspectRatioButton,
             mapStyleButton,
             collageButton,
@@ -62,6 +64,7 @@ final class RouteShareToolBarView: UIView {
         addSubview(stackView)
         [
             colorButton,
+            calorieFoodButton,
             aspectRatioButton,
             mapStyleButton,
             collageButton,

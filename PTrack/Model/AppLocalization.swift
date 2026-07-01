@@ -234,6 +234,7 @@ enum AppTextKey: String {
     case startNotFound
     case yesterday
     case burnedCaloriesFormat
+    case calories
     case durationHoursFormat
     case durationHoursMinutesFormat
     case durationMinutesFormat
@@ -492,6 +493,7 @@ enum AppLocalization {
             .startNotFound: "未找到起点",
             .yesterday: "昨天",
             .burnedCaloriesFormat: "消耗 %.0f 大卡",
+            .calories: "卡路里",
             .durationHoursFormat: "%d小时",
             .durationHoursMinutesFormat: "%d小时%d分钟",
             .durationMinutesFormat: "%d分钟",
@@ -704,6 +706,7 @@ enum AppLocalization {
             .startNotFound: "スタート地点が見つかりません",
             .yesterday: "昨日",
             .burnedCaloriesFormat: "%.0f kcal 消費",
+            .calories: "カロリー",
             .durationHoursFormat: "%d時間",
             .durationHoursMinutesFormat: "%d時間%d分",
             .durationMinutesFormat: "%d分",
@@ -916,6 +919,7 @@ enum AppLocalization {
             .startNotFound: "시작점을 찾을 수 없음",
             .yesterday: "어제",
             .burnedCaloriesFormat: "%.0f kcal 소비",
+            .calories: "칼로리",
             .durationHoursFormat: "%d시간",
             .durationHoursMinutesFormat: "%d시간 %d분",
             .durationMinutesFormat: "%d분",
@@ -1128,6 +1132,7 @@ enum AppLocalization {
             .startNotFound: "Start not found",
             .yesterday: "Yesterday",
             .burnedCaloriesFormat: "Burned %.0f kcal",
+            .calories: "Calories",
             .durationHoursFormat: "%d hr",
             .durationHoursMinutesFormat: "%d hr %d min",
             .durationMinutesFormat: "%d min",
