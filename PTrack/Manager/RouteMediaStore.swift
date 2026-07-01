@@ -305,3 +305,19 @@ enum PhotoLibraryAuthorizationManager {
         }
     }
 }
+
+enum RouteMediaVisibilityPreference {
+    private static let defaultsKey = "studio.pj.PTrack.routeMediaVisibility.isEnabled"
+
+    static var isEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: defaultsKey) != nil else {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKey)
+        }
+    }
+}

@@ -55,6 +55,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let panelSheetViewController = UIViewController()
     private let panelView = UIVisualEffectView(effect: WorkoutRouteDetailViewController.makePanelGlassEffect())
     private let handleTouchView = UIView()
+    private let routeMediaVisibilityButton = UIButton(type: .system)
+    private let routeMediaVisibilityIconView = UIImageView()
     private let iconView = UIImageView()
     private let navigationTitleStackView = UIStackView()
     private let navigationTitleLabel = UILabel()
@@ -69,6 +71,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let replayRulerView = WorkoutRouteReplayRulerView()
     private let calorieRiceView = WorkoutRouteCalorieRiceView()
     private var primaryContentTopConstraint: Constraint?
+    private var routeMediaVisibilityButtonBottomConstraint: Constraint?
     private var selectedPanelDetent: PanelDetent = .minimum
     private var hasFittedRoute = false
     private var hasPresentedPanelSheet = false
@@ -98,6 +101,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let calorieRiceTopSpacing: CGFloat = 12
     private let mediumPanelBottomPadding: CGFloat = 18
     private let panelHandleTouchHeight: CGFloat = 32
+    private let routeMediaVisibilityButtonPanelSpacing: CGFloat = 14
     private let primaryContentSize: CGFloat = 28
     private let expandedPrimaryContentTop: CGFloat = 33
     private let minimumPrimaryContentScale: CGFloat = 0.88
@@ -157,6 +161,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         registerTraitChangeHandler()
         configureMapView()
         configureNavigationBackgroundView()
+        configureRouteMediaVisibilityButton()
         configureRouteLoadingView()
         configurePanelView()
         configureGPXExportLoadingView()
@@ -181,6 +186,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         configureDefaultNavigationBar()
         if presentationMode == .workout {
             refreshMoreMenuForPhotoAuthorizationState()
+            applyRouteMediaVisibilityPreference()
         } else {
             navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
         }
@@ -285,6 +291,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 isEstimated: panelCaloriesIsEstimated
             )
         }
+        routeMediaVisibilityButton.accessibilityLabel = AppLocalization.text(.photoMatching)
         routeLoadingLabel.text = AppLocalization.text(.routeLoading)
         gpxExportLoadingLabel.text = AppLocalization.text(.gpxExporting)
     }
@@ -558,6 +565,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             loadRouteMedia()
         }
         lastObservedPhotoAuthorizationState = currentState
+        applyRouteMediaVisibilityPreference()
     }
 
     private func presentPhotoLibrarySettingsAlert() {
@@ -724,6 +732,104 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
+    private func configureRouteMediaVisibilityButton() {
+        routeMediaVisibilityButton.isHidden = presentationMode != .workout
+        routeMediaVisibilityButton.overrideUserInterfaceStyle = .light
+        routeMediaVisibilityButton.accessibilityLabel = AppLocalization.text(.photoMatching)
+        routeMediaVisibilityIconView.overrideUserInterfaceStyle = .light
+        routeMediaVisibilityIconView.isUserInteractionEnabled = false
+        routeMediaVisibilityIconView.contentMode = .scaleAspectFit
+        routeMediaVisibilityIconView.image = UIImage(
+            systemName: "photo.on.rectangle",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        )?.withRenderingMode(.alwaysTemplate)
+        routeMediaVisibilityIconView.layer.zPosition = 1
+        routeMediaVisibilityButton.addTarget(
+            self,
+            action: #selector(handleRouteMediaVisibilityButtonTap),
+            for: .touchUpInside
+        )
+        applyRouteMediaVisibilityButtonShadow()
+        updateRouteMediaVisibilityButtonAppearance()
+
+        view.addSubview(routeMediaVisibilityButton)
+        routeMediaVisibilityButton.addSubview(routeMediaVisibilityIconView)
+
+        routeMediaVisibilityButton.snp.makeConstraints { make in
+            make.trailing.equalTo(view.safeAreaLayoutGuide.snp.trailing).inset(18)
+            routeMediaVisibilityButtonBottomConstraint = make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
+                .inset(routeMediaVisibilityButtonBottomInset)
+                .constraint
+            make.size.equalTo(48)
+        }
+
+        routeMediaVisibilityIconView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.size.equalTo(22)
+        }
+    }
+
+    private func applyRouteMediaVisibilityButtonShadow() {
+        routeMediaVisibilityButton.layer.shadowColor = UIColor.black.cgColor
+        if #available(iOS 26.0, *) {
+            routeMediaVisibilityButton.layer.shadowOpacity = 0
+            routeMediaVisibilityButton.layer.shadowRadius = 0
+            routeMediaVisibilityButton.layer.shadowOffset = .zero
+        } else {
+            routeMediaVisibilityButton.layer.shadowOpacity = 0.14
+            routeMediaVisibilityButton.layer.shadowRadius = 12
+            routeMediaVisibilityButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+        }
+    }
+
+    private func updateRouteMediaVisibilityButtonAppearance() {
+        let isVisible = canDisplayRouteMediaAnnotations
+        let foregroundColor = routeMediaVisibilityButtonForegroundColor(isVisible: isVisible)
+        let resolvedForegroundColor = foregroundColor.resolvedColor(with: traitCollection)
+        var configuration: UIButton.Configuration
+        if #available(iOS 26.0, *) {
+            configuration = .glass()
+        } else {
+            configuration = .filled()
+            configuration.baseBackgroundColor = UIColor.white.withAlphaComponent(0.92)
+        }
+        configuration.image = nil
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = .zero
+        routeMediaVisibilityButton.configuration = configuration
+        routeMediaVisibilityButton.tintColor = resolvedForegroundColor
+        routeMediaVisibilityIconView.tintColor = resolvedForegroundColor
+        routeMediaVisibilityButton.accessibilityValue = AppLocalization.text(isVisible ? .enable : .disable)
+    }
+
+    private func routeMediaVisibilityButtonForegroundColor(isVisible: Bool) -> UIColor {
+        if isVisible {
+            return AppColors.movinnGreen
+        }
+
+        return UIColor.black.withAlphaComponent(0.42)
+    }
+
+    private var routeMediaVisibilityButtonBottomInset: CGFloat {
+        panelHeight(for: selectedPanelDetent) + routeMediaVisibilityButtonPanelSpacing
+    }
+
+    @objc private func handleRouteMediaVisibilityButtonTap() {
+        switch PhotoLibraryAuthorizationManager.authorizationState {
+        case .authorized:
+            RouteMediaVisibilityPreference.isEnabled.toggle()
+            if RouteMediaVisibilityPreference.isEnabled, routeMediaItems.isEmpty {
+                loadRouteMedia()
+            }
+            applyRouteMediaVisibilityPreference()
+        case .notDetermined:
+            loadRouteMedia()
+        case .needsAttention:
+            applyRouteMediaVisibilityPreference()
+            presentPhotoLibrarySettingsAlert()
+        }
+    }
+
     private func configureRouteLoadingView() {
         routeLoadingView.isHidden = true
         routeLoadingView.alpha = 0
@@ -854,6 +960,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             viewController.updateNavigationBackgroundColors()
             viewController.updateLoadingViewColors()
             viewController.updatePanelAppearanceColors()
+            viewController.updateRouteMediaVisibilityButtonAppearance()
             viewController.setNeedsStatusBarAppearanceUpdate()
         }
     }
@@ -1402,6 +1509,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
         panelHeight(for: .medium) + 28 + mapBottomExtension
     }
 
+    private var canDisplayRouteMediaAnnotations: Bool {
+        presentationMode == .workout
+            && RouteMediaVisibilityPreference.isEnabled
+            && PhotoLibraryAuthorizationManager.authorizationState == .authorized
+    }
+
     var mapRouteStrokeColor: UIColor {
         selectedMapStyle == .dark ? .white : .black
     }
@@ -1437,15 +1550,30 @@ final class WorkoutRouteDetailViewController: UIViewController {
                           !self.hasPreparedForPermanentDismissal else {
                         return
                     }
+                    self.removeRouteMediaAnnotations()
                     self.routeMediaItems = mediaItems
                     self.displayRouteMediaIfRouteReady()
                     self.refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: false)
                 }
             case .failure(let error):
                 print("PTrack Photos: failed to load route media: \(error)")
+                self.applyRouteMediaVisibilityPreference()
                 self.refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: false)
             }
         }
+    }
+
+    private func applyRouteMediaVisibilityPreference() {
+        guard presentationMode == .workout else {
+            return
+        }
+
+        if canDisplayRouteMediaAnnotations {
+            displayRouteMediaIfRouteReady()
+        } else {
+            removeRouteMediaAnnotations()
+        }
+        updateRouteMediaVisibilityButtonAppearance()
     }
 
     private func displayRouteMediaIfRouteReady() {
@@ -1454,6 +1582,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         guard routePolyline != nil,
+              canDisplayRouteMediaAnnotations,
               !hasDisplayedRouteMediaAnnotations,
               !routeMediaItems.isEmpty else {
             return
@@ -1461,6 +1590,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         hasDisplayedRouteMediaAnnotations = true
         mapView.addAnnotations(routeMediaItems.map(RouteMediaAnnotation.init))
+        updateRouteMediaVisibilityButtonAppearance()
+    }
+
+    private func removeRouteMediaAnnotations() {
+        let mediaAnnotations = mapView.annotations.compactMap { $0 as? RouteMediaAnnotation }
+        guard !mediaAnnotations.isEmpty || hasDisplayedRouteMediaAnnotations else {
+            updateRouteMediaVisibilityButtonAppearance()
+            return
+        }
+
+        hasDisplayedRouteMediaAnnotations = false
+        if !mediaAnnotations.isEmpty {
+            mapView.removeAnnotations(mediaAnnotations)
+        }
+        updateRouteMediaVisibilityButtonAppearance()
     }
 
     private func panelHeight(for detent: PanelDetent) -> CGFloat {
@@ -1548,6 +1692,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
             self.detailStackView.alpha = 1
             self.updatePrimaryContentScale(for: height)
             self.panelSheetViewController.view.layoutIfNeeded()
+            self.routeMediaVisibilityButtonBottomConstraint?.update(
+                inset: height + self.routeMediaVisibilityButtonPanelSpacing
+            )
+            self.view.layoutIfNeeded()
         }
 
         guard animated else {
