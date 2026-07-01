@@ -11,6 +11,7 @@ import UIKit
 enum RouteSharePreviewModule {
     case route
     case metrics
+    case calorie
 }
 
 enum RouteSharePreviewBackground {

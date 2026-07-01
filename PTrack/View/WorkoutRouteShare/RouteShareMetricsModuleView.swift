@@ -36,10 +36,6 @@ final class RouteShareMetricsModuleView: UIView {
     private let distanceLabel = UILabel()
     private let durationLabel = UILabel()
     private let timeLabel = UILabel()
-    private let caloriePileView = RouteShareCaloriePileView()
-    private var caloriePileHeightConstraint: Constraint?
-    private var currentWorkout: TrackedWorkout?
-    private var selectedCalorieFoodOption: RouteShareCalorieFoodOption?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -51,26 +47,18 @@ final class RouteShareMetricsModuleView: UIView {
         configureViews()
     }
 
-    var calorieFoodOption: RouteShareCalorieFoodOption? {
-        selectedCalorieFoodOption
-    }
-
     func configure(with workout: TrackedWorkout, color: UIColor) {
-        currentWorkout = workout
         distanceLabel.text = workout.distanceText
         durationLabel.text = durationAndElevationText(for: workout)
         timeLabel.text = calorieText(for: workout)
         timeLabel.isHidden = timeLabel.text == nil
         applyColor(color)
-        updateCaloriePile()
     }
 
     func updateLocalizedText(for workout: TrackedWorkout) {
-        currentWorkout = workout
         durationLabel.text = durationAndElevationText(for: workout)
         timeLabel.text = calorieText(for: workout)
         timeLabel.isHidden = timeLabel.text == nil
-        updateCaloriePile()
     }
 
     func applyColor(_ color: UIColor) {
@@ -78,12 +66,6 @@ final class RouteShareMetricsModuleView: UIView {
         durationLabel.textColor = color.withAlphaComponent(0.92)
         timeLabel.textColor = color.withAlphaComponent(0.86)
         applyTextShadow(isVisible: !isEffectivelyBlack(color))
-    }
-
-    func setCalorieFoodOption(_ option: RouteShareCalorieFoodOption?) {
-        selectedCalorieFoodOption = option
-        updateCaloriePile()
-        setNeedsLayout()
     }
 
     func selectionChromeRect() -> CGRect {
@@ -131,33 +113,22 @@ final class RouteShareMetricsModuleView: UIView {
         addSubview(distanceLabel)
         addSubview(durationLabel)
         addSubview(timeLabel)
-        addSubview(caloriePileView)
-
-        caloriePileView.isHidden = true
-        caloriePileView.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(136).priority(.high)
-            make.trailing.equalToSuperview().offset(-4).priority(.low)
-            make.trailing.lessThanOrEqualToSuperview().offset(10)
-            make.centerY.equalToSuperview().offset(-2)
-            make.width.equalTo(76)
-            caloriePileHeightConstraint = make.height.equalTo(124).constraint
-        }
 
         distanceLabel.snp.makeConstraints { make in
             make.leading.top.equalToSuperview().offset(12)
-            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(12)
+            make.trailing.lessThanOrEqualToSuperview().inset(12)
         }
 
         durationLabel.snp.makeConstraints { make in
             make.leading.equalTo(distanceLabel)
             make.top.equalTo(distanceLabel.snp.bottom).offset(2)
-            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(12)
+            make.trailing.lessThanOrEqualToSuperview().inset(12)
         }
 
         timeLabel.snp.makeConstraints { make in
             make.leading.equalTo(distanceLabel)
             make.top.equalTo(durationLabel.snp.bottom).offset(6)
-            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(12)
+            make.trailing.lessThanOrEqualToSuperview().inset(12)
             make.height.greaterThanOrEqualTo(18)
             make.bottom.lessThanOrEqualToSuperview().inset(8)
         }
@@ -226,20 +197,6 @@ final class RouteShareMetricsModuleView: UIView {
         return false
     }
 
-    private func updateCaloriePile() {
-        guard let selectedCalorieFoodOption,
-              let caloriesKilocalories = currentWorkout?.displayEnergyBurnedKilocalories,
-              caloriesKilocalories.isFinite,
-              caloriesKilocalories > 0 else {
-            caloriePileView.isHidden = true
-            return
-        }
-
-        caloriePileView.configure(option: selectedCalorieFoodOption, caloriesKilocalories: caloriesKilocalories)
-        caloriePileHeightConstraint?.update(offset: caloriePileView.preferredHeight)
-        caloriePileView.isHidden = false
-    }
-
     private func durationAndElevationText(for workout: TrackedWorkout) -> String {
         if let elevationGainText = workout.elevationGainText {
             return "\(workout.durationText) · \(elevationGainText)"
@@ -259,6 +216,92 @@ final class RouteShareMetricsModuleView: UIView {
             workout.isDisplayEnergyBurnedEstimated ? .estimatedBurnedCaloriesFormat : .burnedCaloriesFormat,
             caloriesKilocalories
         )
+    }
+}
+
+final class RouteShareCalorieModuleView: UIView {
+    static let preferredWidth: CGFloat = 88
+    static let minimumPreferredHeight: CGFloat = 132
+
+    let deleteButton = RouteShareModuleChrome.makeDeleteButton()
+
+    private let caloriePileView = RouteShareCaloriePileView()
+    private var caloriePileHeightConstraint: Constraint?
+    private var currentWorkout: TrackedWorkout?
+    private var selectedCalorieFoodOption: RouteShareCalorieFoodOption?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    var calorieFoodOption: RouteShareCalorieFoodOption? {
+        selectedCalorieFoodOption
+    }
+
+    var preferredHeight: CGFloat {
+        max(Self.minimumPreferredHeight, caloriePileView.preferredHeight)
+    }
+
+    func configure(with workout: TrackedWorkout) {
+        currentWorkout = workout
+        updateCaloriePile()
+    }
+
+    func updateLocalizedText(for workout: TrackedWorkout) {
+        currentWorkout = workout
+        updateCaloriePile()
+    }
+
+    func setCalorieFoodOption(_ option: RouteShareCalorieFoodOption?) {
+        selectedCalorieFoodOption = option
+        updateCaloriePile()
+        setNeedsLayout()
+    }
+
+    func selectionChromeRect() -> CGRect {
+        layoutIfNeeded()
+        let chromeRect = caloriePileView.frame.insetBy(dx: -7, dy: -7)
+        let clippedRect = chromeRect.intersection(bounds)
+        return clippedRect.isNull || clippedRect.isEmpty ? bounds.insetBy(dx: 4, dy: 4) : clippedRect
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        selectionChromeRect().contains(point)
+    }
+
+    private func configureViews() {
+        backgroundColor = .clear
+        layer.cornerRadius = 8
+        layer.masksToBounds = false
+        clipsToBounds = false
+
+        addSubview(caloriePileView)
+
+        caloriePileView.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview().inset(6)
+            make.centerY.equalToSuperview()
+            caloriePileHeightConstraint = make.height.equalTo(Self.minimumPreferredHeight).constraint
+        }
+    }
+
+    private func updateCaloriePile() {
+        guard let selectedCalorieFoodOption,
+              let caloriesKilocalories = currentWorkout?.displayEnergyBurnedKilocalories,
+              caloriesKilocalories.isFinite,
+              caloriesKilocalories > 0 else {
+            caloriePileView.isHidden = true
+            return
+        }
+
+        caloriePileView.configure(option: selectedCalorieFoodOption, caloriesKilocalories: caloriesKilocalories)
+        caloriePileHeightConstraint?.update(offset: caloriePileView.preferredHeight)
+        caloriePileView.isHidden = false
     }
 }
 

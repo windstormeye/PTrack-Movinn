@@ -57,6 +57,9 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let metricsModuleView = RouteShareMetricsModuleView()
     private let metricsSelectionBorderLayer = CAShapeLayer()
     private var metricsDeleteCornerButton: UIButton { metricsModuleView.deleteButton }
+    private let calorieModuleView = RouteShareCalorieModuleView()
+    private let calorieSelectionBorderLayer = CAShapeLayer()
+    private var calorieDeleteCornerButton: UIButton { calorieModuleView.deleteButton }
     private let brandPillView = RouteShareBrandPillView()
     private let photoCollectionView: UICollectionView
     private let toolBarScrollView = UIScrollView()
@@ -86,6 +89,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         action: #selector(resetShareCanvas)
     )
     private var toolsContainerWidthConstraint: Constraint?
+    private var calorieModuleHeightConstraint: Constraint?
     private weak var previewBackgroundTapGesture: UITapGestureRecognizer?
     private weak var previewBackgroundDoubleTapGesture: UITapGestureRecognizer?
     private weak var previewContainerTapGesture: UITapGestureRecognizer?
@@ -149,12 +153,16 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var lastSelectedPhotoIndexForAspectRatio: Int?
     private var isRouteModuleEnabled = true
     private var isMetricsModuleEnabled = true
+    private var isCalorieModuleEnabled = false
     private var routeModuleScale: CGFloat = 1
     private var metricsModuleScale: CGFloat = 1
+    private var calorieModuleScale: CGFloat = 1
     private var routeModuleRotation: CGFloat = 0
     private var metricsModuleRotation: CGFloat = 0
+    private var calorieModuleRotation: CGFloat = 0
     private var routeModuleTranslation: CGPoint = .zero
     private var metricsModuleTranslation: CGPoint = .zero
+    private var calorieModuleTranslation: CGPoint = .zero
     private var brandPillTranslation: CGPoint = .zero
     private var backgroundMediaScale: CGFloat = 1
     private var backgroundMediaRotation: CGFloat = 0
@@ -418,6 +426,8 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         isRouteModuleEnabled = true
         isMetricsModuleEnabled = true
+        isCalorieModuleEnabled = false
+        calorieModuleView.setCalorieFoodOption(nil)
         isBackgroundAdjustmentEnabled = false
         hasManualMapAdjustment = false
         selectedPreviewModule = nil
@@ -585,6 +595,8 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         metricsModuleView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(selectMetricsModule)))
         metricsModuleView.configure(with: workout, color: effectiveMetricsColor)
+        calorieModuleView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(selectCalorieModule)))
+        calorieModuleView.configure(with: workout)
         configureModuleGestures()
         configureBrandPillGestures()
         configureModuleSelectionChrome()
@@ -599,8 +611,10 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewPlaceholderView.addSubview(previewPlaceholderIconView)
         previewView.addSubview(routeModuleView)
         previewView.addSubview(metricsModuleView)
+        previewView.addSubview(calorieModuleView)
         previewView.addSubview(routeDeleteCornerButton)
         previewView.addSubview(metricsDeleteCornerButton)
+        previewView.addSubview(calorieDeleteCornerButton)
         previewView.addSubview(brandPillView)
 
         previewContainerView.snp.makeConstraints { make in
@@ -637,6 +651,13 @@ final class WorkoutRouteShareViewController: UIViewController {
         metricsModuleView.snp.makeConstraints { make in
             make.leading.trailing.bottom.equalToSuperview().inset(22)
             make.height.equalTo(104)
+        }
+
+        calorieModuleView.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().inset(22)
+            make.centerY.equalToSuperview()
+            make.width.equalTo(RouteShareCalorieModuleView.preferredWidth)
+            calorieModuleHeightConstraint = make.height.equalTo(RouteShareCalorieModuleView.minimumPreferredHeight).constraint
         }
 
         brandPillView.snp.makeConstraints { make in
@@ -711,7 +732,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func configureModuleGestures() {
-        [routeModuleView, metricsModuleView].forEach { moduleView in
+        [routeModuleView, metricsModuleView, calorieModuleView].forEach { moduleView in
             let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handleModulePan(_:)))
             panGesture.delegate = self
             moduleView.addGestureRecognizer(panGesture)
@@ -752,11 +773,13 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func configureModuleSelectionChrome() {
         configureSelectionBorderLayer(routeSelectionBorderLayer)
         configureSelectionBorderLayer(metricsSelectionBorderLayer)
-        [routeDeleteCornerButton, metricsDeleteCornerButton].forEach { button in
+        configureSelectionBorderLayer(calorieSelectionBorderLayer)
+        [routeDeleteCornerButton, metricsDeleteCornerButton, calorieDeleteCornerButton].forEach { button in
             button.bounds = CGRect(origin: .zero, size: CGSize(width: 24, height: 24))
         }
         routeDeleteCornerButton.addTarget(self, action: #selector(deleteRouteModuleFromChrome), for: .touchUpInside)
         metricsDeleteCornerButton.addTarget(self, action: #selector(deleteMetricsModuleFromChrome), for: .touchUpInside)
+        calorieDeleteCornerButton.addTarget(self, action: #selector(deleteCalorieModuleFromChrome), for: .touchUpInside)
     }
 
     private func configureSelectionBorderLayer(_ borderLayer: CAShapeLayer) {
@@ -778,6 +801,11 @@ final class WorkoutRouteShareViewController: UIViewController {
             borderLayer: metricsSelectionBorderLayer,
             deleteButton: metricsDeleteCornerButton,
             for: metricsModuleView
+        )
+        updateSelectionChrome(
+            borderLayer: calorieSelectionBorderLayer,
+            deleteButton: calorieDeleteCornerButton,
+            for: calorieModuleView
         )
     }
 
@@ -821,6 +849,10 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         if let metricsModuleView = moduleView as? RouteShareMetricsModuleView {
             return metricsModuleView.selectionChromeRect()
+        }
+
+        if let calorieModuleView = moduleView as? RouteShareCalorieModuleView {
+            return calorieModuleView.selectionChromeRect()
         }
 
         return moduleView.bounds
@@ -953,6 +985,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func updateLocalizedText() {
         title = AppLocalization.text(.share)
         metricsModuleView.updateLocalizedText(for: workout)
+        calorieModuleView.updateLocalizedText(for: workout)
         configureCanvasColorToolButton()
         configureColorToolButton()
         configureAspectRatioToolButton()
@@ -1084,7 +1117,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func configureColorToolButton() {
-        let hasSelection = selectedPreviewModule != nil
+        let hasSelection = selectedPreviewModuleSupportsColor
         colorToolButton.configuration = toolButtonConfiguration(
             title: AppLocalization.text(.color),
             imageName: "paintpalette"
@@ -1113,8 +1146,16 @@ final class WorkoutRouteShareViewController: UIViewController {
         colorToolButton.menu = UIMenu(children: colorActions + [paletteAction])
     }
 
+    private var selectedPreviewModuleSupportsColor: Bool {
+        switch selectedPreviewModule {
+        case .route, .metrics:
+            return true
+        case .calorie, nil:
+            return false
+        }
+    }
+
     private func configureCalorieFoodToolButton() {
-        let hasMetricsSelection = selectedPreviewModule == .metrics && !metricsModuleView.isHidden
         let hasCalories = workout.displayEnergyBurnedKilocalories.map {
             $0.isFinite && $0 > 0
         } ?? false
@@ -1122,20 +1163,20 @@ final class WorkoutRouteShareViewController: UIViewController {
             title: AppLocalization.text(.calories),
             imageName: "flame"
         )
-        if metricsModuleView.calorieFoodOption != nil {
+        if calorieModuleView.calorieFoodOption != nil {
             configuration.baseForegroundColor = AppColors.movinnGreen
         }
 
         calorieFoodToolButton.configuration = configuration
-        calorieFoodToolButton.isEnabled = hasMetricsSelection && hasCalories
-        calorieFoodToolButton.alpha = hasMetricsSelection && hasCalories ? 1 : 0.38
+        calorieFoodToolButton.isEnabled = hasCalories
+        calorieFoodToolButton.alpha = hasCalories ? 1 : 0.38
         calorieFoodToolButton.showsMenuAsPrimaryAction = true
 
-        let disabledAttributes: UIMenuElement.Attributes = hasMetricsSelection && hasCalories ? [] : [.disabled]
+        let disabledAttributes: UIMenuElement.Attributes = hasCalories ? [] : [.disabled]
         let hideAction = UIAction(
             title: AppLocalization.text(.disable),
             attributes: disabledAttributes,
-            state: metricsModuleView.calorieFoodOption == nil ? .on : .off
+            state: calorieModuleView.calorieFoodOption == nil ? .on : .off
         ) { [weak self] _ in
             self?.applyCalorieFoodOption(nil)
         }
@@ -1143,7 +1184,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             UIAction(
                 title: option.menuTitle,
                 attributes: disabledAttributes,
-                state: metricsModuleView.calorieFoodOption == option ? .on : .off
+                state: calorieModuleView.calorieFoodOption == option ? .on : .off
             ) { [weak self] _ in
                 self?.applyCalorieFoodOption(option)
             }
@@ -1289,6 +1330,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         collageView.setDividerInteractionEnabled(selectedPreviewModule == nil && !isBackgroundAdjustmentEnabled)
         applySelectionStyle(to: routeModuleView, isSelected: selectedPreviewModule == .route)
         applySelectionStyle(to: metricsModuleView, isSelected: selectedPreviewModule == .metrics)
+        applySelectionStyle(to: calorieModuleView, isSelected: selectedPreviewModule == .calorie)
         configureColorToolButton()
         configureCalorieFoodToolButton()
         updateToolBarVisibility()
@@ -1303,9 +1345,13 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func applySelectionStyle(to view: UIView, isSelected: Bool) {
-        let isRouteView = view === routeModuleView
-        let borderLayer = isRouteView ? routeSelectionBorderLayer : metricsSelectionBorderLayer
-        let deleteButton = isRouteView ? routeDeleteCornerButton : metricsDeleteCornerButton
+        let module = previewModule(for: view)
+        guard let module else {
+            return
+        }
+
+        let borderLayer = selectionBorderLayer(for: module)
+        let deleteButton = deleteCornerButton(for: module)
         let shouldShowChrome = isSelected && !isExportChromeHidden
         borderLayer.isHidden = !shouldShowChrome
         deleteButton.isHidden = !shouldShowChrome
@@ -1317,6 +1363,28 @@ final class WorkoutRouteShareViewController: UIViewController {
             previewView.bringSubviewToFront(deleteButton)
         } else {
             borderLayer.removeFromSuperlayer()
+        }
+    }
+
+    private func selectionBorderLayer(for module: PreviewModule) -> CAShapeLayer {
+        switch module {
+        case .route:
+            return routeSelectionBorderLayer
+        case .metrics:
+            return metricsSelectionBorderLayer
+        case .calorie:
+            return calorieSelectionBorderLayer
+        }
+    }
+
+    private func deleteCornerButton(for module: PreviewModule) -> UIButton {
+        switch module {
+        case .route:
+            return routeDeleteCornerButton
+        case .metrics:
+            return metricsDeleteCornerButton
+        case .calorie:
+            return calorieDeleteCornerButton
         }
     }
 
@@ -2105,13 +2173,17 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func resetPreviewModuleAdjustments() {
         routeModuleScale = defaultModuleScale(for: .route)
         metricsModuleScale = defaultModuleScale(for: .metrics)
+        calorieModuleScale = defaultModuleScale(for: .calorie)
         routeModuleRotation = 0
         metricsModuleRotation = 0
+        calorieModuleRotation = 0
         routeModuleTranslation = defaultModuleTranslation(for: .route, scale: routeModuleScale)
         metricsModuleTranslation = defaultModuleTranslation(for: .metrics, scale: metricsModuleScale)
+        calorieModuleTranslation = defaultModuleTranslation(for: .calorie, scale: calorieModuleScale)
         brandPillTranslation = .zero
         applyModuleTransform(.route)
         applyModuleTransform(.metrics)
+        applyModuleTransform(.calorie)
         applyBrandPillTransform()
         isBackgroundAdjustmentEnabled = false
         selectedPreviewModule = nil
@@ -2130,6 +2202,10 @@ final class WorkoutRouteShareViewController: UIViewController {
             metricsModuleScale = scale
             metricsModuleRotation = 0
             metricsModuleTranslation = defaultModuleTranslation(for: module, scale: scale)
+        case .calorie:
+            calorieModuleScale = scale
+            calorieModuleRotation = 0
+            calorieModuleTranslation = defaultModuleTranslation(for: module, scale: scale)
         }
         applyModuleTransform(module)
     }
@@ -2151,6 +2227,14 @@ final class WorkoutRouteShareViewController: UIViewController {
             }
             if heightMultiplier < 0.92 {
                 return 0.78
+            }
+            return 1
+        case .calorie:
+            if heightMultiplier <= 0.62 {
+                return 0.72
+            }
+            if heightMultiplier < 0.92 {
+                return 0.86
             }
             return 1
         }
@@ -2191,6 +2275,13 @@ final class WorkoutRouteShareViewController: UIViewController {
                 y: previewView.bounds.height - margin - scaledSize.height / 2
             )
             return CGPoint(x: targetCenter.x - center.x, y: targetCenter.y - center.y)
+        case .calorie:
+            let margin: CGFloat = heightMultiplier < 0.92 ? 14 : 22
+            let targetCenter = CGPoint(
+                x: previewView.bounds.width - margin - scaledSize.width / 2,
+                y: previewView.bounds.midY
+            )
+            return CGPoint(x: targetCenter.x - center.x, y: targetCenter.y - center.y)
         }
     }
 
@@ -2218,12 +2309,26 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePreviewSelection()
     }
 
+    @objc private func selectCalorieModule() {
+        guard !calorieModuleView.isHidden else {
+            return
+        }
+        clearCollageCropSelectionForElementEditing()
+        isBackgroundAdjustmentEnabled = false
+        selectedPreviewModule = .calorie
+        previewView.bringSubviewToFront(calorieModuleView)
+        keepBrandPillOnTop()
+        updatePreviewSelection()
+    }
+
     private func selectedColorIndexForCurrentModule() -> Int? {
         switch selectedPreviewModule {
         case .route:
             return selectedRouteCustomColor == nil ? selectedRouteColorIndex : nil
         case .metrics:
             return selectedMetricsCustomColor == nil ? selectedMetricsColorIndex : nil
+        case .calorie:
+            return nil
         case nil:
             return nil
         }
@@ -2235,6 +2340,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             return selectedRouteCustomColor != nil
         case .metrics:
             return selectedMetricsCustomColor != nil
+        case .calorie:
+            return false
         case nil:
             return false
         }
@@ -2246,6 +2353,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             return routeModuleColor
         case .metrics:
             return metricsModuleColor
+        case .calorie:
+            return AppColors.solidForeground
         }
     }
 
@@ -2257,6 +2366,8 @@ final class WorkoutRouteShareViewController: UIViewController {
         case .metrics:
             selectedMetricsCustomColor = nil
             selectedMetricsColorIndex = index
+        case .calorie:
+            return
         case nil:
             return
         }
@@ -2269,19 +2380,39 @@ final class WorkoutRouteShareViewController: UIViewController {
             selectedRouteCustomColor = color
         case .metrics:
             selectedMetricsCustomColor = color
+        case .calorie:
+            return
         }
         configureColorToolButton()
         updateSelectionChromeFrames()
     }
 
     private func applyCalorieFoodOption(_ option: RouteShareCalorieFoodOption?) {
-        guard selectedPreviewModule == .metrics else {
-            return
+        let wasCalorieModuleEnabled = isCalorieModuleEnabled
+        calorieModuleView.setCalorieFoodOption(option)
+        calorieModuleHeightConstraint?.update(offset: calorieModuleView.preferredHeight)
+        view.layoutIfNeeded()
+        isCalorieModuleEnabled = option != nil
+        if option == nil {
+            if selectedPreviewModule == .calorie {
+                selectedPreviewModule = nil
+            }
+        } else {
+            if wasCalorieModuleEnabled {
+                clearCollageCropSelectionForElementEditing()
+                isBackgroundAdjustmentEnabled = false
+                applyModuleTransform(.calorie)
+                selectedPreviewModule = .calorie
+                previewView.bringSubviewToFront(calorieModuleView)
+                keepBrandPillOnTop()
+            } else {
+                addCalorieModule()
+            }
         }
-
-        metricsModuleView.setCalorieFoodOption(option)
+        updatePreviewModuleVisibility()
         configureCalorieFoodToolButton()
         updateSelectionChromeFrames()
+        updatePreviewSelection()
     }
 
     @objc private func deleteSelectedModule() {
@@ -2290,6 +2421,9 @@ final class WorkoutRouteShareViewController: UIViewController {
             isRouteModuleEnabled = false
         case .metrics:
             isMetricsModuleEnabled = false
+        case .calorie:
+            isCalorieModuleEnabled = false
+            calorieModuleView.setCalorieFoodOption(nil)
         case nil:
             return
         }
@@ -2323,6 +2457,19 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePreviewSelection()
     }
 
+    private func addCalorieModule() {
+        isCalorieModuleEnabled = true
+        view.layoutIfNeeded()
+        resetPreviewModuleAdjustment(for: .calorie)
+        clearCollageCropSelectionForElementEditing()
+        isBackgroundAdjustmentEnabled = false
+        selectedPreviewModule = .calorie
+        previewView.bringSubviewToFront(calorieModuleView)
+        keepBrandPillOnTop()
+        updatePreviewModuleVisibility()
+        updatePreviewSelection()
+    }
+
     @objc private func deleteRouteModuleFromChrome() {
         selectedPreviewModule = .route
         deleteSelectedModule()
@@ -2330,6 +2477,11 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     @objc private func deleteMetricsModuleFromChrome() {
         selectedPreviewModule = .metrics
+        deleteSelectedModule()
+    }
+
+    @objc private func deleteCalorieModuleFromChrome() {
+        selectedPreviewModule = .calorie
         deleteSelectedModule()
     }
 
@@ -2351,7 +2503,8 @@ final class WorkoutRouteShareViewController: UIViewController {
         updatePreviewSelection()
 
         let translation = recognizer.translation(in: previewView)
-        if module == .route {
+        switch module {
+        case .route:
             routeModuleTranslation = clampedModuleTranslation(
                 for: module,
                 proposed: CGPoint(
@@ -2359,12 +2512,20 @@ final class WorkoutRouteShareViewController: UIViewController {
                     y: routeModuleTranslation.y + translation.y
                 )
             )
-        } else {
+        case .metrics:
             metricsModuleTranslation = clampedModuleTranslation(
                 for: module,
                 proposed: CGPoint(
                     x: metricsModuleTranslation.x + translation.x,
                     y: metricsModuleTranslation.y + translation.y
+                )
+            )
+        case .calorie:
+            calorieModuleTranslation = clampedModuleTranslation(
+                for: module,
+                proposed: CGPoint(
+                    x: calorieModuleTranslation.x + translation.x,
+                    y: calorieModuleTranslation.y + translation.y
                 )
             )
         }
@@ -2389,12 +2550,15 @@ final class WorkoutRouteShareViewController: UIViewController {
         keepBrandPillOnTop()
         updatePreviewSelection()
 
-        let currentScale = module == .route ? routeModuleScale : metricsModuleScale
+        let currentScale = moduleScale(for: module)
         let proposedScale = min(max(currentScale * recognizer.scale, moduleMinimumScale), moduleMaximumScale)
-        if module == .route {
+        switch module {
+        case .route:
             routeModuleScale = proposedScale
-        } else {
+        case .metrics:
             metricsModuleScale = proposedScale
+        case .calorie:
+            calorieModuleScale = proposedScale
         }
         applyModuleTransform(module)
         recognizer.scale = 1
@@ -2417,10 +2581,13 @@ final class WorkoutRouteShareViewController: UIViewController {
         keepBrandPillOnTop()
         updatePreviewSelection()
 
-        if module == .route {
+        switch module {
+        case .route:
             routeModuleRotation += recognizer.rotation
-        } else {
+        case .metrics:
             metricsModuleRotation += recognizer.rotation
+        case .calorie:
+            calorieModuleRotation += recognizer.rotation
         }
         applyModuleTransform(module)
         recognizer.rotation = 0
@@ -2684,6 +2851,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         if view === metricsModuleView {
             return .metrics
         }
+        if view === calorieModuleView {
+            return .calorie
+        }
         return nil
     }
 
@@ -2693,6 +2863,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             return routeModuleView
         case .metrics:
             return metricsModuleView
+        case .calorie:
+            return calorieModuleView
         }
     }
 
@@ -2702,6 +2874,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             return routeModuleScale
         case .metrics:
             return metricsModuleScale
+        case .calorie:
+            return calorieModuleScale
         }
     }
 
@@ -2711,6 +2885,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             return routeModuleTranslation
         case .metrics:
             return metricsModuleTranslation
+        case .calorie:
+            return calorieModuleTranslation
         }
     }
 
@@ -2720,6 +2896,8 @@ final class WorkoutRouteShareViewController: UIViewController {
             return routeModuleRotation
         case .metrics:
             return metricsModuleRotation
+        case .calorie:
+            return calorieModuleRotation
         }
     }
 
@@ -2772,10 +2950,14 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         routeModuleView.isHidden = !isPhotoBackground || !isRouteModuleEnabled
         metricsModuleView.isHidden = !isMetricsModuleEnabled
+        calorieModuleView.isHidden = !isCalorieModuleEnabled
         if selectedPreviewModule == .route, routeModuleView.isHidden {
             selectedPreviewModule = nil
         }
         if selectedPreviewModule == .metrics, metricsModuleView.isHidden {
+            selectedPreviewModule = nil
+        }
+        if selectedPreviewModule == .calorie, calorieModuleView.isHidden {
             selectedPreviewModule = nil
         }
     }
@@ -2876,9 +3058,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
 
         canvasColorToolButton.isHidden = false
-        colorToolButton.isHidden = selectedPreviewModule == nil
+        colorToolButton.isHidden = !selectedPreviewModuleSupportsColor
         mapStyleToolButton.isHidden = !isMapBackground
-        calorieFoodToolButton.isHidden = selectedPreviewModule != .metrics
+        calorieFoodToolButton.isHidden = false
         collageToolButton.isHidden = true
         collageStyleToolButton.isHidden = !isCollageBackground
         deleteToolButton.isHidden = true
@@ -3352,11 +3534,11 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func setSelectionChromeHidden(_ hidden: Bool) {
         isExportChromeHidden = hidden
         if hidden {
-            [routeSelectionBorderLayer, metricsSelectionBorderLayer].forEach { borderLayer in
+            [routeSelectionBorderLayer, metricsSelectionBorderLayer, calorieSelectionBorderLayer].forEach { borderLayer in
                 borderLayer.isHidden = true
                 borderLayer.removeFromSuperlayer()
             }
-            [routeDeleteCornerButton, metricsDeleteCornerButton].forEach { deleteButton in
+            [routeDeleteCornerButton, metricsDeleteCornerButton, calorieDeleteCornerButton].forEach { deleteButton in
                 deleteButton.isHidden = true
             }
         } else {
@@ -3633,6 +3815,7 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
         let interactiveElementViews: [UIView] = [
             routeDeleteCornerButton,
             metricsDeleteCornerButton,
+            calorieDeleteCornerButton,
             brandPillView
         ]
         if interactiveElementViews.contains(where: { elementView in
@@ -3641,7 +3824,7 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
             return true
         }
 
-        let moduleViews = [routeModuleView, metricsModuleView]
+        let moduleViews = [routeModuleView, metricsModuleView, calorieModuleView]
         return moduleViews.contains { moduleView in
             guard !moduleView.isHidden else {
                 return false
@@ -3676,7 +3859,7 @@ extension WorkoutRouteShareViewController: UIGestureRecognizerDelegate {
                 && isPreviewModuleGesture(otherGestureRecognizer)
         }
 
-        let moduleViews = [routeModuleView, metricsModuleView]
+        let moduleViews = [routeModuleView, metricsModuleView, calorieModuleView]
         return moduleViews.contains { $0 === gestureView }
             && moduleViews.contains { $0 === otherGestureView }
     }
