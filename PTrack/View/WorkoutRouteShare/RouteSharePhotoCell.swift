@@ -85,7 +85,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
     }
 
     func configureMap(isSelected: Bool) {
-        contentView.backgroundColor = AppColors.cardBackground
+        contentView.backgroundColor = AppColors.shareActionBackground
         imageView.image = nil
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(
@@ -99,7 +99,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
     }
 
     func configureCollage(isSelected: Bool) {
-        contentView.backgroundColor = AppColors.cardBackground
+        contentView.backgroundColor = AppColors.shareActionBackground
         imageView.image = nil
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(
@@ -113,7 +113,7 @@ final class RouteSharePhotoCell: UICollectionViewCell {
     }
 
     func configureAdd() {
-        contentView.backgroundColor = AppColors.cardBackground
+        contentView.backgroundColor = AppColors.shareActionBackground
         imageView.image = nil
         imageView.backgroundColor = .clear
         addIconView.image = UIImage(

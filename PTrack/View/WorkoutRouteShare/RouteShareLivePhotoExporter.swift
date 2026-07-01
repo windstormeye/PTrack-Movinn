@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 
 final class RouteShareLivePhotoExporter {
     private struct LoadedLivePhotoVideo {
+        let asset: AVAsset
         let videoTrack: AVAssetTrack
         let audioTrack: AVAssetTrack?
         let videoTimeRange: CMTimeRange
@@ -21,6 +22,36 @@ final class RouteShareLivePhotoExporter {
         let naturalSize: CGSize
         let preferredTransform: CGAffineTransform
         let nominalFrameRate: Float
+    }
+
+    private struct PreparedCompositeVideoSource {
+        let loadedVideo: LoadedLivePhotoVideo
+        let backgroundTransform: RouteShareBackgroundRenderTransform
+        let clippingPath: UIBezierPath?
+    }
+
+    private struct CompositeFrameSource {
+        let imageGenerator: AVAssetImageGenerator
+        let videoTimeRange: CMTimeRange
+        let backgroundTransform: RouteShareBackgroundRenderTransform
+        let clippingPath: UIBezierPath?
+        let lastFrameTime: CMTime
+        var lastFrameImage: CGImage?
+
+        mutating func frameImage(at presentationTime: CMTime) throws -> CGImage {
+            let usesLastFrame = CMTimeCompare(presentationTime, lastFrameTime) >= 0
+            if usesLastFrame, let lastFrameImage {
+                return lastFrameImage
+            }
+
+            let sourceElapsedTime = usesLastFrame ? lastFrameTime : presentationTime
+            let sourceTime = CMTimeAdd(videoTimeRange.start, sourceElapsedTime)
+            let image = try imageGenerator.copyCGImage(at: sourceTime, actualTime: nil)
+            if usesLastFrame {
+                lastFrameImage = image
+            }
+            return image
+        }
     }
 
     private final class SampleCopyPipeline: @unchecked Sendable {
@@ -54,6 +85,7 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        canvasColor: UIColor = .white,
         includesAudio: Bool = true,
         completion: @escaping (Result<RouteShareLivePhotoExport, Error>) -> Void
     ) {
@@ -96,6 +128,7 @@ final class RouteShareLivePhotoExporter {
                                     overlayImage: overlayImage,
                                     outputSize: outputSize,
                                     backgroundTransform: backgroundTransform,
+                                    canvasColor: canvasColor,
                                     includesAudio: includesAudio,
                                     contentIdentifier: contentIdentifier,
                                     sourceVideoURL: sourceVideoURL,
@@ -120,11 +153,78 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
+    func export(
+        sources: [RouteShareLivePhotoVideoSource],
+        stillImage: UIImage,
+        overlayImage: UIImage,
+        outputSize: CGSize,
+        canvasColor: UIColor = .white,
+        includesAudio: Bool = true,
+        completion: @escaping (Result<RouteShareLivePhotoExport, Error>) -> Void
+    ) {
+        guard sources.count > 1 else {
+            completion(.failure(RouteShareLivePhotoExportError.missingResources))
+            return
+        }
+
+        do {
+            let directoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MovinnLivePhoto-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+            let photoURL = directoryURL.appendingPathComponent("movinn-live-photo.jpg")
+            let videoURL = directoryURL.appendingPathComponent("movinn-live-photo.mov")
+            let contentIdentifier = UUID().uuidString
+
+            Task { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                do {
+                    let preparedSources = try await prepareCompositeVideoSources(
+                        sources,
+                        directoryURL: directoryURL
+                    )
+                    try writeLivePhotoJPEG(
+                        stillImage,
+                        contentIdentifier: contentIdentifier,
+                        to: photoURL
+                    )
+                    try await renderCompositeLivePhotoVideo(
+                        sources: preparedSources,
+                        overlayImage: overlayImage,
+                        outputSize: outputSize,
+                        canvasColor: canvasColor,
+                        includesAudio: includesAudio,
+                        contentIdentifier: contentIdentifier,
+                        outputVideoURL: videoURL
+                    )
+                    DispatchQueue.main.async {
+                        completion(.success(RouteShareLivePhotoExport(
+                            photoURL: photoURL,
+                            pairedVideoURL: videoURL,
+                            directoryURL: directoryURL
+                        )))
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: directoryURL)
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
     private func renderLivePhoto(
         stillImage: UIImage,
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        canvasColor: UIColor,
         includesAudio: Bool,
         contentIdentifier: String,
         sourceVideoURL: URL,
@@ -138,7 +238,8 @@ final class RouteShareLivePhotoExporter {
                 baseImage: stillImage,
                 overlayImage: overlayImage,
                 outputSize: outputSize,
-                backgroundTransform: backgroundTransform
+                backgroundTransform: backgroundTransform,
+                canvasColor: canvasColor
             )
             try writeLivePhotoJPEG(
                 photoImage,
@@ -151,6 +252,7 @@ final class RouteShareLivePhotoExporter {
                 overlayImage: overlayImage,
                 outputSize: outputSize,
                 backgroundTransform: backgroundTransform,
+                canvasColor: canvasColor,
                 includesAudio: includesAudio,
                 contentIdentifier: contentIdentifier
             ) { videoResult in
@@ -196,6 +298,65 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
+    private func prepareCompositeVideoSources(
+        _ sources: [RouteShareLivePhotoVideoSource],
+        directoryURL: URL
+    ) async throws -> [PreparedCompositeVideoSource] {
+        var preparedSources: [PreparedCompositeVideoSource] = []
+        preparedSources.reserveCapacity(sources.count)
+
+        for (index, source) in sources.enumerated() {
+            let pairedVideoResource = try pairedVideoResource(for: source.asset)
+            let sourceVideoURL = directoryURL
+                .appendingPathComponent("source-live-photo-\(index).mov")
+            try await writePairedVideoResource(
+                pairedVideoResource: pairedVideoResource,
+                sourceVideoURL: sourceVideoURL
+            )
+
+            let sourceAsset = AVAsset(url: sourceVideoURL)
+            let loadedVideo = try await loadedLivePhotoVideo(from: sourceAsset)
+            preparedSources.append(PreparedCompositeVideoSource(
+                loadedVideo: loadedVideo,
+                backgroundTransform: source.backgroundTransform,
+                clippingPath: source.clippingPath?.copy() as? UIBezierPath
+            ))
+        }
+
+        return preparedSources
+    }
+
+    private func pairedVideoResource(for asset: PHAsset) throws -> PHAssetResource {
+        let resources = PHAssetResource.assetResources(for: asset)
+        guard let pairedVideoResource = resources.first(where: { $0.type == .fullSizePairedVideo })
+                ?? resources.first(where: { $0.type == .pairedVideo }) else {
+            throw RouteShareLivePhotoExportError.missingResources
+        }
+        return pairedVideoResource
+    }
+
+    private func writePairedVideoResource(
+        pairedVideoResource: PHAssetResource,
+        sourceVideoURL: URL
+    ) async throws {
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHAssetResourceManager.default().writeData(
+                for: pairedVideoResource,
+                toFile: sourceVideoURL,
+                options: options
+            ) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     private func requestLivePhotoStillImage(
         for asset: PHAsset,
         completion: @escaping (Result<UIImage, Error>) -> Void
@@ -222,13 +383,14 @@ final class RouteShareLivePhotoExporter {
         baseImage: UIImage,
         overlayImage: UIImage,
         outputSize: CGSize,
-        backgroundTransform: RouteShareBackgroundRenderTransform
+        backgroundTransform: RouteShareBackgroundRenderTransform,
+        canvasColor: UIColor
     ) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
         return UIGraphicsImageRenderer(size: outputSize, format: format).image { rendererContext in
-            UIColor.white.setFill()
+            canvasColor.setFill()
             UIBezierPath(rect: CGRect(origin: .zero, size: outputSize)).fill()
             drawAdjustedAspectFillImage(
                 baseImage,
@@ -273,6 +435,7 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        canvasColor: UIColor,
         includesAudio: Bool,
         contentIdentifier: String,
         completion: @escaping (Result<Void, Error>) -> Void
@@ -291,6 +454,7 @@ final class RouteShareLivePhotoExporter {
                     overlayImage: overlayImage,
                     outputSize: outputSize,
                     backgroundTransform: backgroundTransform,
+                    canvasColor: canvasColor,
                     includesAudio: includesAudio,
                     contentIdentifier: contentIdentifier,
                     completion: completion
@@ -318,6 +482,7 @@ final class RouteShareLivePhotoExporter {
         let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
 
         return LoadedLivePhotoVideo(
+            asset: sourceAsset,
             videoTrack: videoTrack,
             audioTrack: audioTracks.first,
             videoTimeRange: videoTimeRange,
@@ -335,22 +500,24 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        canvasColor: UIColor,
         includesAudio: Bool,
         contentIdentifier: String,
         completion: @escaping (Result<Void, Error>) -> Void
     ) async throws {
-        let whiteBackgroundURL = outputVideoURL
+        let solidBackgroundURL = outputVideoURL
             .deletingLastPathComponent()
-            .appendingPathComponent("white-background.mov")
-        try writeWhiteBackgroundVideo(
-            to: whiteBackgroundURL,
+            .appendingPathComponent("solid-background.mov")
+        try writeSolidBackgroundVideo(
+            to: solidBackgroundURL,
             outputSize: outputSize,
             duration: loadedVideo.duration,
-            nominalFrameRate: loadedVideo.nominalFrameRate
+            nominalFrameRate: loadedVideo.nominalFrameRate,
+            backgroundColor: canvasColor
         )
-        let whiteBackgroundAsset = AVAsset(url: whiteBackgroundURL)
-        let whiteBackgroundTracks = try await whiteBackgroundAsset.loadTracks(withMediaType: .video)
-        guard let whiteBackgroundTrack = whiteBackgroundTracks.first else {
+        let solidBackgroundAsset = AVAsset(url: solidBackgroundURL)
+        let solidBackgroundTracks = try await solidBackgroundAsset.loadTracks(withMediaType: .video)
+        guard let solidBackgroundTrack = solidBackgroundTracks.first else {
             throw RouteShareLivePhotoExportError.renderingFailed
         }
 
@@ -370,7 +537,7 @@ final class RouteShareLivePhotoExporter {
 
         try compositionBackgroundTrack.insertTimeRange(
             CMTimeRange(start: .zero, duration: loadedVideo.duration),
-            of: whiteBackgroundTrack,
+            of: solidBackgroundTrack,
             at: .zero
         )
         try compositionVideoTrack.insertTimeRange(
@@ -399,6 +566,7 @@ final class RouteShareLivePhotoExporter {
             overlayImage: overlayImage,
             outputSize: outputSize,
             backgroundTransform: backgroundTransform,
+            canvasColor: canvasColor,
             naturalSize: loadedVideo.naturalSize,
             preferredTransform: loadedVideo.preferredTransform,
             nominalFrameRate: loadedVideo.nominalFrameRate
@@ -434,6 +602,345 @@ final class RouteShareLivePhotoExporter {
                 completion(.failure(error))
             }
         }
+    }
+
+    private func renderCompositeLivePhotoVideo(
+        sources: [PreparedCompositeVideoSource],
+        overlayImage: UIImage,
+        outputSize: CGSize,
+        canvasColor: UIColor,
+        includesAudio: Bool,
+        contentIdentifier: String,
+        outputVideoURL: URL
+    ) async throws {
+        let outputDuration = sources
+            .map(\.loadedVideo.duration)
+            .reduce(CMTime.zero, maxTime)
+        guard CMTimeCompare(outputDuration, .zero) > 0 else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        let renderedVideoURL = outputVideoURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("rendered-composite-live-photo.mov")
+        let renderedVideoWithAudioURL = outputVideoURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("rendered-composite-live-photo-audio.mov")
+        try? FileManager.default.removeItem(at: renderedVideoURL)
+        try? FileManager.default.removeItem(at: renderedVideoWithAudioURL)
+        try? FileManager.default.removeItem(at: outputVideoURL)
+
+        let frameRate = compositeFrameRate(for: sources)
+        try writeCompositeVideoFrames(
+            to: renderedVideoURL,
+            sources: sources,
+            overlayImage: overlayImage,
+            outputSize: outputSize,
+            canvasColor: canvasColor,
+            duration: outputDuration,
+            frameRate: frameRate
+        )
+
+        let pairedVideoSourceURL: URL
+        if includesAudio {
+            pairedVideoSourceURL = try await writeCompositeAudioVideo(
+                videoURL: renderedVideoURL,
+                sources: sources,
+                duration: outputDuration,
+                outputURL: renderedVideoWithAudioURL
+            )
+        } else {
+            pairedVideoSourceURL = renderedVideoURL
+        }
+
+        try await writeLivePhotoPairedVideo(
+            from: pairedVideoSourceURL,
+            to: outputVideoURL,
+            contentIdentifier: contentIdentifier
+        )
+    }
+
+    private func writeCompositeVideoFrames(
+        to url: URL,
+        sources: [PreparedCompositeVideoSource],
+        overlayImage: UIImage,
+        outputSize: CGSize,
+        canvasColor: UIColor,
+        duration: CMTime,
+        frameRate: Int32
+    ) throws {
+        let width = max(Int(outputSize.width.rounded()), 2)
+        let height = max(Int(outputSize.height.rounded()), 2)
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
+        let frameCount = max(Int(ceil(CMTimeGetSeconds(duration) * Double(frameRate))), 1)
+
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let videoInput = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height
+            ]
+        )
+        videoInput.expectsMediaDataInRealTime = false
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+        )
+
+        guard writer.canAdd(videoInput) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+        writer.add(videoInput)
+        guard writer.startWriting() else {
+            throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        writer.startSession(atSourceTime: .zero)
+        guard let pixelBufferPool = adaptor.pixelBufferPool else {
+            writer.cancelWriting()
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        var frameSources = makeCompositeFrameSources(
+            from: sources,
+            frameDuration: frameDuration,
+            frameRate: frameRate
+        )
+
+        do {
+            for frameIndex in 0..<frameCount {
+                while !videoInput.isReadyForMoreMediaData {
+                    Thread.sleep(forTimeInterval: 0.002)
+                }
+
+                let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(frameIndex))
+                try autoreleasepool {
+                    let frameImage = try compositeFrameImage(
+                        at: presentationTime,
+                        frameSources: &frameSources,
+                        overlayImage: overlayImage,
+                        outputSize: outputSize,
+                        canvasColor: canvasColor
+                    )
+                    let pixelBuffer = try makePixelBuffer(
+                        from: frameImage,
+                        pixelBufferPool: pixelBufferPool,
+                        width: width,
+                        height: height
+                    )
+                    guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+                        throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+                    }
+                }
+            }
+        } catch {
+            writer.cancelWriting()
+            throw error
+        }
+
+        videoInput.markAsFinished()
+        let semaphore = DispatchSemaphore(value: 0)
+        writer.finishWriting {
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        guard writer.status == .completed else {
+            throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+        }
+    }
+
+    private func makeCompositeFrameSources(
+        from sources: [PreparedCompositeVideoSource],
+        frameDuration: CMTime,
+        frameRate: Int32
+    ) -> [CompositeFrameSource] {
+        let tolerance = CMTime(value: 1, timescale: CMTimeScale(max(frameRate * 2, 1)))
+        return sources.map { source in
+            let imageGenerator = AVAssetImageGenerator(asset: source.loadedVideo.asset)
+            imageGenerator.appliesPreferredTrackTransform = true
+            imageGenerator.requestedTimeToleranceBefore = tolerance
+            imageGenerator.requestedTimeToleranceAfter = tolerance
+
+            return CompositeFrameSource(
+                imageGenerator: imageGenerator,
+                videoTimeRange: source.loadedVideo.videoTimeRange,
+                backgroundTransform: source.backgroundTransform,
+                clippingPath: source.clippingPath,
+                lastFrameTime: maxTime(.zero, CMTimeSubtract(source.loadedVideo.duration, frameDuration)),
+                lastFrameImage: nil
+            )
+        }
+    }
+
+    private func compositeFrameImage(
+        at presentationTime: CMTime,
+        frameSources: inout [CompositeFrameSource],
+        overlayImage: UIImage,
+        outputSize: CGSize,
+        canvasColor: UIColor
+    ) throws -> CGImage {
+        var layerImages: [(CGImage, RouteShareBackgroundRenderTransform, UIBezierPath?)] = []
+        layerImages.reserveCapacity(frameSources.count)
+        for index in frameSources.indices {
+            let frameImage = try frameSources[index].frameImage(at: presentationTime)
+            layerImages.append((
+                frameImage,
+                frameSources[index].backgroundTransform,
+                frameSources[index].clippingPath
+            ))
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let image = UIGraphicsImageRenderer(size: outputSize, format: format).image { rendererContext in
+            canvasColor.setFill()
+            UIBezierPath(rect: CGRect(origin: .zero, size: outputSize)).fill()
+
+            for (frameImage, backgroundTransform, clippingPath) in layerImages {
+                rendererContext.cgContext.saveGState()
+                clippingPath?.addClip()
+                drawAdjustedAspectFillImage(
+                    UIImage(cgImage: frameImage),
+                    in: CGRect(origin: .zero, size: outputSize),
+                    backgroundTransform: backgroundTransform,
+                    context: rendererContext.cgContext
+                )
+                rendererContext.cgContext.restoreGState()
+            }
+
+            overlayImage.draw(in: CGRect(origin: .zero, size: outputSize))
+        }
+
+        guard let cgImage = image.cgImage else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+        return cgImage
+    }
+
+    private func makePixelBuffer(
+        from image: CGImage,
+        pixelBufferPool: CVPixelBufferPool,
+        width: Int,
+        height: Int
+    ) throws -> CVPixelBuffer {
+        var pixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(
+            kCFAllocatorDefault,
+            pixelBufferPool,
+            &pixelBuffer
+        )
+        guard status == kCVReturnSuccess, let pixelBuffer else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+        }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
+              let context = CGContext(
+                data: baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue
+                    | CGImageAlphaInfo.premultipliedFirst.rawValue
+              ) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return pixelBuffer
+    }
+
+    private func writeCompositeAudioVideo(
+        videoURL: URL,
+        sources: [PreparedCompositeVideoSource],
+        duration: CMTime,
+        outputURL: URL
+    ) async throws -> URL {
+        let renderedVideoAsset = AVAsset(url: videoURL)
+        let renderedVideoTracks = try await renderedVideoAsset.loadTracks(withMediaType: .video)
+        guard let renderedVideoTrack = renderedVideoTracks.first else {
+            throw RouteShareLivePhotoExportError.missingResources
+        }
+
+        let composition = AVMutableComposition()
+        guard let compositionVideoTrack = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            throw RouteShareLivePhotoExportError.missingResources
+        }
+        try compositionVideoTrack.insertTimeRange(
+            CMTimeRange(start: .zero, duration: duration),
+            of: renderedVideoTrack,
+            at: .zero
+        )
+
+        var audioMixParameters: [AVMutableAudioMixInputParameters] = []
+        for source in sources {
+            guard let sourceAudioTrack = source.loadedVideo.audioTrack,
+                  let sourceAudioTimeRange = source.loadedVideo.audioTimeRange,
+                  let compositionAudioTrack = composition.addMutableTrack(
+                    withMediaType: .audio,
+                    preferredTrackID: kCMPersistentTrackID_Invalid
+                  ) else {
+                continue
+            }
+
+            let audioDuration = minTime(
+                minTime(sourceAudioTimeRange.duration, source.loadedVideo.duration),
+                duration
+            )
+            guard CMTimeCompare(audioDuration, .zero) > 0 else {
+                continue
+            }
+
+            try compositionAudioTrack.insertTimeRange(
+                CMTimeRange(start: sourceAudioTimeRange.start, duration: audioDuration),
+                of: sourceAudioTrack,
+                at: .zero
+            )
+            let parameters = AVMutableAudioMixInputParameters(track: compositionAudioTrack)
+            parameters.setVolume(1, at: .zero)
+            audioMixParameters.append(parameters)
+        }
+
+        guard !audioMixParameters.isEmpty else {
+            return videoURL
+        }
+
+        let audioMix = AVMutableAudioMix()
+        audioMix.inputParameters = audioMixParameters
+
+        try? FileManager.default.removeItem(at: outputURL)
+        guard let exportSession = AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetHighestQuality
+        ) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        exportSession.shouldOptimizeForNetworkUse = true
+        exportSession.audioMix = audioMix
+        try await exportSession.export(to: outputURL, as: .mov)
+        return outputURL
     }
 
     nonisolated private func writeLivePhotoPairedVideo(
@@ -655,11 +1162,12 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
-    nonisolated private func writeWhiteBackgroundVideo(
+    nonisolated private func writeSolidBackgroundVideo(
         to url: URL,
         outputSize: CGSize,
         duration: CMTime,
-        nominalFrameRate: Float
+        nominalFrameRate: Float,
+        backgroundColor: UIColor
     ) throws {
         try? FileManager.default.removeItem(at: url)
         let width = max(Int(outputSize.width.rounded()), 2)
@@ -697,7 +1205,11 @@ final class RouteShareLivePhotoExporter {
         }
 
         writer.startSession(atSourceTime: .zero)
-        let whitePixelBuffer = try makeWhitePixelBuffer(width: width, height: height)
+        let solidPixelBuffer = try makeSolidPixelBuffer(
+            width: width,
+            height: height,
+            color: backgroundColor
+        )
         let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
 
         for frameIndex in 0..<frameCount {
@@ -706,7 +1218,7 @@ final class RouteShareLivePhotoExporter {
             }
 
             let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(frameIndex))
-            guard adaptor.append(whitePixelBuffer, withPresentationTime: presentationTime) else {
+            guard adaptor.append(solidPixelBuffer, withPresentationTime: presentationTime) else {
                 writer.cancelWriting()
                 throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
             }
@@ -724,7 +1236,11 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
-    nonisolated private func makeWhitePixelBuffer(width: Int, height: Int) throws -> CVPixelBuffer {
+    nonisolated private func makeSolidPixelBuffer(
+        width: Int,
+        height: Int,
+        color: UIColor
+    ) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(
             kCFAllocatorDefault,
@@ -751,15 +1267,40 @@ final class RouteShareLivePhotoExporter {
         }
 
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        for row in 0..<height {
-            memset(baseAddress.advanced(by: row * bytesPerRow), 0xFF, width * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
+            | CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let context = CGContext(
+            data: baseAddress,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
         }
 
+        context.setFillColor(color.resolvedColor(with: UITraitCollection.current).cgColor)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         return pixelBuffer
     }
 
     nonisolated private func minTime(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {
         CMTimeCompare(lhs, rhs) <= 0 ? lhs : rhs
+    }
+
+    nonisolated private func maxTime(_ lhs: CMTime, _ rhs: CMTime) -> CMTime {
+        CMTimeCompare(lhs, rhs) >= 0 ? lhs : rhs
+    }
+
+    private func compositeFrameRate(for sources: [PreparedCompositeVideoSource]) -> Int32 {
+        let nominalFrameRate = sources
+            .map(\.loadedVideo.nominalFrameRate)
+            .filter { $0.isFinite && $0 > 0 }
+            .max() ?? 30
+        return max(Int32(nominalFrameRate.rounded()), 30)
     }
 
     nonisolated private func logAssetCopyFailure(
@@ -797,6 +1338,7 @@ final class RouteShareLivePhotoExporter {
         overlayImage: UIImage,
         outputSize: CGSize,
         backgroundTransform: RouteShareBackgroundRenderTransform,
+        canvasColor: UIColor,
         naturalSize: CGSize,
         preferredTransform: CGAffineTransform,
         nominalFrameRate: Float
@@ -811,7 +1353,7 @@ final class RouteShareLivePhotoExporter {
 
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-        instruction.backgroundColor = UIColor.white.cgColor
+        instruction.backgroundColor = canvasColor.resolvedColor(with: UITraitCollection.current).cgColor
 
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
         layerInstruction.setTransform(
@@ -830,20 +1372,21 @@ final class RouteShareLivePhotoExporter {
         videoComposition.instructions = [instruction]
 
         let parentLayer = CALayer()
-        let whiteCanvasLayer = CALayer()
+        let canvasLayer = CALayer()
         let videoLayer = CALayer()
         let overlayLayer = CALayer()
+        let resolvedCanvasColor = canvasColor.resolvedColor(with: UITraitCollection.current).cgColor
         parentLayer.frame = CGRect(origin: .zero, size: outputSize)
-        parentLayer.backgroundColor = UIColor.white.cgColor
-        whiteCanvasLayer.frame = parentLayer.bounds
-        whiteCanvasLayer.backgroundColor = UIColor.white.cgColor
-        whiteCanvasLayer.isOpaque = true
+        parentLayer.backgroundColor = resolvedCanvasColor
+        canvasLayer.frame = parentLayer.bounds
+        canvasLayer.backgroundColor = resolvedCanvasColor
+        canvasLayer.isOpaque = true
         videoLayer.frame = parentLayer.bounds
-        videoLayer.backgroundColor = UIColor.white.cgColor
+        videoLayer.backgroundColor = resolvedCanvasColor
         overlayLayer.frame = parentLayer.bounds
         overlayLayer.contents = overlayImage.cgImage
         overlayLayer.contentsGravity = .resize
-        parentLayer.addSublayer(whiteCanvasLayer)
+        parentLayer.addSublayer(canvasLayer)
         parentLayer.addSublayer(videoLayer)
         parentLayer.addSublayer(overlayLayer)
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(

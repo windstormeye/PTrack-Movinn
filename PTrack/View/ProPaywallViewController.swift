@@ -251,6 +251,10 @@ final class ProPaywallViewController: UIViewController {
             title: AppLocalization.text(.proFeatureRouteMerge)
         ))
         featuresStackView.addArrangedSubview(ProFeatureRowView(
+            iconName: "livephoto",
+            title: AppLocalization.text(.proFeatureMultiLivePhotoExport)
+        ))
+        featuresStackView.addArrangedSubview(ProFeatureRowView(
             iconName: "sparkles",
             title: AppLocalization.text(.proFeatureMoreComing)
         ))

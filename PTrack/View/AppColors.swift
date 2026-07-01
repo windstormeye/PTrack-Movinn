@@ -34,7 +34,19 @@ enum AppColors {
     static let toolbarBackground = UIColor { traitCollection in
         traitCollection.userInterfaceStyle == .dark
             ? UIColor(white: 0.06, alpha: 1)
+            : .white
+    }
+
+    static let sharePageBackground = UIColor { traitCollection in
+        traitCollection.userInterfaceStyle == .dark
+            ? UIColor(white: 0.08, alpha: 1)
             : UIColor(white: 0.94, alpha: 1)
+    }
+
+    static let shareActionBackground = UIColor { traitCollection in
+        traitCollection.userInterfaceStyle == .dark
+            ? UIColor(white: 0.2, alpha: 1)
+            : .white
     }
 
     static let placeholderBackground = UIColor { traitCollection in

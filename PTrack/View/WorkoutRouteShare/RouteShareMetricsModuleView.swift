@@ -135,7 +135,9 @@ final class RouteShareMetricsModuleView: UIView {
 
         caloriePileView.isHidden = true
         caloriePileView.snp.makeConstraints { make in
-            make.trailing.equalToSuperview().offset(24)
+            make.leading.equalToSuperview().offset(136).priority(.high)
+            make.trailing.equalToSuperview().offset(-4).priority(.low)
+            make.trailing.lessThanOrEqualToSuperview().offset(10)
             make.centerY.equalToSuperview().offset(-2)
             make.width.equalTo(76)
             caloriePileHeightConstraint = make.height.equalTo(124).constraint
@@ -143,19 +145,19 @@ final class RouteShareMetricsModuleView: UIView {
 
         distanceLabel.snp.makeConstraints { make in
             make.leading.top.equalToSuperview().offset(12)
-            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(-10)
+            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(12)
         }
 
         durationLabel.snp.makeConstraints { make in
             make.leading.equalTo(distanceLabel)
             make.top.equalTo(distanceLabel.snp.bottom).offset(2)
-            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(-10)
+            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(12)
         }
 
         timeLabel.snp.makeConstraints { make in
             make.leading.equalTo(distanceLabel)
             make.top.equalTo(durationLabel.snp.bottom).offset(6)
-            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(-10)
+            make.trailing.lessThanOrEqualTo(caloriePileView.snp.leading).offset(12)
             make.height.greaterThanOrEqualTo(18)
             make.bottom.lessThanOrEqualToSuperview().inset(8)
         }

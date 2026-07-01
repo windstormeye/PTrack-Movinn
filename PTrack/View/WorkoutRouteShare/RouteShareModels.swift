@@ -108,6 +108,12 @@ struct RouteShareLivePhotoExport {
     let directoryURL: URL
 }
 
+struct RouteShareLivePhotoVideoSource {
+    let asset: PHAsset
+    let backgroundTransform: RouteShareBackgroundRenderTransform
+    let clippingPath: UIBezierPath?
+}
+
 struct RouteShareBackgroundRenderTransform {
     let scale: CGFloat
     let translation: CGPoint

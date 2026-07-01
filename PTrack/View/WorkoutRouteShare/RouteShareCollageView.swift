@@ -114,6 +114,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     private var cropPinchStartScale: CGFloat = 1
     private var cropRotationStart: CGFloat = 0
     private var isEditingChromeHidden = false
+    private var canvasColor: UIColor = .white
     private let cropSelectionLayer = CAShapeLayer()
     private let dividerLayer = CAShapeLayer()
     private weak var dividerPanGesture: UIPanGestureRecognizer?
@@ -227,6 +228,14 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         updateCropSelectionPath()
     }
 
+    func setCanvasColor(_ color: UIColor) {
+        canvasColor = color
+        backgroundColor = color
+        tileContainerViews.forEach { $0.backgroundColor = color }
+        tileImageViews.forEach { $0.backgroundColor = color }
+        updateDividerColor()
+    }
+
     func playLivePhotos(
         _ playbacks: [RouteShareCollageLivePhotoPlayback],
         playbackDuration: TimeInterval
@@ -248,7 +257,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
             validPlaybacks.map(\.duration).max() ?? 0,
             0.1
         )
-        validPlaybacks.enumerated().forEach { index, playback in
+        validPlaybacks.forEach { playback in
             let tileIndex = playback.tileIndex
             let livePhotoView = livePhotoView(for: tileIndex)
             let freezeImageView = livePhotoFreezeImageView(for: tileIndex)
@@ -258,7 +267,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
             freezeImageView.isHidden = true
             livePhotoView.stopPlayback()
             livePhotoView.livePhoto = playback.livePhoto
-            livePhotoView.isMuted = index > 0
+            livePhotoView.isMuted = false
             livePhotoView.isHidden = false
             updateLivePhotoOverlayFramesIfNeeded(at: tileIndex)
             tileContainerViews[tileIndex].bringSubviewToFront(livePhotoView)
@@ -354,7 +363,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func configureViews() {
-        backgroundColor = AppColors.solidBackground
+        backgroundColor = canvasColor
         clipsToBounds = true
 
         cropSelectionLayer.fillColor = UIColor.clear.cgColor
@@ -408,7 +417,7 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     }
 
     private func updateDividerColor() {
-        dividerLayer.strokeColor = AppColors.solidBackground
+        dividerLayer.strokeColor = canvasColor
             .resolvedColor(with: traitCollection)
             .withAlphaComponent(0.92)
             .cgColor
@@ -418,12 +427,12 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         while tileContainerViews.count < count {
             let containerView = UIView()
             containerView.clipsToBounds = true
-            containerView.backgroundColor = AppColors.solidBackground
+            containerView.backgroundColor = canvasColor
 
             let imageView = UIImageView()
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = false
-            imageView.backgroundColor = AppColors.solidBackground
+            imageView.backgroundColor = canvasColor
 
             let maskLayer = CAShapeLayer()
             containerView.layer.mask = maskLayer

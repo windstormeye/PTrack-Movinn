@@ -43,10 +43,13 @@ enum AppTextKey: String {
     case collageStyle
     case colorBlack
     case colorBlue
+    case colorCustom
+    case colorGray
     case colorOrange
     case colorPink
     case colorWhite
     case color
+    case canvas
     case cycling
     case dark
     case dataIntegration
@@ -125,6 +128,7 @@ enum AppTextKey: String {
     case privacyPolicy
     case promotionBadge
     case proFeatureHeatmap
+    case proFeatureMultiLivePhotoExport
     case proFeatureMoreComing
     case proFeatureRouteMerge
     case proPaywallSubtitle
@@ -302,10 +306,13 @@ enum AppLocalization {
             .collageStyle: "样式",
             .colorBlack: "黑色",
             .colorBlue: "蓝色",
+            .colorCustom: "色板",
+            .colorGray: "浅灰",
             .colorOrange: "橙色",
             .colorPink: "粉色",
             .colorWhite: "白色",
             .color: "颜色",
+            .canvas: "画布",
             .cycling: "骑行",
             .dark: "暗色",
             .dataIntegration: "数据接入",
@@ -384,6 +391,7 @@ enum AppLocalization {
             .privacyPolicy: "隐私政策",
             .promotionBadge: "促销",
             .proFeatureHeatmap: "查看运动路线热图",
+            .proFeatureMultiLivePhotoExport: "多张 Live Photo 导出",
             .proFeatureMoreComing: "未来更多功能",
             .proFeatureRouteMerge: "合并多段运动轨迹",
             .proPaywallSubtitle: "Movinn 持续提供高级功能，让你的运动更加从容！",
@@ -515,10 +523,13 @@ enum AppLocalization {
             .collageStyle: "レイアウト",
             .colorBlack: "ブラック",
             .colorBlue: "ブルー",
+            .colorCustom: "カラーパレット",
+            .colorGray: "ライトグレー",
             .colorOrange: "オレンジ",
             .colorPink: "ピンク",
             .colorWhite: "ホワイト",
             .color: "カラー",
+            .canvas: "キャンバス",
             .cycling: "サイクリング",
             .dark: "ダーク",
             .dataIntegration: "データ連携",
@@ -597,6 +608,7 @@ enum AppLocalization {
             .privacyPolicy: "プライバシー",
             .promotionBadge: "セール",
             .proFeatureHeatmap: "ルートヒートマップ",
+            .proFeatureMultiLivePhotoExport: "複数の Live Photo 書き出し",
             .proFeatureMoreComing: "今後の機能",
             .proFeatureRouteMerge: "複数区間のルート結合",
             .proPaywallSubtitle: "Movinn は高度な機能で運動をもっと快適にします。",
@@ -728,10 +740,13 @@ enum AppLocalization {
             .collageStyle: "레이아웃",
             .colorBlack: "검정",
             .colorBlue: "파랑",
+            .colorCustom: "색상 팔레트",
+            .colorGray: "연회색",
             .colorOrange: "주황",
             .colorPink: "분홍",
             .colorWhite: "하양",
             .color: "색상",
+            .canvas: "캔버스",
             .cycling: "사이클링",
             .dark: "어두운",
             .dataIntegration: "데이터 연동",
@@ -810,6 +825,7 @@ enum AppLocalization {
             .privacyPolicy: "개인정보",
             .promotionBadge: "할인",
             .proFeatureHeatmap: "경로 히트맵 보기",
+            .proFeatureMultiLivePhotoExport: "여러 Live Photo 내보내기",
             .proFeatureMoreComing: "더 많은 기능 예정",
             .proFeatureRouteMerge: "여러 구간 경로 병합",
             .proPaywallSubtitle: "Movinn은 고급 기능으로 운동을 더 편하게 합니다.",
@@ -941,10 +957,13 @@ enum AppLocalization {
             .collageStyle: "Layout",
             .colorBlack: "Black",
             .colorBlue: "Blue",
+            .colorCustom: "Palette",
+            .colorGray: "Light Gray",
             .colorOrange: "Orange",
             .colorPink: "Pink",
             .colorWhite: "White",
             .color: "Color",
+            .canvas: "Canvas",
             .cycling: "Cycling",
             .dark: "Dark",
             .dataIntegration: "Data Connections",
@@ -1023,6 +1042,7 @@ enum AppLocalization {
             .privacyPolicy: "Privacy",
             .promotionBadge: "SALE",
             .proFeatureHeatmap: "View route heatmaps",
+            .proFeatureMultiLivePhotoExport: "Export multiple Live Photos",
             .proFeatureMoreComing: "More features soon",
             .proFeatureRouteMerge: "Merge route segments",
             .proPaywallSubtitle: "Movinn keeps advanced tools ready for easier workouts.",
