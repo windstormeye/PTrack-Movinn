@@ -12,6 +12,9 @@ final class ElevationProfileView: UIView {
     private let fillLayer = CAShapeLayer()
     private let curveLayer = CAShapeLayer()
     private let peakLabel = UILabel()
+    private let heartRatePeakLabel = UILabel()
+    private let powerPeakLabel = UILabel()
+    private let temperaturePeakLabel = UILabel()
     private var samples: [RouteElevationSample] = []
     private var renderedSize = CGSize.zero
     private let horizontalPadding: CGFloat = 2
@@ -37,10 +40,15 @@ final class ElevationProfileView: UIView {
         updatePathIfNeeded()
     }
 
-    func setPeakHighlighted(_ highlighted: Bool, animated: Bool) {
-        let transform = highlighted ? CGAffineTransform(scaleX: 1.24, y: 1.24) : .identity
+    func setHighlightedPeak(_ kind: PeakMarkerKind?, animated: Bool) {
+        let highlightedTransform = CGAffineTransform(scaleX: 1.24, y: 1.24)
+        let updates = {
+            self.peakLabel.transform = kind == .altitude ? highlightedTransform : .identity
+            self.heartRatePeakLabel.transform = kind == .heartRate ? highlightedTransform : .identity
+            self.powerPeakLabel.transform = kind == .power ? highlightedTransform : .identity
+        }
         guard animated else {
-            peakLabel.transform = transform
+            updates()
             return
         }
 
@@ -51,7 +59,7 @@ final class ElevationProfileView: UIView {
             initialSpringVelocity: 0,
             options: [.beginFromCurrentState, .allowUserInteraction]
         ) {
-            self.peakLabel.transform = transform
+            updates()
         }
     }
 
@@ -83,11 +91,30 @@ final class ElevationProfileView: UIView {
         layer.addSublayer(fillGradientLayer)
         layer.addSublayer(curveLayer)
 
-        peakLabel.text = "⛰️"
-        peakLabel.font = .systemFont(ofSize: 15)
-        peakLabel.textAlignment = .center
-        peakLabel.isHidden = true
-        addSubview(peakLabel)
+        configureMarkerLabel(peakLabel, text: "⛰️", accessibilityLabel: "Maximum altitude")
+        configureMarkerLabel(heartRatePeakLabel, text: "❤️", accessibilityLabel: "Maximum heart rate")
+        configureMarkerLabel(powerPeakLabel, text: "⚡️", accessibilityLabel: "Maximum power")
+        configureMarkerLabel(temperaturePeakLabel, text: "☀️", accessibilityLabel: "Maximum temperature")
+
+        [peakLabel, heartRatePeakLabel, powerPeakLabel, temperaturePeakLabel].forEach { label in
+            addSubview(label)
+        }
+    }
+
+    private func configureMarkerLabel(
+        _ label: UILabel,
+        text: String,
+        accessibilityLabel: String
+    ) {
+        label.text = text
+        label.font = .systemFont(ofSize: 15)
+        label.textAlignment = .center
+        label.isHidden = true
+        label.accessibilityLabel = accessibilityLabel
+        label.layer.shadowColor = UIColor.systemBackground.cgColor
+        label.layer.shadowOpacity = 0.82
+        label.layer.shadowRadius = 2
+        label.layer.shadowOffset = .zero
     }
 
     private func updatePathIfNeeded() {
@@ -102,7 +129,7 @@ final class ElevationProfileView: UIView {
             fillLayer.path = nil
             fillGradientLayer.frame = bounds
             curveLayer.path = nil
-            peakLabel.isHidden = true
+            hideMarkerLabels()
             CATransaction.commit()
             return
         }
@@ -123,7 +150,7 @@ final class ElevationProfileView: UIView {
         curveLayer.path = curvePath
         CATransaction.commit()
 
-        updatePeakLabel(with: points)
+        updatePeakLabels(with: points)
     }
 
     private func normalizedPoints(
@@ -177,27 +204,157 @@ final class ElevationProfileView: UIView {
         return path
     }
 
-    private func updatePeakLabel(with points: [CGPoint]) {
+    private func updatePeakLabels(with points: [CGPoint]) {
         guard points.count == samples.count,
               let peakIndex = samples.indices.max(by: { samples[$0].altitudeMeters < samples[$1].altitudeMeters }) else {
-            peakLabel.isHidden = true
+            hideMarkerLabels()
             return
         }
 
-        let peakPoint = points[peakIndex]
-        let labelSize = CGSize(width: 24, height: 24)
-        let centerX = min(max(peakPoint.x, labelSize.width / 2), bounds.width - labelSize.width / 2)
-        let centerY = min(
-            max(peakPoint.y - labelSize.height / 2 - 6, labelSize.height / 2),
-            bounds.height - labelSize.height / 2
-        )
+        var occupiedFrames: [CGRect] = []
+        placeMarkerLabel(peakLabel, at: points[peakIndex], occupiedFrames: &occupiedFrames)
 
-        peakLabel.isHidden = false
-        peakLabel.frame = CGRect(
+        placeMetricMarkerLabel(
+            heartRatePeakLabel,
+            points: points,
+            occupiedFrames: &occupiedFrames,
+            requiresPositiveValue: true,
+            value: \.heartRateBeatsPerMinute
+        )
+        placeMetricMarkerLabel(
+            powerPeakLabel,
+            points: points,
+            occupiedFrames: &occupiedFrames,
+            requiresPositiveValue: true,
+            value: \.powerWatts
+        )
+        placeMetricMarkerLabel(
+            temperaturePeakLabel,
+            points: points,
+            occupiedFrames: &occupiedFrames,
+            requiresPositiveValue: false,
+            value: \.temperatureCelsius
+        )
+    }
+
+    private func placeMetricMarkerLabel(
+        _ label: UILabel,
+        points: [CGPoint],
+        occupiedFrames: inout [CGRect],
+        requiresPositiveValue: Bool,
+        value: KeyPath<RouteElevationSample, Double?>
+    ) {
+        guard let peakIndex = metricPeakIndex(requiresPositiveValue: requiresPositiveValue, value: value) else {
+            label.isHidden = true
+            return
+        }
+
+        placeMarkerLabel(
+            label,
+            at: points[peakIndex],
+            verticalGap: 13,
+            maximumCenterY: bounds.height * 0.48,
+            allowsDownwardFallback: false,
+            occupiedFrames: &occupiedFrames
+        )
+    }
+
+    private func placeMarkerLabel(
+        _ label: UILabel,
+        at point: CGPoint,
+        verticalGap: CGFloat = 6,
+        maximumCenterY: CGFloat? = nil,
+        allowsDownwardFallback: Bool = true,
+        occupiedFrames: inout [CGRect]
+    ) {
+        let labelSize = CGSize(width: 24, height: 24)
+        let centerX = min(max(point.x, labelSize.width / 2), bounds.width - labelSize.width / 2)
+        let preferredCenterY = min(
+            max(point.y - labelSize.height / 2 - verticalGap, labelSize.height / 2),
+            maximumCenterY ?? (bounds.height - labelSize.height / 2)
+        )
+        let centerY = nonOverlappingCenterY(
+            preferredCenterY,
+            centerX: centerX,
+            labelSize: labelSize,
+            maximumCenterY: maximumCenterY,
+            allowsDownwardFallback: allowsDownwardFallback,
+            occupiedFrames: occupiedFrames
+        )
+        let frame = CGRect(
             x: centerX - labelSize.width / 2,
             y: centerY - labelSize.height / 2,
             width: labelSize.width,
             height: labelSize.height
         )
+
+        label.isHidden = false
+        label.frame = frame
+        occupiedFrames.append(frame.insetBy(dx: -2, dy: -2))
+    }
+
+    private func nonOverlappingCenterY(
+        _ preferredCenterY: CGFloat,
+        centerX: CGFloat,
+        labelSize: CGSize,
+        maximumCenterY: CGFloat?,
+        allowsDownwardFallback: Bool,
+        occupiedFrames: [CGRect]
+    ) -> CGFloat {
+        let minimumCenterY = labelSize.height / 2
+        let resolvedMaximumCenterY = min(
+            maximumCenterY ?? (bounds.height - labelSize.height / 2),
+            bounds.height - labelSize.height / 2
+        )
+        let verticalStep = labelSize.height * 0.82
+        var candidates = [
+            preferredCenterY,
+            preferredCenterY - verticalStep,
+            preferredCenterY - verticalStep * 2,
+            preferredCenterY - verticalStep * 3
+        ]
+        if allowsDownwardFallback {
+            candidates.append(contentsOf: [
+                preferredCenterY + verticalStep,
+                preferredCenterY + verticalStep * 2
+            ])
+        }
+
+        for candidate in candidates {
+            let clampedCenterY = min(max(candidate, minimumCenterY), resolvedMaximumCenterY)
+            let frame = CGRect(
+                x: centerX - labelSize.width / 2,
+                y: clampedCenterY - labelSize.height / 2,
+                width: labelSize.width,
+                height: labelSize.height
+            )
+            if !occupiedFrames.contains(where: { $0.intersects(frame) }) {
+                return clampedCenterY
+            }
+        }
+
+        return min(max(preferredCenterY, minimumCenterY), resolvedMaximumCenterY)
+    }
+
+    private func metricPeakIndex(
+        requiresPositiveValue: Bool,
+        value: KeyPath<RouteElevationSample, Double?>
+    ) -> Int? {
+        samples.indices
+            .compactMap { index -> (index: Int, value: Double)? in
+                guard let sampleValue = samples[index][keyPath: value],
+                      sampleValue.isFinite,
+                      !requiresPositiveValue || sampleValue > 0 else {
+                    return nil
+                }
+                return (index, sampleValue)
+            }
+            .max { lhs, rhs in lhs.value < rhs.value }?.index
+    }
+
+    private func hideMarkerLabels() {
+        [peakLabel, heartRatePeakLabel, powerPeakLabel, temperaturePeakLabel].forEach { label in
+            label.isHidden = true
+        }
     }
 }

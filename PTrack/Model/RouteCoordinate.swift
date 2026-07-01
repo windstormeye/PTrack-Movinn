@@ -20,6 +20,9 @@ struct RouteCoordinate: Codable {
     let courseDegrees: Double?
     let courseAccuracyDegrees: Double?
     let floorLevel: Int?
+    let heartRateBeatsPerMinute: Double?
+    let powerWatts: Double?
+    let temperatureCelsius: Double?
 
     nonisolated init(
         latitude: Double,
@@ -32,7 +35,10 @@ struct RouteCoordinate: Codable {
         speedAccuracyMetersPerSecond: Double? = nil,
         courseDegrees: Double? = nil,
         courseAccuracyDegrees: Double? = nil,
-        floorLevel: Int? = nil
+        floorLevel: Int? = nil,
+        heartRateBeatsPerMinute: Double? = nil,
+        powerWatts: Double? = nil,
+        temperatureCelsius: Double? = nil
     ) {
         self.latitude = latitude
         self.longitude = longitude
@@ -45,6 +51,9 @@ struct RouteCoordinate: Codable {
         self.courseDegrees = courseDegrees
         self.courseAccuracyDegrees = courseAccuracyDegrees
         self.floorLevel = floorLevel
+        self.heartRateBeatsPerMinute = heartRateBeatsPerMinute
+        self.powerWatts = powerWatts
+        self.temperatureCelsius = temperatureCelsius
     }
 
     nonisolated init(location: CLLocation) {
@@ -59,6 +68,9 @@ struct RouteCoordinate: Codable {
         courseDegrees = location.course >= 0 ? location.course : nil
         courseAccuracyDegrees = location.courseAccuracy >= 0 ? location.courseAccuracy : nil
         floorLevel = location.floor?.level
+        heartRateBeatsPerMinute = nil
+        powerWatts = nil
+        temperatureCelsius = nil
     }
 
     nonisolated var coordinate: CLLocationCoordinate2D {

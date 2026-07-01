@@ -14,10 +14,16 @@ final class WorkoutRouteReplayRulerView: UIControl {
     private let startLabel = UILabel()
     private let endLabel = UILabel()
 
+    private struct SnapPoint {
+        let progress: CGFloat
+        let markerKind: PeakMarkerKind
+    }
+
     private var indicatorCenterXConstraint: Constraint?
     private let horizontalPadding: CGFloat = 2
-    private var peakProgress: CGFloat?
-    private var isPeakActive = false
+    private var snapPoints: [SnapPoint] = []
+    private var activeSnapProgress: CGFloat?
+    private var activeMarkerKind: PeakMarkerKind?
     private let peakFeedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
 
     private(set) var progress: CGFloat = 0
@@ -40,10 +46,11 @@ final class WorkoutRouteReplayRulerView: UIControl {
     func configure(totalDistanceText: String, elevationSamples: [RouteElevationSample] = []) {
         startLabel.text = "0km"
         endLabel.text = totalDistanceText
-        peakProgress = Self.peakProgress(for: elevationSamples)
-        isPeakActive = false
+        snapPoints = Self.snapPoints(for: elevationSamples)
+        activeSnapProgress = nil
+        activeMarkerKind = nil
         profileView.configure(samples: elevationSamples)
-        profileView.setPeakHighlighted(false, animated: false)
+        profileView.setHighlightedPeak(nil, animated: false)
     }
 
     func setProgress(_ progress: CGFloat, sendsAction: Bool = false) {
@@ -66,7 +73,11 @@ final class WorkoutRouteReplayRulerView: UIControl {
 
         self.progress = peakHit.progress
         updateProgressLayout(flushLayout: true)
-        setPeakActive(peakHit.isPeakPosition, shouldEmitFeedback: sendsAction && peakHit.didHitPeak)
+        setActiveSnap(
+            progress: peakHit.snapProgress,
+            markerKind: peakHit.markerKind,
+            shouldEmitFeedback: sendsAction && peakHit.didHitPeak
+        )
 
         if sendsAction {
             sendActions(for: .valueChanged)
@@ -88,7 +99,7 @@ final class WorkoutRouteReplayRulerView: UIControl {
         endLabel.textAlignment = .right
 
         addSubview(profileView)
-        addSubview(indicatorView)
+        insertSubview(indicatorView, belowSubview: profileView)
         addSubview(startLabel)
         addSubview(endLabel)
 
@@ -133,15 +144,20 @@ final class WorkoutRouteReplayRulerView: UIControl {
         }
     }
 
-    private func setPeakActive(_ active: Bool, shouldEmitFeedback: Bool) {
-        guard active != isPeakActive else {
-            return
+    private func setActiveSnap(
+        progress: CGFloat?,
+        markerKind: PeakMarkerKind?,
+        shouldEmitFeedback: Bool
+    ) {
+        let didChangeSnap = activeSnapProgress != progress
+        activeSnapProgress = progress
+
+        if markerKind != activeMarkerKind {
+            activeMarkerKind = markerKind
+            profileView.setHighlightedPeak(markerKind, animated: true)
         }
 
-        isPeakActive = active
-        profileView.setPeakHighlighted(active, animated: true)
-
-        if active, shouldEmitFeedback {
+        if progress != nil, didChangeSnap, shouldEmitFeedback {
             peakFeedbackGenerator.impactOccurred(intensity: 0.82)
             peakFeedbackGenerator.prepare()
         }
@@ -154,22 +170,49 @@ final class WorkoutRouteReplayRulerView: UIControl {
         allowsCrossing: Bool
     ) -> PeakHit {
         guard allowsSnap,
-              let peakProgress,
+              !snapPoints.isEmpty,
               profileView.bounds.width > 0 else {
-            return PeakHit(progress: targetProgress, isPeakPosition: false, didHitPeak: false)
+            return PeakHit(progress: targetProgress, snapProgress: nil, markerKind: nil, didHitPeak: false)
         }
 
         let tolerance = peakSinglePositionTolerance()
-        let isOnPeakPosition = abs(targetProgress - peakProgress) <= tolerance
-        let crossesPeak = allowsCrossing
-            && ((previousProgress < peakProgress && targetProgress > peakProgress)
-                || (previousProgress > peakProgress && targetProgress < peakProgress))
-
-        guard isOnPeakPosition || crossesPeak else {
-            return PeakHit(progress: targetProgress, isPeakPosition: false, didHitPeak: false)
+        let hitSnapPoints = snapPoints.filter { snapPoint in
+            isSnapPoint(
+                snapPoint.progress,
+                hitFrom: previousProgress,
+                to: targetProgress,
+                tolerance: tolerance,
+                allowsCrossing: allowsCrossing
+            )
+        }
+        guard let snapPoint = hitSnapPoints.min(by: { lhs, rhs in
+            abs(lhs.progress - targetProgress) < abs(rhs.progress - targetProgress)
+        }) else {
+            return PeakHit(progress: targetProgress, snapProgress: nil, markerKind: nil, didHitPeak: false)
         }
 
-        return PeakHit(progress: peakProgress, isPeakPosition: true, didHitPeak: true)
+        return PeakHit(
+            progress: snapPoint.progress,
+            snapProgress: snapPoint.progress,
+            markerKind: snapPoint.markerKind,
+            didHitPeak: true
+        )
+    }
+
+    private func isSnapPoint(
+        _ snapProgress: CGFloat,
+        hitFrom previousProgress: CGFloat,
+        to targetProgress: CGFloat,
+        tolerance: CGFloat,
+        allowsCrossing: Bool
+    ) -> Bool {
+        if abs(targetProgress - snapProgress) <= tolerance {
+            return true
+        }
+
+        return allowsCrossing
+            && ((previousProgress < snapProgress && targetProgress > snapProgress)
+                || (previousProgress > snapProgress && targetProgress < snapProgress))
     }
 
     private func peakSinglePositionTolerance() -> CGFloat {
@@ -192,7 +235,30 @@ final class WorkoutRouteReplayRulerView: UIControl {
         )
     }
 
-    private static func peakProgress(for samples: [RouteElevationSample]) -> CGFloat? {
+    private static func snapPoints(for samples: [RouteElevationSample]) -> [SnapPoint] {
+        var points: [SnapPoint] = []
+        if let altitudePeakProgress = altitudePeakProgress(for: samples) {
+            points.append(SnapPoint(progress: altitudePeakProgress, markerKind: .altitude))
+        }
+        if let heartRatePeakProgress = metricPeakProgress(
+            for: samples,
+            requiresPositiveValue: true,
+            value: \.heartRateBeatsPerMinute
+        ) {
+            points.append(SnapPoint(progress: heartRatePeakProgress, markerKind: .heartRate))
+        }
+        if let powerPeakProgress = metricPeakProgress(
+            for: samples,
+            requiresPositiveValue: true,
+            value: \.powerWatts
+        ) {
+            points.append(SnapPoint(progress: powerPeakProgress, markerKind: .power))
+        }
+
+        return mergedSnapPoints(points)
+    }
+
+    private static func altitudePeakProgress(for samples: [RouteElevationSample]) -> CGFloat? {
         guard samples.count > 1,
               let totalDistance = samples.last?.distanceMeters,
               totalDistance > 0,
@@ -201,5 +267,56 @@ final class WorkoutRouteReplayRulerView: UIControl {
         }
 
         return CGFloat(samples[peakIndex].distanceMeters / totalDistance)
+    }
+
+    private static func metricPeakProgress(
+        for samples: [RouteElevationSample],
+        requiresPositiveValue: Bool,
+        value: KeyPath<RouteElevationSample, Double?>
+    ) -> CGFloat? {
+        guard samples.count > 1,
+              let totalDistance = samples.last?.distanceMeters,
+              totalDistance > 0,
+              let peakIndex = samples.indices
+                .compactMap({ index -> (index: Int, value: Double)? in
+                    guard let sampleValue = samples[index][keyPath: value],
+                          sampleValue.isFinite,
+                          !requiresPositiveValue || sampleValue > 0 else {
+                        return nil
+                    }
+                    return (index, sampleValue)
+                })
+                .max(by: { lhs, rhs in lhs.value < rhs.value })?
+                .index else {
+            return nil
+        }
+
+        return CGFloat(samples[peakIndex].distanceMeters / totalDistance)
+    }
+
+    private static func mergedSnapPoints(_ points: [SnapPoint]) -> [SnapPoint] {
+        points.reduce(into: []) { result, point in
+            if let index = result.firstIndex(where: { abs($0.progress - point.progress) < 0.000_001 }) {
+                result[index] = SnapPoint(
+                    progress: result[index].progress,
+                    markerKind: mergedMarkerKind(result[index].markerKind, point.markerKind)
+                )
+            } else {
+                result.append(point)
+            }
+        }
+    }
+
+    private static func mergedMarkerKind(
+        _ existingKind: PeakMarkerKind,
+        _ newKind: PeakMarkerKind
+    ) -> PeakMarkerKind {
+        if existingKind == .altitude || newKind == .altitude {
+            return .altitude
+        }
+        if existingKind == .heartRate || newKind == .heartRate {
+            return .heartRate
+        }
+        return .power
     }
 }

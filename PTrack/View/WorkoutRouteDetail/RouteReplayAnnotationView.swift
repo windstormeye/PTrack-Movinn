@@ -14,13 +14,20 @@ final class RouteReplayAnnotationView: MKAnnotationView {
 
     private enum Constants {
         static let defaultCenterOffset = CGPoint(x: 0, y: -18)
+        static let metricsCenterOffset = CGPoint(x: 0, y: -26)
         static let pinCenterOffset = CGPoint(x: 0, y: -40)
+        static let pinMetricsCenterOffset = CGPoint(x: 0, y: -48)
         static let pinEmoji = "📍"
+        static let compactBounds = CGRect(x: 0, y: 0, width: 150, height: 80)
+        static let metricsBounds = CGRect(x: 0, y: 0, width: 190, height: 98)
+        static let compactStatusHeight: CGFloat = 26
+        static let metricsStatusHeight: CGFloat = 42
     }
 
     private let statusContainerView = UIView()
     private let statusLabel = UILabel()
     private let emojiLabel = UILabel()
+    private var statusHeightConstraint: Constraint?
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
@@ -33,14 +40,22 @@ final class RouteReplayAnnotationView: MKAnnotationView {
     }
 
     func configure(emoji: String, statusText: String, isFacingLeft: Bool) {
+        let hasMetricLine = statusText.contains("\n")
         emojiLabel.text = emoji
         statusLabel.text = statusText
-        centerOffset = emoji == Constants.pinEmoji ? Constants.pinCenterOffset : Constants.defaultCenterOffset
+        statusLabel.numberOfLines = hasMetricLine ? 2 : 1
+        bounds = hasMetricLine ? Constants.metricsBounds : Constants.compactBounds
+        statusHeightConstraint?.update(offset: hasMetricLine ? Constants.metricsStatusHeight : Constants.compactStatusHeight)
+        if emoji == Constants.pinEmoji {
+            centerOffset = hasMetricLine ? Constants.pinMetricsCenterOffset : Constants.pinCenterOffset
+        } else {
+            centerOffset = hasMetricLine ? Constants.metricsCenterOffset : Constants.defaultCenterOffset
+        }
         emojiLabel.transform = emoji == Constants.pinEmoji || isFacingLeft ? .identity : CGAffineTransform(scaleX: -1, y: 1)
     }
 
     private func configureBaseView() {
-        bounds = CGRect(x: 0, y: 0, width: 150, height: 80)
+        bounds = Constants.compactBounds
         centerOffset = Constants.defaultCenterOffset
         collisionMode = .circle
         displayPriority = .required
@@ -59,6 +74,7 @@ final class RouteReplayAnnotationView: MKAnnotationView {
         statusLabel.textColor = .label
         statusLabel.textAlignment = .center
         statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.numberOfLines = 1
         statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         emojiLabel.font = .systemFont(ofSize: 31)
@@ -75,7 +91,7 @@ final class RouteReplayAnnotationView: MKAnnotationView {
         statusContainerView.snp.makeConstraints { make in
             make.top.equalToSuperview()
             make.centerX.equalToSuperview()
-            make.height.equalTo(26)
+            statusHeightConstraint = make.height.equalTo(Constants.compactStatusHeight).constraint
             make.leading.greaterThanOrEqualToSuperview()
             make.trailing.lessThanOrEqualToSuperview()
         }

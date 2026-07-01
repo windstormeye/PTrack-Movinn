@@ -7,8 +7,15 @@
 
 import UIKit
 
+enum PeakMarkerKind {
+    case altitude
+    case heartRate
+    case power
+}
+
 struct PeakHit {
     let progress: CGFloat
-    let isPeakPosition: Bool
+    let snapProgress: CGFloat?
+    let markerKind: PeakMarkerKind?
     let didHitPeak: Bool
 }

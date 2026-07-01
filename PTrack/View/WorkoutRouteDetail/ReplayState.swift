@@ -11,5 +11,8 @@ struct ReplayState {
     let coordinate: CLLocationCoordinate2D
     let distanceMeters: CLLocationDistance
     let altitudeMeters: Double?
+    let heartRateBeatsPerMinute: Double?
+    let powerWatts: Double?
+    let temperatureCelsius: Double?
     let isFacingLeft: Bool
 }

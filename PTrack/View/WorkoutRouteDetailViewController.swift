@@ -28,6 +28,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
         let endCoordinate: CLLocationCoordinate2D
         let replayDistances: [CLLocationDistance]
         let replayAltitudes: [Double?]
+        let replayHeartRates: [Double?]
+        let replayPowers: [Double?]
+        let replayTemperatures: [Double?]
         let elevationSamples: [RouteElevationSample]
         let totalDistanceMeters: CLLocationDistance
     }
@@ -74,6 +77,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayCoordinates: [CLLocationCoordinate2D] = []
     private var replayDistances: [CLLocationDistance] = []
     private var replayAltitudes: [Double?] = []
+    private var replayHeartRates: [Double?] = []
+    private var replayPowers: [Double?] = []
+    private var replayTemperatures: [Double?] = []
     private var replayAnnotation: RouteReplayAnnotation?
     private var routePolyline: MKPolyline?
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
@@ -226,6 +232,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
         replayCoordinates.removeAll(keepingCapacity: false)
         replayDistances.removeAll(keepingCapacity: false)
         replayAltitudes.removeAll(keepingCapacity: false)
+        replayHeartRates.removeAll(keepingCapacity: false)
+        replayPowers.removeAll(keepingCapacity: false)
+        replayTemperatures.removeAll(keepingCapacity: false)
         routePolyline = nil
         replayAnnotation = nil
         mapView.layer.removeAllAnimations()
@@ -1304,11 +1313,14 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         let replayDistances = cumulativeDistances(for: coordinates)
         let replayAltitudes = routeCoordinates.map(\.altitudeMeters)
+        let replayHeartRates = routeCoordinates.map(\.heartRateBeatsPerMinute)
+        let replayPowers = routeCoordinates.map(\.powerWatts)
+        let replayTemperatures = routeCoordinates.map(\.temperatureCelsius)
         let measuredDistance = replayDistances.last ?? workout.distanceMeters
         let totalDistanceMeters = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
         let elevationSamples = routeElevationSamples(
             distances: replayDistances,
-            altitudes: replayAltitudes,
+            routeCoordinates: routeCoordinates,
             maximumCount: maximumElevationSampleCount
         )
 
@@ -1321,6 +1333,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 ?? coordinates[coordinates.count - 1],
             replayDistances: replayDistances,
             replayAltitudes: replayAltitudes,
+            replayHeartRates: replayHeartRates,
+            replayPowers: replayPowers,
+            replayTemperatures: replayTemperatures,
             elevationSamples: elevationSamples,
             totalDistanceMeters: totalDistanceMeters
         )
@@ -1560,10 +1575,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return
         }
 
-        let statusText = replayStatusText(
-            distanceMeters: replayState.distanceMeters,
-            altitudeMeters: replayState.altitudeMeters
-        )
+        let statusText = replayStatusText(for: replayState)
 
         if let replayAnnotation {
             replayAnnotation.coordinate = replayState.coordinate
@@ -1596,6 +1608,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
         replayCoordinates = preparedRoute.coordinates
         replayDistances = preparedRoute.replayDistances
         replayAltitudes = preparedRoute.replayAltitudes
+        replayHeartRates = preparedRoute.replayHeartRates
+        replayPowers = preparedRoute.replayPowers
+        replayTemperatures = preparedRoute.replayTemperatures
 
         replayRulerView.configure(
             totalDistanceText: replayTotalDistanceText(totalMeters: preparedRoute.totalDistanceMeters),
@@ -1643,6 +1658,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 coordinate: coordinate,
                 distanceMeters: 0,
                 altitudeMeters: replayAltitude(at: 0),
+                heartRateBeatsPerMinute: replayHeartRate(at: 0),
+                powerWatts: replayPower(at: 0),
+                temperatureCelsius: replayTemperature(at: 0),
                 isFacingLeft: replayFacingLeft(at: 0)
             )
         }
@@ -1653,6 +1671,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
             coordinate: replayCoordinates[index],
             distanceMeters: replayDistances[index],
             altitudeMeters: replayAltitude(at: index),
+            heartRateBeatsPerMinute: replayHeartRate(at: index),
+            powerWatts: replayPower(at: index),
+            temperatureCelsius: replayTemperature(at: index),
             isFacingLeft: replayFacingLeft(at: index)
         )
     }
@@ -1696,6 +1717,27 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return replayAltitudes[index]
     }
 
+    private func replayHeartRate(at index: Int) -> Double? {
+        guard index >= 0, index < replayHeartRates.count else {
+            return nil
+        }
+        return replayHeartRates[index]
+    }
+
+    private func replayPower(at index: Int) -> Double? {
+        guard index >= 0, index < replayPowers.count else {
+            return nil
+        }
+        return replayPowers[index]
+    }
+
+    private func replayTemperature(at index: Int) -> Double? {
+        guard index >= 0, index < replayTemperatures.count else {
+            return nil
+        }
+        return replayTemperatures[index]
+    }
+
     private func replayFacingLeft(at index: Int) -> Bool {
         guard replayCoordinates.count > 1 else {
             return true
@@ -1717,24 +1759,58 @@ final class WorkoutRouteDetailViewController: UIViewController {
         Self.routeElevationSamples(
             distances: replayDistances,
             altitudes: replayAltitudes,
+            heartRates: replayHeartRates,
+            powers: replayPowers,
+            temperatures: replayTemperatures,
             maximumCount: maximumElevationSampleCount
         )
     }
 
     private static func routeElevationSamples(
         distances: [CLLocationDistance],
+        routeCoordinates: [RouteCoordinate],
+        maximumCount: Int
+    ) -> [RouteElevationSample] {
+        guard distances.count == routeCoordinates.count else {
+            return []
+        }
+
+        return routeElevationSamples(
+            distances: distances,
+            altitudes: routeCoordinates.map(\.altitudeMeters),
+            heartRates: routeCoordinates.map(\.heartRateBeatsPerMinute),
+            powers: routeCoordinates.map(\.powerWatts),
+            temperatures: routeCoordinates.map(\.temperatureCelsius),
+            maximumCount: maximumCount
+        )
+    }
+
+    private static func routeElevationSamples(
+        distances: [CLLocationDistance],
         altitudes: [Double?],
+        heartRates: [Double?] = [],
+        powers: [Double?] = [],
+        temperatures: [Double?] = [],
         maximumCount: Int
     ) -> [RouteElevationSample] {
         guard distances.count == altitudes.count else {
             return []
         }
 
+        let hasHeartRates = heartRates.count == distances.count
+        let hasPowers = powers.count == distances.count
+        let hasTemperatures = temperatures.count == distances.count
         let samples = altitudes.enumerated().compactMap { index, altitude -> RouteElevationSample? in
             guard let altitude else {
                 return nil
             }
-            return RouteElevationSample(distanceMeters: distances[index], altitudeMeters: altitude)
+            return RouteElevationSample(
+                distanceMeters: distances[index],
+                altitudeMeters: altitude,
+                heartRateBeatsPerMinute: hasHeartRates ? heartRates[index] : nil,
+                powerWatts: hasPowers ? powers[index] : nil,
+                temperatureCelsius: hasTemperatures ? temperatures[index] : nil
+            )
         }
 
         return downsampleElevationSamples(samples, maximumCount: maximumCount)
@@ -1749,9 +1825,49 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         let step = Double(samples.count - 1) / Double(maximumCount - 1)
-        return (0..<maximumCount).map { index in
-            samples[Int(round(Double(index) * step))]
+        var selectedIndices = Set<Int>()
+        for index in 0..<maximumCount {
+            selectedIndices.insert(Int(round(Double(index) * step)))
         }
+
+        selectedIndices.formUnion(peakSampleIndices(in: samples))
+        return selectedIndices.sorted().map { index in
+            samples[index]
+        }
+    }
+
+    private static func peakSampleIndices(in samples: [RouteElevationSample]) -> Set<Int> {
+        var indices = Set<Int>()
+        if let altitudePeak = samples.indices.max(by: { samples[$0].altitudeMeters < samples[$1].altitudeMeters }) {
+            indices.insert(altitudePeak)
+        }
+        if let heartRatePeak = peakSampleIndex(in: samples, requiresPositiveValue: true, value: \.heartRateBeatsPerMinute) {
+            indices.insert(heartRatePeak)
+        }
+        if let powerPeak = peakSampleIndex(in: samples, requiresPositiveValue: true, value: \.powerWatts) {
+            indices.insert(powerPeak)
+        }
+        if let temperaturePeak = peakSampleIndex(in: samples, requiresPositiveValue: false, value: \.temperatureCelsius) {
+            indices.insert(temperaturePeak)
+        }
+        return indices
+    }
+
+    private static func peakSampleIndex(
+        in samples: [RouteElevationSample],
+        requiresPositiveValue: Bool,
+        value: KeyPath<RouteElevationSample, Double?>
+    ) -> Int? {
+        samples.indices
+            .compactMap { index -> (index: Int, value: Double)? in
+                guard let sampleValue = samples[index][keyPath: value],
+                      sampleValue.isFinite,
+                      !requiresPositiveValue || sampleValue > 0 else {
+                    return nil
+                }
+                return (index, sampleValue)
+            }
+            .max { lhs, rhs in lhs.value < rhs.value }?.index
     }
 
     private var replayEmoji: String {
@@ -1839,19 +1955,52 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return workout.durationText
     }
 
-    private func replayStatusText(
-        distanceMeters: CLLocationDistance,
-        altitudeMeters: Double?
-    ) -> String {
+    private func replayStatusText(for state: ReplayState) -> String {
         let distanceText: String
-        if distanceMeters >= 1000 {
-            distanceText = String(format: "%.2f km", distanceMeters / 1000)
+        if state.distanceMeters >= 1000 {
+            distanceText = String(format: "%.2f km", state.distanceMeters / 1000)
         } else {
-            distanceText = String(format: "%.0f m", max(distanceMeters, 0))
+            distanceText = String(format: "%.0f m", max(state.distanceMeters, 0))
         }
 
-        let altitudeText = altitudeMeters.map { "\(Int(round($0))) m" } ?? "-- m"
-        return "\(distanceText) · \(altitudeText)"
+        let altitudeText = state.altitudeMeters.map { "\(Int(round($0))) m" } ?? "-- m"
+        let primaryText = "\(distanceText) · \(altitudeText)"
+        let metricText = replayMetricStatusText(for: state)
+        guard !metricText.isEmpty else {
+            return primaryText
+        }
+
+        return "\(primaryText)\n\(metricText)"
+    }
+
+    private func replayMetricStatusText(for state: ReplayState) -> String {
+        var parts: [String] = []
+        if let heartRate = roundedPositiveInt(state.heartRateBeatsPerMinute) {
+            parts.append("❤️\(heartRate)")
+        }
+        if let power = roundedPositiveInt(state.powerWatts) {
+            parts.append("⚡️\(power)W")
+        }
+        if let temperature = roundedFiniteInt(state.temperatureCelsius) {
+            parts.append("☀️\(temperature)°")
+        }
+        return parts.joined(separator: "  ")
+    }
+
+    private func roundedPositiveInt(_ value: Double?) -> Int? {
+        guard let value, value.isFinite, value > 0 else {
+            return nil
+        }
+
+        return Int(value.rounded())
+    }
+
+    private func roundedFiniteInt(_ value: Double?) -> Int? {
+        guard let value, value.isFinite else {
+            return nil
+        }
+
+        return Int(value.rounded())
     }
 }
 

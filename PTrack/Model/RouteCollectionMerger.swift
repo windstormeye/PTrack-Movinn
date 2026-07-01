@@ -226,7 +226,10 @@ private extension RouteCoordinate {
             speedAccuracyMetersPerSecond: speedAccuracyMetersPerSecond,
             courseDegrees: courseDegrees,
             courseAccuracyDegrees: courseAccuracyDegrees,
-            floorLevel: floorLevel
+            floorLevel: floorLevel,
+            heartRateBeatsPerMinute: heartRateBeatsPerMinute,
+            powerWatts: powerWatts,
+            temperatureCelsius: temperatureCelsius
         )
     }
 }

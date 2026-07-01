@@ -384,7 +384,7 @@ final class StravaManager: NSObject {
             urlString: "\(define.APIBaseURL)/activities/\(activityID)/streams",
             method: .get,
             parameters: [
-                "keys": .stringArray(["time", "latlng", "altitude", "velocity_smooth", "distance", "heartrate", "cadence", "watts"]),
+                "keys": .stringArray(["time", "latlng", "altitude", "velocity_smooth", "distance", "heartrate", "cadence", "watts", "temp"]),
                 "key_by_type": .bool(true)
             ],
             parameterEncoding: .query
@@ -842,6 +842,9 @@ private struct StravaActivityStreamSet: Decodable {
         let times = streams["time"]?.data.intValues
         let altitudes = streams["altitude"]?.data.doubleValues
         let speeds = streams["velocity_smooth"]?.data.doubleValues
+        let heartRates = streams["heartrate"]?.data.doubleValues
+        let powers = streams["watts"]?.data.doubleValues
+        let temperatures = streams["temp"]?.data.doubleValues
 
         return latLngPairs.enumerated().map { index, pair in
             RouteCoordinate(
@@ -855,7 +858,10 @@ private struct StravaActivityStreamSet: Decodable {
                 speedAccuracyMetersPerSecond: nil,
                 courseDegrees: nil,
                 courseAccuracyDegrees: nil,
-                floorLevel: nil
+                floorLevel: nil,
+                heartRateBeatsPerMinute: heartRates?[safe: index],
+                powerWatts: powers?[safe: index],
+                temperatureCelsius: temperatures?[safe: index]
             )
         }
     }
