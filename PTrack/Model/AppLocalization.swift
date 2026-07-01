@@ -76,6 +76,7 @@ enum AppTextKey: String {
     case homeNoWorkoutDataMessage
     case appleHealthDataSourceSubtitle
     case exportGPX
+    case estimatedBurnedCaloriesFormat
     case gpxExportFailed
     case gpxExportNoRoute
     case gpxExportRouteName
@@ -320,6 +321,7 @@ enum AppLocalization {
             .disable: "关闭",
             .distanceMetersFormat: "%.0f 米",
             .enable: "开启",
+            .estimatedBurnedCaloriesFormat: "约消耗 %.0f 大卡",
             .exit: "退出",
             .healthAuthorizationDenied: "未获得健康数据读取权限。",
             .healthAuthorizationFailed: "健康授权失败",
@@ -531,6 +533,7 @@ enum AppLocalization {
             .disable: "オフにする",
             .distanceMetersFormat: "%.0f m",
             .enable: "オンにする",
+            .estimatedBurnedCaloriesFormat: "約 %.0f kcal 消費",
             .exit: "終了",
             .healthAuthorizationDenied: "ヘルスケアデータの読み取り権限がありません。",
             .healthAuthorizationFailed: "ヘルスケア認証に失敗しました",
@@ -742,6 +745,7 @@ enum AppLocalization {
             .disable: "끄기",
             .distanceMetersFormat: "%.0f m",
             .enable: "켜기",
+            .estimatedBurnedCaloriesFormat: "약 %.0f kcal 소비",
             .exit: "종료",
             .healthAuthorizationDenied: "건강 데이터 읽기 권한이 없습니다.",
             .healthAuthorizationFailed: "건강 권한 요청 실패",
@@ -953,6 +957,7 @@ enum AppLocalization {
             .disable: "Disable",
             .distanceMetersFormat: "%.0f m",
             .enable: "Enable",
+            .estimatedBurnedCaloriesFormat: "About %.0f kcal burned",
             .exit: "Exit",
             .healthAuthorizationDenied: "Health data read permission has not been granted.",
             .healthAuthorizationFailed: "Health authorization failed",

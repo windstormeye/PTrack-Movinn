@@ -14,6 +14,11 @@ final class WorkoutRouteCalorieRiceView: UIView {
         case falling
     }
 
+    private enum SideImpactEdge {
+        case left
+        case right
+    }
+
     private let titleLabel = UILabel()
     private let gravityMotionEffect = GravityTiltMotionEffect()
     private let impactFeedbackGenerator = UIImpactFeedbackGenerator(style: .light)
@@ -29,6 +34,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
     private var calibratedViewerOffset: UIOffset?
     private var lastSideImpactTime: CFTimeInterval = 0
     private var isImpactFeedbackEnabled = false
+    private var riceSideImpactEdges: [ObjectIdentifier: SideImpactEdge] = [:]
 
     private let bodySize = CGSize(width: 24, height: 18)
     private let gravityMagnitude: CGFloat = 1.85
@@ -38,6 +44,8 @@ final class WorkoutRouteCalorieRiceView: UIView {
     private let tiltDeadZone: CGFloat = 0.04
     private let sideImpactVelocityThreshold: CGFloat = 85
     private let sideImpactMinimumInterval: CFTimeInterval = 0.14
+    private let sideImpactInset: CGFloat = 1
+    private let sideImpactResetInset: CGFloat = 8
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -63,8 +71,11 @@ final class WorkoutRouteCalorieRiceView: UIView {
         }
     }
 
-    func configure(caloriesKilocalories: Double) {
-        titleLabel.text = AppLocalization.format(.burnedCaloriesFormat, caloriesKilocalories)
+    func configure(caloriesKilocalories: Double, isEstimated: Bool = false) {
+        titleLabel.text = AppLocalization.format(
+            isEstimated ? .estimatedBurnedCaloriesFormat : .burnedCaloriesFormat,
+            caloriesKilocalories
+        )
         calibratedViewerOffset = nil
         rebuildRiceLabels(count: riceBowlCount(for: caloriesKilocalories))
     }
@@ -88,6 +99,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
     func setImpactFeedbackEnabled(_ isEnabled: Bool) {
         isImpactFeedbackEnabled = isEnabled
         lastSideImpactTime = CACurrentMediaTime()
+        seedCurrentSideImpactEdges()
 
         if isEnabled {
             impactFeedbackGenerator.prepare()
@@ -137,6 +149,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
         gravityBehavior = nil
         collisionBehavior = nil
         itemBehavior = nil
+        riceSideImpactEdges = [:]
 
         riceBodies.forEach { $0.removeFromSuperview() }
         riceBodies = (0..<count).map { _ in
@@ -191,6 +204,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
 
     private func resetPhysics(initialVerticalVelocity: CGFloat = -16) {
         animator.removeAllBehaviors()
+        riceSideImpactEdges = [:]
 
         guard !riceBodies.isEmpty, bounds.size != .zero else {
             return
@@ -231,6 +245,7 @@ final class WorkoutRouteCalorieRiceView: UIView {
         gravityBehavior = gravity
         collisionBehavior = collision
         itemBehavior = item
+        seedCurrentSideImpactEdges()
     }
 
     private func updateGravity(for viewerOffset: UIOffset) {
@@ -273,11 +288,26 @@ final class WorkoutRouteCalorieRiceView: UIView {
             return
         }
 
-        let didHitSide = riceBodies.contains { body in
+        var didHitSide = false
+        for body in riceBodies {
+            let bodyID = ObjectIdentifier(body)
+            guard let edge = sideImpactEdge(for: body) else {
+                if didClearSideImpactEdge(body) {
+                    riceSideImpactEdges[bodyID] = nil
+                }
+                continue
+            }
+
             let velocityX = itemBehavior.linearVelocity(for: body).x
-            let hitLeft = body.frame.minX <= 1 && velocityX < -sideImpactVelocityThreshold
-            let hitRight = body.frame.maxX >= bounds.width - 1 && velocityX > sideImpactVelocityThreshold
-            return hitLeft || hitRight
+            let previousEdge = riceSideImpactEdges[bodyID]
+            riceSideImpactEdges[bodyID] = edge
+
+            guard previousEdge != edge,
+                  isVelocityTowardSideImpact(edge, velocityX: velocityX) else {
+                continue
+            }
+
+            didHitSide = true
         }
 
         guard didHitSide else {
@@ -287,6 +317,40 @@ final class WorkoutRouteCalorieRiceView: UIView {
         lastSideImpactTime = now
         impactFeedbackGenerator.impactOccurred(intensity: 0.55)
         impactFeedbackGenerator.prepare()
+    }
+
+    private func seedCurrentSideImpactEdges() {
+        riceSideImpactEdges = riceBodies.reduce(into: [ObjectIdentifier: SideImpactEdge]()) { result, body in
+            if let edge = sideImpactEdge(for: body) {
+                result[ObjectIdentifier(body)] = edge
+            }
+        }
+    }
+
+    private func sideImpactEdge(for body: UIView) -> SideImpactEdge? {
+        if body.frame.minX <= sideImpactInset {
+            return .left
+        }
+
+        if body.frame.maxX >= bounds.width - sideImpactInset {
+            return .right
+        }
+
+        return nil
+    }
+
+    private func didClearSideImpactEdge(_ body: UIView) -> Bool {
+        body.frame.minX > sideImpactResetInset
+            && body.frame.maxX < bounds.width - sideImpactResetInset
+    }
+
+    private func isVelocityTowardSideImpact(_ edge: SideImpactEdge, velocityX: CGFloat) -> Bool {
+        switch edge {
+        case .left:
+            return velocityX < -sideImpactVelocityThreshold
+        case .right:
+            return velocityX > sideImpactVelocityThreshold
+        }
     }
 }
 

@@ -14,6 +14,7 @@ import UIKit
 
 class ViewController: UIViewController {
     private enum DefaultsKey {
+        static let healthHistoricalBackfillCompleted = "studio.pj.PTrack.health.historicalBackfillCompleted"
         static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
@@ -21,6 +22,10 @@ class ViewController: UIViewController {
     private enum RouteBookPanelDetent {
         case minimum
         case medium
+    }
+
+    private struct PendingStravaSyncRequest {
+        let showsLoadingIndicator: Bool
     }
 
     private let store = HealthWorkoutStore()
@@ -118,6 +123,8 @@ class ViewController: UIViewController {
     private var routeBookHeadingDisplayDegrees: CLLocationDirection?
     private var shouldClearRouteImportIndicatorsOnNextHomeAppear = false
     private var isHealthAuthorizationRecoveryCheckInProgress = false
+    private var isCurrentHealthHistoricalBackfill = false
+    private var pendingStravaSyncAfterHealth: PendingStravaSyncRequest?
 
     deinit {
         pendingFlushWorkItem?.cancel()
@@ -992,14 +999,16 @@ class ViewController: UIViewController {
 
         switch store.authorizationState {
         case .authorized:
+            queueStravaSyncAfterHealthIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
             loadAuthorizedHealthWorkouts(showsLoadingIndicator: showsLoadingIndicator)
         case .needsAttention:
             print("PTrack HealthKit: checking pending authorization on app open")
+            queueStravaSyncAfterHealthIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
             recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
         case .notDetermined:
             print("PTrack HealthKit: skipped import, no stored authorization")
+            loadAuthorizedStravaWorkouts(showsLoadingIndicator: showsLoadingIndicator)
         }
-        loadAuthorizedStravaWorkouts(showsLoadingIndicator: showsLoadingIndicator)
     }
 
     func updatePullRefreshTracking(for scrollView: UIScrollView) {
@@ -1037,6 +1046,27 @@ class ViewController: UIViewController {
         }
 
         synchronizeDataSourcesForAppOpen()
+    }
+
+    private func queueStravaSyncAfterHealthIfNeeded(showsLoadingIndicator: Bool) {
+        guard StravaManager.shared.hasStoredAuthorization else {
+            return
+        }
+
+        let shouldShowLoadingIndicator = showsLoadingIndicator
+            || pendingStravaSyncAfterHealth?.showsLoadingIndicator == true
+        pendingStravaSyncAfterHealth = PendingStravaSyncRequest(
+            showsLoadingIndicator: shouldShowLoadingIndicator
+        )
+    }
+
+    private func runPendingStravaSyncAfterHealthIfNeeded() {
+        guard let request = pendingStravaSyncAfterHealth else {
+            return
+        }
+
+        pendingStravaSyncAfterHealth = nil
+        loadAuthorizedStravaWorkouts(showsLoadingIndicator: request.showsLoadingIndicator)
     }
 
     private func updateTotalDistanceText() {
@@ -1365,9 +1395,16 @@ class ViewController: UIViewController {
     }
 
     private func recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: Bool) {
-        guard store.authorizationState == .needsAttention,
-              !isHealthSyncInProgress,
-              !isHealthAuthorizationRecoveryCheckInProgress else {
+        guard store.authorizationState == .needsAttention else {
+            runPendingStravaSyncAfterHealthIfNeeded()
+            return
+        }
+
+        guard !isHealthSyncInProgress else {
+            return
+        }
+
+        guard !isHealthAuthorizationRecoveryCheckInProgress else {
             return
         }
 
@@ -1379,8 +1416,12 @@ class ViewController: UIViewController {
                 }
 
                 self.isHealthAuthorizationRecoveryCheckInProgress = false
-                guard self.store.authorizationState == .needsAttention,
-                      !self.isHealthSyncInProgress else {
+                guard self.store.authorizationState == .needsAttention else {
+                    self.runPendingStravaSyncAfterHealthIfNeeded()
+                    return
+                }
+
+                guard !self.isHealthSyncInProgress else {
                     return
                 }
 
@@ -1390,6 +1431,7 @@ class ViewController: UIViewController {
                 case .success(.canRequest), .failure:
                     self.updateHeaderReadAuthorizationState()
                     self.updateEmptyDataSourceVisibility()
+                    self.runPendingStravaSyncAfterHealthIfNeeded()
                 }
             }
         }
@@ -1599,11 +1641,18 @@ class ViewController: UIViewController {
         let cachedIDs = knownWorkoutIDs
         let staleWorkouts = workouts.filter(\.needsHealthDataRefresh)
         let staleWorkoutIDs = Set(staleWorkouts.map(\.id))
-        let queryStartDate = staleWorkouts.map(\.startDate).min() ?? workouts.map(\.startDate).max()
+        let shouldBackfillHistory = !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted)
+        let queryStartDate = shouldBackfillHistory
+            ? nil
+            : staleWorkouts.map(\.startDate).min() ?? workouts.map(\.startDate).max()
         let excludedIDs = cachedIDs.subtracting(staleWorkoutIDs)
+        isCurrentHealthHistoricalBackfill = shouldBackfillHistory
 
         if !staleWorkouts.isEmpty {
             print("PTrack HealthKit: refreshing \(staleWorkouts.count) cached workouts for expanded health data")
+        }
+        if shouldBackfillHistory {
+            print("PTrack HealthKit: historical backfill not completed; requesting full workout history")
         }
 
         store.loadTrackedWorkouts(
@@ -1917,12 +1966,15 @@ class ViewController: UIViewController {
     }
 
     private func handleLoadResult(_ result: Result<Int, Error>) {
+        let didRunHistoricalBackfill = isCurrentHealthHistoricalBackfill
+        isCurrentHealthHistoricalBackfill = false
         isHealthSyncInProgress = false
         setHealthNewDataSyncInProgress(false)
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let count):
             print("PTrack HealthKit: route query completed, loaded routes: \(count)")
+            markHealthHistoricalBackfillCompletedIfNeeded(didRunHistoricalBackfill: didRunHistoricalBackfill)
             newWorkoutBadgeStore.markInitialSyncCompleted()
         case .failure(let error):
             print("PTrack HealthKit: route query failed: \(error)")
@@ -1937,6 +1989,17 @@ class ViewController: UIViewController {
         if didFlushPendingWorkouts {
             scheduleCacheSave(delay: 0)
         }
+        runPendingStravaSyncAfterHealthIfNeeded()
+    }
+
+    private func markHealthHistoricalBackfillCompletedIfNeeded(didRunHistoricalBackfill: Bool) {
+        guard didRunHistoricalBackfill,
+              !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) else {
+            return
+        }
+
+        UserDefaults.standard.set(true, forKey: DefaultsKey.healthHistoricalBackfillCompleted)
+        print("PTrack HealthKit: historical backfill marked completed")
     }
 
     private func showHeatmap() {

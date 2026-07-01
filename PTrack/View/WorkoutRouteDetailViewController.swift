@@ -112,11 +112,15 @@ final class WorkoutRouteDetailViewController: UIViewController {
     )
 
     private var panelCaloriesKilocalories: Double? {
-        guard let calories = workout.activeEnergyBurnedKilocalories, calories > 0 else {
+        guard let calories = workout.displayEnergyBurnedKilocalories, calories > 0 else {
             return nil
         }
 
         return calories
+    }
+
+    private var panelCaloriesIsEstimated: Bool {
+        workout.isDisplayEnergyBurnedEstimated
     }
 
     init(
@@ -276,7 +280,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         )
 
         if let caloriesKilocalories = panelCaloriesKilocalories {
-            calorieRiceView.configure(caloriesKilocalories: caloriesKilocalories)
+            calorieRiceView.configure(
+                caloriesKilocalories: caloriesKilocalories,
+                isEstimated: panelCaloriesIsEstimated
+            )
         }
         routeLoadingLabel.text = AppLocalization.text(.routeLoading)
         gpxExportLoadingLabel.text = AppLocalization.text(.gpxExporting)
@@ -1102,7 +1109,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         detailStackView.addArrangedSubview(replayRulerView)
         if let caloriesKilocalories {
-            calorieRiceView.configure(caloriesKilocalories: caloriesKilocalories)
+            calorieRiceView.configure(
+                caloriesKilocalories: caloriesKilocalories,
+                isEstimated: panelCaloriesIsEstimated
+            )
             detailStackView.addArrangedSubview(calorieRiceView)
         }
 
