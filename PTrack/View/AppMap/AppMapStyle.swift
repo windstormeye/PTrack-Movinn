@@ -118,7 +118,7 @@ final class RouteDirectionPolylineRenderer: MKPolylineRenderer {
     var directionIndicatorLength: CGFloat = 16
     var directionIndicatorWidth: CGFloat = 21
     var directionIndicatorStrokeWidth: CGFloat = 6
-    var minimumZoomScaleForIndicators: MKZoomScale = 0.005
+    var minimumZoomScaleForIndicators: MKZoomScale = 0.03
     var minimumRouteLengthForIndicators: CGFloat = 120
     var maximumIndicatorCount = 120
 
