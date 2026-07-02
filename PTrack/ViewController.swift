@@ -995,6 +995,7 @@ class ViewController: UIViewController {
         }
 
         isHealthNewDataSyncInProgress = isInProgress
+        updateRouteGridPrefetchingState()
         updateTotalDistanceText()
     }
 
@@ -1004,7 +1005,12 @@ class ViewController: UIViewController {
         }
 
         isStravaNewDataSyncInProgress = isInProgress
+        updateRouteGridPrefetchingState()
         updateTotalDistanceText()
+    }
+
+    private func updateRouteGridPrefetchingState() {
+        routeGridView.isPrefetchingEnabled = !isCacheLoadInProgress && !isNewDataSyncInProgress
     }
 
     private var hasReadableDataSourceAuthorization: Bool {
@@ -1375,6 +1381,7 @@ class ViewController: UIViewController {
 
     private func loadCachedWorkoutsThenSynchronize() {
         isCacheLoadInProgress = true
+        updateRouteGridPrefetchingState()
         isCacheLoadShowingLoadingIndicator = cachedWorkoutSummary == nil
         if isCacheLoadShowingLoadingIndicator {
             beginLoadingOperation()
@@ -1415,6 +1422,7 @@ class ViewController: UIViewController {
                 let hadCachedSummary = self.cachedWorkoutSummary != nil
                 self.finishApplyingCachedWorkoutPreviews()
                 self.isCacheLoadInProgress = false
+                self.updateRouteGridPrefetchingState()
                 if self.isCacheLoadShowingLoadingIndicator {
                     self.isCacheLoadShowingLoadingIndicator = false
                     self.endLoadingOperation()
@@ -1435,34 +1443,26 @@ class ViewController: UIViewController {
             return
         }
 
-        var didAppendWorkout = false
-        for workout in cachedWorkoutBatch where knownWorkoutIDs.insert(workout.id).inserted {
-            workouts.append(workout)
-            totalDistanceMeters += workout.distanceMeters
-            didAppendWorkout = true
-        }
-
-        guard didAppendWorkout else {
+        let incomingWorkouts = cachedWorkoutBatch.filter { knownWorkoutIDs.insert($0.id).inserted }
+        guard !incomingWorkouts.isEmpty else {
             return
         }
 
-        workouts.sort { $0.startDate > $1.startDate }
-        updateTotalDistanceText()
-        UIView.performWithoutAnimation {
-            collectionView.reloadData()
-        }
+        appendWorkoutsToList(incomingWorkouts)
         restorePersistedRouteBookModeIfNeeded()
     }
 
     private func finishApplyingCachedWorkoutPreviews() {
-        removeCachedAppleHealthWorkoutsConflictingWithStrava()
+        let didRemoveCachedConflicts = removeCachedAppleHealthWorkoutsConflictingWithStrava()
         markHealthAuthorizationVerifiedFromCachedWorkoutsIfNeeded()
         knownWorkoutIDs = Set(workouts.map(\.id))
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
         let shouldBackfillCacheSummary = cachedWorkoutSummary == nil && !workouts.isEmpty
         cachedWorkoutSummary = nil
         updateTotalDistanceText()
-        collectionView.reloadData()
+        if didRemoveCachedConflicts {
+            collectionView.reloadData()
+        }
         prewarmInitialRouteSources()
         restorePersistedRouteBookModeIfNeeded()
         refreshWidgetSnapshot()
@@ -1814,6 +1814,7 @@ class ViewController: UIViewController {
             return
         }
 
+        let previousWorkouts = workouts
         var removedWorkouts: [TrackedWorkout] = []
         workouts.removeAll { candidate in
             guard !candidate.isStravaSource,
@@ -1847,9 +1848,15 @@ class ViewController: UIViewController {
 
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
         updateTotalDistanceText()
-        UIView.performWithoutAnimation {
-            collectionView.reloadData()
+        let removedWorkoutIDs = Set(removedWorkouts.map(\.id))
+        let deletedIndexPaths = previousWorkouts.enumerated().compactMap { index, workout -> IndexPath? in
+            guard removedWorkoutIDs.contains(workout.id) else {
+                return nil
+            }
+
+            return IndexPath(item: index, section: 0)
         }
+        applyWorkoutListDeletions(deletedIndexPaths, previousItemCount: previousWorkouts.count)
         scheduleCacheSave(delay: 0)
 
         print(
@@ -1857,10 +1864,11 @@ class ViewController: UIViewController {
         )
     }
 
-    private func removeCachedAppleHealthWorkoutsConflictingWithStrava() {
+    @discardableResult
+    private func removeCachedAppleHealthWorkoutsConflictingWithStrava() -> Bool {
         let stravaWorkouts = workouts.filter(\.isStravaSource)
         guard !stravaWorkouts.isEmpty else {
-            return
+            return false
         }
 
         var removedCount = 0
@@ -1879,11 +1887,12 @@ class ViewController: UIViewController {
         }
 
         guard removedCount > 0 else {
-            return
+            return false
         }
 
         print("PTrack Sync: removed \(removedCount) cached Apple Health duplicate(s) because Strava has precedence")
         scheduleCacheSave(delay: 0)
+        return true
     }
 
     private func appendTrackedWorkout(_ workout: TrackedWorkout) {
@@ -1929,17 +1938,70 @@ class ViewController: UIViewController {
         let incomingWorkouts = pendingWorkouts
         pendingWorkouts.removeAll()
 
+        appendWorkoutsToList(incomingWorkouts)
+        scheduleCacheSave()
+        restorePersistedRouteBookModeIfNeeded()
+        return true
+    }
+
+    private func appendWorkoutsToList(_ incomingWorkouts: [TrackedWorkout]) {
+        guard !incomingWorkouts.isEmpty else {
+            return
+        }
+
+        let previousItemCount = workouts.count
+        let incomingWorkoutIDs = Set(incomingWorkouts.map(\.id))
+
         workouts.append(contentsOf: incomingWorkouts)
         workouts.sort { $0.startDate > $1.startDate }
         totalDistanceMeters += incomingWorkouts.reduce(0) { $0 + $1.distanceMeters }
         updateTotalDistanceText()
 
-        UIView.performWithoutAnimation {
-            collectionView.reloadData()
+        let insertedIndexPaths = workouts.enumerated().compactMap { index, workout -> IndexPath? in
+            guard incomingWorkoutIDs.contains(workout.id) else {
+                return nil
+            }
+
+            return IndexPath(item: index, section: 0)
         }
-        scheduleCacheSave()
-        restorePersistedRouteBookModeIfNeeded()
-        return true
+        applyWorkoutListInsertions(insertedIndexPaths, previousItemCount: previousItemCount)
+    }
+
+    private func applyWorkoutListInsertions(
+        _ insertedIndexPaths: [IndexPath],
+        previousItemCount: Int
+    ) {
+        guard insertedIndexPaths.count == workouts.count - previousItemCount,
+              collectionView.numberOfItems(inSection: 0) == previousItemCount else {
+            collectionView.reloadData()
+            return
+        }
+
+        UIView.performWithoutAnimation {
+            collectionView.performBatchUpdates {
+                collectionView.insertItems(at: insertedIndexPaths)
+            }
+        }
+    }
+
+    private func applyWorkoutListDeletions(
+        _ deletedIndexPaths: [IndexPath],
+        previousItemCount: Int
+    ) {
+        guard !deletedIndexPaths.isEmpty else {
+            return
+        }
+
+        guard collectionView.numberOfItems(inSection: 0) == previousItemCount else {
+            collectionView.reloadData()
+            return
+        }
+
+        UIView.performWithoutAnimation {
+            collectionView.performBatchUpdates {
+                collectionView.deleteItems(at: deletedIndexPaths)
+            }
+        }
     }
 
     private var isCollectionViewBusy: Bool {

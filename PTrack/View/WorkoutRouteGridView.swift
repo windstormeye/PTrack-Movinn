@@ -63,6 +63,16 @@ final class WorkoutRouteGridView: UIView {
     var onColumnCountResolved: ((CGFloat) -> Void)?
     var onColumnSnapFinished: (() -> Void)?
     var contextMenuConfigurationProvider: ((TrackedWorkout, IndexPath) -> UIContextMenuConfiguration?)?
+    var isPrefetchingEnabled = true {
+        didSet {
+            guard oldValue != isPrefetchingEnabled else { return }
+
+            collectionView.prefetchDataSource = isPrefetchingEnabled ? self : nil
+            if !isPrefetchingEnabled {
+                WorkoutRoutePathView.cancelPendingPrewarmSources()
+            }
+        }
+    }
 
     var columnCount: CGFloat {
         gridLayout.columns
@@ -301,6 +311,10 @@ extension WorkoutRouteGridView: UICollectionViewDelegate {
 
 extension WorkoutRouteGridView: UICollectionViewDataSourcePrefetching {
     func collectionView(_ collectionView: UICollectionView, prefetchItemsAt indexPaths: [IndexPath]) {
+        guard isPrefetchingEnabled else {
+            return
+        }
+
         for indexPath in indexPaths {
             guard let item = item(at: indexPath),
                   case .route(let workout, let showsMap, _, _, _, _) = item.content else {
@@ -325,6 +339,10 @@ extension WorkoutRouteGridView: UICollectionViewDataSourcePrefetching {
     }
 
     func collectionView(_ collectionView: UICollectionView, cancelPrefetchingForItemsAt indexPaths: [IndexPath]) {
+        guard isPrefetchingEnabled else {
+            return
+        }
+
         for indexPath in indexPaths {
             guard let item = item(at: indexPath),
                   case .route(let workout, let showsMap, _, _, _, _) = item.content,

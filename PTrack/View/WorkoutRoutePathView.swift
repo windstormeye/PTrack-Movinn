@@ -123,6 +123,16 @@ final class WorkoutRoutePathView: UIView {
         pendingSourceBuilds[key] = nil
     }
 
+    static func cancelPendingPrewarmSources() {
+        sourceBuildLock.lock()
+        let prewarmBuilds = pendingSourceBuilds.filter { $0.value.completions.isEmpty }
+        prewarmBuilds.forEach { key, pendingBuild in
+            pendingBuild.operation.cancel()
+            pendingSourceBuilds[key] = nil
+        }
+        sourceBuildLock.unlock()
+    }
+
     private func configureLayer() {
         backgroundColor = .clear
         isOpaque = false

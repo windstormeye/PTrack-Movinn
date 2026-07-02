@@ -366,11 +366,12 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrack/PTrack.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Movinn;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "PTrack 需要读取 Apple 健康中的户外运动、轨迹、能量、心率、速度等数据，用于展示和保存你的运动路线细节。";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PTrack 当前不会写入健康数据；此说明用于完整启用 Apple 健康权限面板。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "访问照片图库获取运动时拍摄的照片和视频";
@@ -414,11 +415,12 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrack/PTrack.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrack/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Movinn;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "PTrack 需要读取 Apple 健康中的户外运动、轨迹、能量、心率、速度等数据，用于展示和保存你的运动路线细节。";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "PTrack 当前不会写入健康数据；此说明用于完整启用 Apple 健康权限面板。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "访问照片图库获取运动时拍摄的照片和视频";
@@ -585,7 +587,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = Widget/Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
@@ -622,7 +624,7 @@
 				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
 				CODE_SIGN_ENTITLEMENTS = Widget/Widget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Widget/Info.plist;
@@ -657,7 +659,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrackShareExtension/PTrackShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrackShareExtension/Info.plist;
@@ -691,7 +693,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = PTrackShareExtension/PTrackShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = U6J5965DZK;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = PTrackShareExtension/Info.plist;

@@ -418,13 +418,17 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
             await ProSubscriptionManager.shared.ensureAccessResolved()
             guard ProSubscriptionManager.shared.isProUser else {
-                modalPresentationHost.presentProPaywall { [weak self] in
-                    self?.presentRouteMergeSelectionUnlocked()
+                dismissPanelSheetForNavigation { [weak self] in
+                    self?.presentProPaywall { [weak self] in
+                        self?.presentRouteMergeSelectionUnlocked()
+                    }
                 }
                 return
             }
 
-            presentRouteMergeSelectionUnlocked()
+            dismissPanelSheetForNavigation { [weak self] in
+                self?.presentRouteMergeSelectionUnlocked()
+            }
         }
     }
 
