@@ -77,6 +77,8 @@ class ViewController: UIViewController {
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let moreButton = UIButton(type: .system)
     private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
+    private let scrollDateIndicatorView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+    private let scrollDateIndicatorLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 5, left: 11, bottom: 5, right: 11))
     private var totalDistanceTrailingToMoreConstraint: Constraint?
     private let routeBookLocateButton = UIButton(type: .system)
     private let routeBookMapStyleButton = UIButton(type: .system)
@@ -127,10 +129,17 @@ class ViewController: UIViewController {
     private var isHealthAuthorizationRecoveryCheckInProgress = false
     private var isCurrentHealthHistoricalBackfill = false
     private var pendingStravaSyncAfterHealth: PendingStravaSyncRequest?
+    private var isScrollDateIndicatorVisible = false
+    private var scrollDateIndicatorHideWorkItem: DispatchWorkItem?
+    private var lastScrollDateIndicatorOffsetY: CGFloat?
+    private var lastScrollDateIndicatorTimestamp: CFTimeInterval?
+    private var lastScrollDateIndicatorText: String?
+    private lazy var scrollDateFormatter = Self.makeHomeScrollDateFormatter()
 
     deinit {
         pendingFlushWorkItem?.cancel()
         pendingCacheSaveWorkItem?.cancel()
+        scrollDateIndicatorHideWorkItem?.cancel()
         stopRouteBookLocationAndHeadingUpdates()
         routeBookPanelSheetViewController.sheetPresentationController?.delegate = nil
         routeBookPanelSheetViewController.onViewDidLayout = nil
@@ -156,6 +165,7 @@ class ViewController: UIViewController {
         configureCollectionView()
         configureRouteBookMapView()
         configureHeaderView()
+        configureScrollDateIndicator()
         configureEmptyDataSourceView()
         configureLoadingIndicator()
         registerLanguageObserver()
@@ -198,6 +208,14 @@ class ViewController: UIViewController {
         }
 
         return UIBlurEffect(style: .systemThinMaterial)
+    }
+
+    private static func makeHomeScrollDateFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        formatter.calendar = Calendar.current
+        formatter.setLocalizedDateFormatFromTemplate("yyyyMMMM")
+        return formatter
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -261,16 +279,21 @@ class ViewController: UIViewController {
         }
         routeGridView.onScroll = { [weak self] scrollView in
             self?.updatePullRefreshTracking(for: scrollView)
+            self?.updateScrollDateIndicator(for: scrollView)
         }
         routeGridView.onEndDragging = { [weak self] _, decelerate in
             self?.performPullRefreshIfNeeded()
             if !decelerate {
                 self?.flushPendingWorkouts()
+                self?.resetScrollDateIndicatorTracking()
+                self?.scheduleScrollDateIndicatorHide()
             }
         }
         routeGridView.onEndDecelerating = { [weak self] _ in
             self?.finishPullRefreshTracking()
             self?.flushPendingWorkouts()
+            self?.resetScrollDateIndicatorTracking()
+            self?.scheduleScrollDateIndicatorHide()
         }
         routeGridView.onColumnCountResolved = { [weak self] columnCount in
             self?.saveRouteGridColumnCount(columnCount)
@@ -602,6 +625,54 @@ class ViewController: UIViewController {
         routeCollectionBadgeLabel.layer.masksToBounds = true
         routeCollectionBadgeLabel.isUserInteractionEnabled = false
         routeCollectionBadgeLabel.isHidden = true
+    }
+
+    private func configureScrollDateIndicator() {
+        scrollDateIndicatorView.alpha = 0
+        scrollDateIndicatorView.isHidden = true
+        scrollDateIndicatorView.isUserInteractionEnabled = false
+        scrollDateIndicatorView.layer.cornerRadius = 16
+        scrollDateIndicatorView.layer.masksToBounds = true
+
+        scrollDateIndicatorLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        scrollDateIndicatorLabel.numberOfLines = 1
+        scrollDateIndicatorLabel.adjustsFontSizeToFitWidth = true
+        scrollDateIndicatorLabel.minimumScaleFactor = 0.82
+        scrollDateIndicatorLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        scrollDateIndicatorLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+        updateScrollDateIndicatorAppearance()
+
+        view.addSubview(scrollDateIndicatorView)
+        scrollDateIndicatorView.contentView.addSubview(scrollDateIndicatorLabel)
+
+        scrollDateIndicatorView.snp.makeConstraints { make in
+            make.leading.equalTo(view.safeAreaLayoutGuide.snp.leading).offset(16)
+            make.top.equalTo(headerView.snp.bottom).offset(10)
+            make.height.greaterThanOrEqualTo(32)
+            make.width.lessThanOrEqualTo(view.safeAreaLayoutGuide.snp.width).multipliedBy(0.72)
+        }
+
+        scrollDateIndicatorLabel.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    private func updateScrollDateIndicatorAppearance() {
+        scrollDateIndicatorLabel.textColor = AppColors.foreground(alpha: 0.9)
+
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect(style: .regular)
+            effect.isInteractive = false
+            effect.tintColor = AppColors.background(alpha: 0.08)
+            scrollDateIndicatorView.effect = effect
+            scrollDateIndicatorView.backgroundColor = .clear
+            scrollDateIndicatorView.contentView.backgroundColor = .clear
+        } else {
+            scrollDateIndicatorView.effect = UIBlurEffect(style: .systemThinMaterial)
+            scrollDateIndicatorView.backgroundColor = .clear
+            scrollDateIndicatorView.contentView.backgroundColor = AppColors.background(alpha: 0.36)
+        }
     }
 
     private func updateHeaderAppearanceColors() {
@@ -1112,6 +1183,124 @@ class ViewController: UIViewController {
         isPullRefreshArmedInCurrentDrag = pullDistance >= pullRefreshTriggerDistance
     }
 
+    private func updateScrollDateIndicator(for scrollView: UIScrollView) {
+        guard scrollView === collectionView,
+              !isRouteBookModeActive,
+              !workouts.isEmpty,
+              updateScrollDateIndicatorTextForVisibleWorkout() else {
+            resetScrollDateIndicatorTracking()
+            setScrollDateIndicatorVisible(false, animated: true)
+            return
+        }
+
+        let now = CACurrentMediaTime()
+        let currentOffsetY = scrollView.contentOffset.y
+        let panVelocityY = scrollView.panGestureRecognizer.velocity(in: scrollView).y
+        let measuredVelocityY: CGFloat
+        if let lastOffsetY = lastScrollDateIndicatorOffsetY,
+           let lastTimestamp = lastScrollDateIndicatorTimestamp {
+            let elapsedTime = max(now - lastTimestamp, 0.001)
+            measuredVelocityY = (currentOffsetY - lastOffsetY) / CGFloat(elapsedTime)
+        } else {
+            measuredVelocityY = 0
+        }
+
+        lastScrollDateIndicatorOffsetY = currentOffsetY
+        lastScrollDateIndicatorTimestamp = now
+
+        let isFastScroll = abs(panVelocityY) > 780 || abs(measuredVelocityY) > 780 || scrollView.isDecelerating
+        guard isFastScroll else {
+            if isScrollDateIndicatorVisible {
+                scheduleScrollDateIndicatorHide()
+            }
+            return
+        }
+
+        setScrollDateIndicatorVisible(true, animated: true)
+    }
+
+    private func updateScrollDateIndicatorTextForVisibleWorkout() -> Bool {
+        guard let visibleIndexPath = collectionView.indexPathsForVisibleItems
+            .filter({ $0.section == 0 && $0.item >= 0 && $0.item < workouts.count })
+            .min(by: { lhs, rhs in
+                let lhsFrame = collectionView.layoutAttributesForItem(at: lhs)?.frame ?? .zero
+                let rhsFrame = collectionView.layoutAttributesForItem(at: rhs)?.frame ?? .zero
+                if abs(lhsFrame.minY - rhsFrame.minY) > 0.5 {
+                    return lhsFrame.minY < rhsFrame.minY
+                }
+
+                return lhs.item < rhs.item
+            }) else {
+            return false
+        }
+
+        let dateText = scrollDateFormatter.string(from: workouts[visibleIndexPath.item].startDate)
+        guard dateText != lastScrollDateIndicatorText else {
+            return true
+        }
+
+        lastScrollDateIndicatorText = dateText
+        scrollDateIndicatorLabel.text = dateText
+        return true
+    }
+
+    private func setScrollDateIndicatorVisible(_ isVisible: Bool, animated: Bool) {
+        scrollDateIndicatorHideWorkItem?.cancel()
+        scrollDateIndicatorHideWorkItem = nil
+
+        guard !isVisible || (!isRouteBookModeActive && !workouts.isEmpty) else {
+            return
+        }
+
+        let changes = {
+            self.scrollDateIndicatorView.alpha = isVisible ? 1 : 0
+            self.scrollDateIndicatorView.transform = isVisible
+                ? .identity
+                : CGAffineTransform(translationX: 0, y: -4)
+        }
+
+        if isVisible {
+            scrollDateIndicatorView.isHidden = false
+            view.bringSubviewToFront(scrollDateIndicatorView)
+        }
+
+        guard isScrollDateIndicatorVisible != isVisible || scrollDateIndicatorView.isHidden == isVisible else {
+            changes()
+            return
+        }
+
+        isScrollDateIndicatorVisible = isVisible
+
+        guard animated else {
+            changes()
+            scrollDateIndicatorView.isHidden = !isVisible
+            return
+        }
+
+        UIView.animate(
+            withDuration: isVisible ? 0.18 : 0.2,
+            delay: 0,
+            options: [.allowUserInteraction, .beginFromCurrentState, .curveEaseOut],
+            animations: changes
+        ) { _ in
+            self.scrollDateIndicatorView.isHidden = !isVisible
+        }
+    }
+
+    private func scheduleScrollDateIndicatorHide(delay: TimeInterval = 0.5) {
+        scrollDateIndicatorHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.setScrollDateIndicatorVisible(false, animated: true)
+        }
+        scrollDateIndicatorHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func resetScrollDateIndicatorTracking() {
+        lastScrollDateIndicatorOffsetY = nil
+        lastScrollDateIndicatorTimestamp = nil
+    }
+
     func performPullRefreshIfNeeded() {
         guard isPullRefreshArmedInCurrentDrag else {
             isPullRefreshArmedInCurrentDrag = false
@@ -1171,10 +1360,9 @@ class ViewController: UIViewController {
         let displayedTotalDistanceMeters = cachedWorkoutSummary?.totalDistanceMeters ?? totalDistanceMeters
         let displayedWorkoutCount = cachedWorkoutSummary?.workoutCount ?? workouts.count
         let totalKilometers = displayedTotalDistanceMeters / 1000
-        let prefixText = AppLocalization.text(.activitySummaryPrefix)
         let distanceText = AppLocalization.format(.totalDistanceFormat, Int(totalKilometers.rounded()))
         let activityCountText = AppLocalization.format(.totalActivityCountFormat, displayedWorkoutCount)
-        totalDistanceLabel.text = "\(prefixText) \(distanceText)/\(activityCountText)"
+        totalDistanceLabel.text = "\(distanceText)/\(activityCountText)"
         updateHeaderReadAuthorizationState()
         updateEmptyDataSourceVisibility()
     }
@@ -1212,6 +1400,9 @@ class ViewController: UIViewController {
         emptyDataSourceView.updateLocalizedText()
         routeBookMapStyleButton.menu = makeRouteBookMapStyleMenu()
         routeBookMapStyleButton.accessibilityLabel = AppLocalization.text(.mapStyle)
+        scrollDateFormatter = Self.makeHomeScrollDateFormatter()
+        lastScrollDateIndicatorText = nil
+        _ = updateScrollDateIndicatorTextForVisibleWorkout()
         updateHeaderMoreButtonMode()
         collectionView.reloadData()
     }
@@ -1270,6 +1461,7 @@ class ViewController: UIViewController {
     private func registerTraitChangeHandler() {
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (viewController: Self, _) in
             viewController.updateHeaderAppearanceColors()
+            viewController.updateScrollDateIndicatorAppearance()
             viewController.updateRouteBookLocateButtonAppearance()
             viewController.updateRouteBookPanelAppearanceColors()
             viewController.collectionView?.reloadData()
@@ -1277,6 +1469,7 @@ class ViewController: UIViewController {
     }
 
     @objc private func handleAppWillEnterForeground() {
+        AppLanguageStore.shared.refreshFromSystemSettingsIfNeeded()
         recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: false)
         updateHeaderReadAuthorizationState()
         updateEmptyDataSourceVisibility()
@@ -2912,6 +3105,7 @@ class ViewController: UIViewController {
         setNeedsStatusBarAppearanceUpdate()
 
         if isRouteBookModeActive {
+            setScrollDateIndicatorVisible(false, animated: false)
             emptyDataSourceView.isHidden = true
             view.bringSubviewToFront(headerView)
             view.bringSubviewToFront(routeBookScaleView)
@@ -2921,6 +3115,7 @@ class ViewController: UIViewController {
         } else {
             dismissRouteBookPanelSheetIfNeeded(animated: false)
             view.bringSubviewToFront(headerView)
+            view.bringSubviewToFront(scrollDateIndicatorView)
             updateEmptyDataSourceVisibility()
         }
 

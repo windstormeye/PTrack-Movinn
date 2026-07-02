@@ -250,30 +250,106 @@ final class AppLanguageStore {
     static let shared = AppLanguageStore()
     static let languageDidChangeNotification = Notification.Name("studio.pj.PTrack.languageDidChange")
 
+    private static let fallbackLanguage: AppLanguage = .chinese
+    private static let appleLanguagesKey = "AppleLanguages"
+    private static let legacyLanguageKey = "studio.pj.PTrack.appLanguage"
+
     private let defaults: UserDefaults
-    private let key = "studio.pj.PTrack.appLanguage"
+    private var lastResolvedLanguage: AppLanguage
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        lastResolvedLanguage = Self.resolveLanguage(in: defaults)
     }
 
     var language: AppLanguage {
         get {
-            guard let rawValue = defaults.string(forKey: key),
-                  let language = AppLanguage(rawValue: rawValue) else {
-                return .chinese
-            }
-
-            return language
+            let resolvedLanguage = Self.resolveLanguage(in: defaults)
+            lastResolvedLanguage = resolvedLanguage
+            return resolvedLanguage
         }
         set {
-            guard newValue != language else {
+            let storedSystemLanguage = Self.preferredSupportedLanguage(
+                from: defaults.array(forKey: Self.appleLanguagesKey) as? [String]
+            )
+            guard newValue != Self.resolveLanguage(in: defaults) || storedSystemLanguage != newValue else {
                 return
             }
 
-            defaults.set(newValue.rawValue, forKey: key)
+            defaults.set([newValue.rawValue], forKey: Self.appleLanguagesKey)
+            defaults.removeObject(forKey: Self.legacyLanguageKey)
+            defaults.synchronize()
+            lastResolvedLanguage = newValue
             NotificationCenter.default.post(name: Self.languageDidChangeNotification, object: newValue)
         }
+    }
+
+    @discardableResult
+    func refreshFromSystemSettingsIfNeeded() -> Bool {
+        let resolvedLanguage = Self.resolveLanguage(in: defaults)
+        guard resolvedLanguage != lastResolvedLanguage else {
+            return false
+        }
+
+        lastResolvedLanguage = resolvedLanguage
+        NotificationCenter.default.post(name: Self.languageDidChangeNotification, object: resolvedLanguage)
+        return true
+    }
+
+    private static func resolveLanguage(in defaults: UserDefaults) -> AppLanguage {
+        if let language = preferredSupportedLanguage(from: defaults.array(forKey: appleLanguagesKey) as? [String]) {
+            return language
+        }
+
+        if let rawValue = defaults.string(forKey: legacyLanguageKey),
+           let legacyLanguage = AppLanguage(rawValue: rawValue) {
+            return legacyLanguage
+        }
+
+        if let language = preferredSupportedLanguage(from: Bundle.main.preferredLocalizations) {
+            return language
+        }
+
+        if let language = preferredSupportedLanguage(from: Locale.preferredLanguages) {
+            return language
+        }
+
+        return fallbackLanguage
+    }
+
+    private static func preferredSupportedLanguage(from identifiers: [String]?) -> AppLanguage? {
+        identifiers?.compactMap { language(for: $0) }.first
+    }
+
+    private static func language(for identifier: String) -> AppLanguage? {
+        let normalizedIdentifier = Locale(identifier: identifier)
+            .identifier
+            .replacingOccurrences(of: "_", with: "-")
+
+        if normalizedIdentifier == AppLanguage.chinese.rawValue
+            || normalizedIdentifier.hasPrefix("\(AppLanguage.chinese.rawValue)-")
+            || normalizedIdentifier == "zh"
+            || normalizedIdentifier.hasPrefix("zh-CN")
+            || normalizedIdentifier.hasPrefix("zh-SG") {
+            return .chinese
+        }
+
+        if normalizedIdentifier == AppLanguage.japanese.rawValue
+            || normalizedIdentifier.hasPrefix("\(AppLanguage.japanese.rawValue)-") {
+            return .japanese
+        }
+
+        if normalizedIdentifier == AppLanguage.korean.rawValue
+            || normalizedIdentifier.hasPrefix("\(AppLanguage.korean.rawValue)-") {
+            return .korean
+        }
+
+        if normalizedIdentifier == AppLanguage.english.rawValue
+            || normalizedIdentifier.hasPrefix("\(AppLanguage.english.rawValue)-") {
+            return .english
+        }
+
+        return nil
     }
 }
 
