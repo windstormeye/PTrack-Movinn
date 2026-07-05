@@ -30,6 +30,7 @@ class ViewController: UIViewController {
 
     private let store = HealthWorkoutStore()
     private let cacheStore = WorkoutCacheStore()
+    private let routeCollectionStore = RouteCollectionStore()
     let newWorkoutBadgeStore = NewWorkoutBadgeStore()
     private let cacheLoadQueue = DispatchQueue(label: "studio.pj.PTrack.cache-load", qos: .userInitiated)
     private let cacheSaveQueue = DispatchQueue(label: "studio.pj.PTrack.cache-save", qos: .utility)
@@ -179,6 +180,7 @@ class ViewController: UIViewController {
             print("PTrack HealthKit: \(message)")
         }
         importPendingSharedRoutesIfNeeded()
+        restorePersistedRouteBookModeIfNeeded()
         loadCachedWorkoutsThenSynchronize()
     }
 
@@ -2636,12 +2638,57 @@ class ViewController: UIViewController {
 
     private func restorePersistedRouteBookModeIfNeeded() {
         guard !isRouteBookModeActive,
-              let activeWorkoutID = RouteBookMode.activeWorkoutID,
-              let workout = workouts.first(where: { $0.id == activeWorkoutID }) else {
+              let workout = persistedRouteBookWorkout() else {
             return
         }
 
         enterRouteBookMode(with: workout, persists: false)
+    }
+
+    private func persistedRouteBookWorkout() -> TrackedWorkout? {
+        guard let activeSession = RouteBookMode.activeSession else {
+            return nil
+        }
+
+        if let workout = persistedRouteBookWorkout(
+            routeID: activeSession.routeID,
+            preferredSource: activeSession.source
+        ) {
+            return workout
+        }
+
+        if let workout = workouts.first(where: { $0.id == activeSession.routeID }) {
+            return workout
+        }
+
+        if let snapshot = RouteBookMode.activeWorkoutSnapshot {
+            return snapshot
+        }
+
+        return nil
+    }
+
+    private func persistedRouteBookWorkout(
+        routeID: String,
+        preferredSource: RouteBookMode.StorageSource?
+    ) -> TrackedWorkout? {
+        switch preferredSource {
+        case .routeCollection:
+            if let workout = routeCollectionStore.loadRoute(id: routeID) {
+                return workout
+            }
+            return cacheStore.loadWorkout(id: routeID)
+        case .workoutCache:
+            if let workout = cacheStore.loadWorkout(id: routeID) {
+                return workout
+            }
+            return routeCollectionStore.loadRoute(id: routeID)
+        case nil:
+            if let workout = cacheStore.loadWorkout(id: routeID) {
+                return workout
+            }
+            return routeCollectionStore.loadRoute(id: routeID)
+        }
     }
 
     private func enterRouteBookMode(with workout: TrackedWorkout, persists: Bool = true) {
@@ -2653,7 +2700,7 @@ class ViewController: UIViewController {
         }
 
         if persists {
-            RouteBookMode.activate(workoutID: workout.id)
+            RouteBookMode.activate(workout: workout)
         }
 
         routeBookWorkout = workout
