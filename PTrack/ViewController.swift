@@ -119,8 +119,10 @@ class ViewController: UIViewController {
     private var isRouteBookModeActive = false
     private var routeBookWorkout: TrackedWorkout?
     private var routeBookPolyline: MKPolyline?
+    private var routeBookReplayAnnotation: RouteReplayAnnotation?
     private var routeBookReplayCoordinates: [CLLocationCoordinate2D] = []
     private var routeBookReplayDistances: [CLLocationDistance] = []
+    private var routeBookReplayAltitudes: [Double?] = []
     private var shouldCenterRouteBookOnNextLocation = false
     private var routeBookLastLocation: CLLocation?
     private var routeBookLastHeadingDegrees: CLLocationDirection?
@@ -395,6 +397,11 @@ class ViewController: UIViewController {
         routeBookPanelDetailStackView.alpha = 1
 
         routeBookReplayRulerView.configure(totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: 0))
+        routeBookReplayRulerView.addTarget(
+            self,
+            action: #selector(handleRouteBookReplayProgressChanged(_:)),
+            for: .valueChanged
+        )
         routeBookPanelDetailStackView.addArrangedSubview(routeBookReplayRulerView)
 
         updateRouteBookPanelAppearanceColors()
@@ -832,6 +839,7 @@ class ViewController: UIViewController {
         switch detent {
         case .minimum:
             routeBookReplayRulerView.setProgress(0)
+            removeRouteBookReplayAnnotation()
         case .medium:
             updateRouteBookReplayProgressForCurrentLocation()
         }
@@ -2721,6 +2729,8 @@ class ViewController: UIViewController {
             routeBookPanelDistanceLabel.isHidden = true
             routeBookReplayCoordinates = []
             routeBookReplayDistances = []
+            routeBookReplayAltitudes = []
+            removeRouteBookReplayAnnotation()
             routeBookReplayRulerView.configure(
                 totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: 0),
                 elevationSamples: []
@@ -2786,6 +2796,8 @@ class ViewController: UIViewController {
         routeBookReplayRulerView.setProgress(0)
         routeBookReplayCoordinates = coordinates
         routeBookReplayDistances = replayDistances
+        routeBookReplayAltitudes = routeCoordinates.map(\.altitudeMeters)
+        removeRouteBookReplayAnnotation()
         if selectedRouteBookPanelDetent == .medium {
             updateRouteBookReplayProgressForCurrentLocation()
         }
@@ -2926,6 +2938,138 @@ class ViewController: UIViewController {
         }
 
         updateRouteBookReplayProgressForCurrentLocation()
+    }
+
+    @objc private func handleRouteBookReplayProgressChanged(_ sender: WorkoutRouteReplayRulerView) {
+        guard let replayState = routeBookReplayState(for: sender.progress) else {
+            return
+        }
+
+        let statusText = routeBookReplayStatusText(for: replayState)
+        if let routeBookReplayAnnotation {
+            routeBookReplayAnnotation.coordinate = replayState.coordinate
+            routeBookReplayAnnotation.statusText = statusText
+            routeBookReplayAnnotation.isFacingLeft = replayState.isFacingLeft
+            if let annotationView = routeBookMapView.view(for: routeBookReplayAnnotation) as? RouteReplayAnnotationView {
+                annotationView.configure(
+                    emoji: routeBookReplayAnnotation.emoji,
+                    statusText: statusText,
+                    isFacingLeft: replayState.isFacingLeft
+                )
+                annotationView.superview?.bringSubviewToFront(annotationView)
+            }
+        } else {
+            let annotation = RouteReplayAnnotation(
+                coordinate: replayState.coordinate,
+                emoji: "📍",
+                statusText: statusText,
+                isFacingLeft: replayState.isFacingLeft
+            )
+            routeBookReplayAnnotation = annotation
+            routeBookMapView.addAnnotation(annotation)
+            if let annotationView = routeBookMapView.view(for: annotation) {
+                annotationView.superview?.bringSubviewToFront(annotationView)
+            }
+        }
+    }
+
+    private func routeBookReplayState(for progress: CGFloat) -> ReplayState? {
+        guard routeBookReplayCoordinates.count == routeBookReplayDistances.count,
+              let totalDistance = routeBookReplayDistances.last,
+              totalDistance > 0 else {
+            guard let coordinate = routeBookReplayCoordinates.first else {
+                return nil
+            }
+            return ReplayState(
+                coordinate: coordinate,
+                distanceMeters: 0,
+                altitudeMeters: routeBookReplayAltitude(at: 0),
+                heartRateBeatsPerMinute: nil,
+                powerWatts: nil,
+                temperatureCelsius: nil,
+                isFacingLeft: routeBookReplayFacingLeft(at: 0)
+            )
+        }
+
+        let targetDistance = CLLocationDistance(progress) * totalDistance
+        let index = nearestRouteBookReplayCoordinateIndex(for: targetDistance)
+        return ReplayState(
+            coordinate: routeBookReplayCoordinates[index],
+            distanceMeters: routeBookReplayDistances[index],
+            altitudeMeters: routeBookReplayAltitude(at: index),
+            heartRateBeatsPerMinute: nil,
+            powerWatts: nil,
+            temperatureCelsius: nil,
+            isFacingLeft: routeBookReplayFacingLeft(at: index)
+        )
+    }
+
+    private func nearestRouteBookReplayCoordinateIndex(for targetDistance: CLLocationDistance) -> Int {
+        var lowerBound = 0
+        var upperBound = routeBookReplayDistances.count - 1
+
+        while lowerBound < upperBound {
+            let middle = (lowerBound + upperBound) / 2
+            if routeBookReplayDistances[middle] < targetDistance {
+                lowerBound = middle + 1
+            } else {
+                upperBound = middle
+            }
+        }
+
+        guard lowerBound > 0 else {
+            return 0
+        }
+
+        let previousIndex = lowerBound - 1
+        let previousDelta = abs(routeBookReplayDistances[previousIndex] - targetDistance)
+        let currentDelta = abs(routeBookReplayDistances[lowerBound] - targetDistance)
+        return previousDelta <= currentDelta ? previousIndex : lowerBound
+    }
+
+    private func routeBookReplayAltitude(at index: Int) -> Double? {
+        guard index >= 0, index < routeBookReplayAltitudes.count else {
+            return nil
+        }
+
+        return routeBookReplayAltitudes[index]
+    }
+
+    private func routeBookReplayFacingLeft(at index: Int) -> Bool {
+        guard routeBookReplayCoordinates.count > 1 else {
+            return true
+        }
+
+        let previousIndex = max(index - 1, 0)
+        let nextIndex = min(index + 1, routeBookReplayCoordinates.count - 1)
+        guard previousIndex != nextIndex else {
+            return true
+        }
+
+        let previousCoordinate = routeBookReplayCoordinates[previousIndex]
+        let nextCoordinate = routeBookReplayCoordinates[nextIndex]
+        return nextCoordinate.longitude - previousCoordinate.longitude < 0
+    }
+
+    private func routeBookReplayStatusText(for state: ReplayState) -> String {
+        let distanceText: String
+        if state.distanceMeters >= 1000 {
+            distanceText = String(format: "%.2f km", state.distanceMeters / 1000)
+        } else {
+            distanceText = String(format: "%.0f m", max(state.distanceMeters, 0))
+        }
+
+        let altitudeText = state.altitudeMeters.map { "\(Int(round($0))) m" } ?? "-- m"
+        return "\(distanceText) · \(altitudeText)"
+    }
+
+    private func removeRouteBookReplayAnnotation() {
+        guard let routeBookReplayAnnotation else {
+            return
+        }
+
+        routeBookMapView.removeAnnotation(routeBookReplayAnnotation)
+        self.routeBookReplayAnnotation = nil
     }
 
     private func drawRouteBookRoute(_ coordinates: [CLLocationCoordinate2D]) {
@@ -3119,6 +3263,7 @@ class ViewController: UIViewController {
         routeBookLastLocation = nil
         routeBookLastHeadingDegrees = nil
         routeBookHeadingDisplayDegrees = nil
+        removeRouteBookReplayAnnotation()
         stopRouteBookLocationAndHeadingUpdates()
         routeBookMapView.setUserTrackingMode(.none, animated: false)
         routeBookMapView.showsUserLocation = false
@@ -3228,8 +3373,25 @@ extension ViewController: ASWebAuthenticationPresentationContextProviding {
 
 extension ViewController: MKMapViewDelegate {
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-        guard mapView === routeBookMapView,
-              annotation is MKUserLocation else {
+        guard mapView === routeBookMapView else {
+            return nil
+        }
+
+        if let replayAnnotation = annotation as? RouteReplayAnnotation {
+            let identifier = RouteReplayAnnotationView.reuseIdentifier
+            let annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? RouteReplayAnnotationView
+                ?? RouteReplayAnnotationView(annotation: replayAnnotation, reuseIdentifier: identifier)
+            annotationView.annotation = replayAnnotation
+            annotationView.configure(
+                emoji: replayAnnotation.emoji,
+                statusText: replayAnnotation.statusText,
+                isFacingLeft: replayAnnotation.isFacingLeft
+            )
+            annotationView.superview?.bringSubviewToFront(annotationView)
+            return annotationView
+        }
+
+        guard annotation is MKUserLocation else {
             return nil
         }
 
@@ -3242,6 +3404,16 @@ extension ViewController: MKMapViewDelegate {
         annotationView.annotation = annotation
         annotationView.configure(headingDegrees: routeBookLastHeadingDegrees)
         return annotationView
+    }
+
+    func mapView(_ mapView: MKMapView, didAdd views: [MKAnnotationView]) {
+        guard mapView === routeBookMapView else {
+            return
+        }
+
+        views
+            .filter { $0.annotation is RouteReplayAnnotation }
+            .forEach { $0.superview?.bringSubviewToFront($0) }
     }
 
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
