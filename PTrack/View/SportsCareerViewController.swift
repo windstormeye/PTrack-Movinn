@@ -54,6 +54,7 @@ final class SportsCareerViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private var collectionView: UICollectionView!
     private var statistics: SportsCareerStatistics?
+    private var statisticsReferenceDate: Date?
     private var statisticsLoadToken = UUID()
     private var hasPlayedAppearanceAnimation = false
     private var monthlyWorkoutSelectionIndexesByDateKey: [String: Int] = [:]
@@ -62,9 +63,14 @@ final class SportsCareerViewController: UIViewController {
     private let navigationBackgroundHeight: CGFloat = 124
     private let sheetContentTopInset: CGFloat = 30
 
-    init(workouts: [TrackedWorkout], presentationStyle: PresentationStyle = .pushed) {
+    init(
+        workouts: [TrackedWorkout],
+        presentationStyle: PresentationStyle = .pushed,
+        referenceDate: Date? = nil
+    ) {
         self.workouts = workouts
         self.presentationStyle = presentationStyle
+        statisticsReferenceDate = referenceDate
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -243,19 +249,26 @@ final class SportsCareerViewController: UIViewController {
         )
     }
 
-    func updateWorkouts(_ workouts: [TrackedWorkout], animated: Bool) {
+    func updateWorkouts(
+        _ workouts: [TrackedWorkout],
+        animated: Bool,
+        referenceDate: Date? = nil
+    ) {
         let incomingIDs = Set(workouts.map(\.id))
-        guard incomingIDs != Set(self.workouts.map(\.id)) else {
+        guard incomingIDs != Set(self.workouts.map(\.id))
+                || referenceDate != statisticsReferenceDate else {
             return
         }
 
         self.workouts = workouts
+        statisticsReferenceDate = referenceDate
         reloadStatisticsAsync(animatedFromPrevious: animated)
     }
 
     private func reloadStatisticsAsync(animatedFromPrevious: Bool = false) {
         let loadToken = UUID()
         let workouts = workouts
+        let statisticsReferenceDate = statisticsReferenceDate
         let language = AppLanguageStore.shared.language
         let previousStatistics = statistics
         let shouldShowLoading = !animatedFromPrevious || previousStatistics == nil
@@ -269,6 +282,7 @@ final class SportsCareerViewController: UIViewController {
         DispatchQueue.global(qos: .userInitiated).async {
             let statistics = SportsCareerStatistics(
                 workouts: workouts,
+                now: statisticsReferenceDate ?? Date(),
                 language: language
             )
 
@@ -1866,6 +1880,7 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
     private var activitySymbolsByDateKey: [String: [String]] = [:]
     private var activityWorkoutsByDateKey: [String: [TrackedWorkout]] = [:]
     private var displayedMonthDate = Date()
+    private var configuredReferenceMonthDate: Date?
     private var calendar = Calendar.current
     private var hasConfiguredMonth = false
     private lazy var monthPanGestureRecognizer: UIPanGestureRecognizer = {
@@ -1905,9 +1920,12 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
             (dateKey(for: day.date), day.workouts)
         })
 
-        if !hasConfiguredMonth {
-            displayedMonthDate = Self.startOfMonth(for: monthDate, calendar: calendar)
+        let referenceMonthDate = Self.startOfMonth(for: monthDate, calendar: calendar)
+        if !hasConfiguredMonth || configuredReferenceMonthDate != referenceMonthDate {
+            displayedMonthDate = referenceMonthDate
+            configuredReferenceMonthDate = referenceMonthDate
             hasConfiguredMonth = true
+            clearInteractiveMonthTransition(keepingTarget: false)
         }
 
         reloadMonth()

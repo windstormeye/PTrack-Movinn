@@ -2230,6 +2230,7 @@ class ViewController: UIViewController {
 
         dirtyCacheWorkoutIDs.remove(workoutID)
         deletedCacheWorkoutIDs.insert(workoutID)
+        HeatmapRouteCacheStore.shared.removeRoute(id: workoutID)
     }
 
     private func scheduleCacheSave(delay: TimeInterval? = nil) {

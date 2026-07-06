@@ -57,6 +57,10 @@ final class WorkoutCacheStore {
         loadManifest()?.summary
     }
 
+    func loadCachedWorkoutIDs() -> [String]? {
+        loadManifest()?.workoutIDs
+    }
+
     func loadWorkout(id: String) -> TrackedWorkout? {
         let fileURL = workoutFileURL(for: id)
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
