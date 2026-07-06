@@ -29,6 +29,7 @@ final class RouteShareColorPickerViewController: UIViewController {
     private let onColorChanged: (UIColor) -> Void
     private let applyToAllInitialValue: Bool?
     private let onApplyToAllChanged: ((Bool) -> Void)?
+    private let dimmingView = UIControl()
     private let panelView = UIView()
     private let applyToAllControl = UIControl()
     private let applyToAllLabel = UILabel()
@@ -83,6 +84,9 @@ final class RouteShareColorPickerViewController: UIViewController {
     private func configureViews() {
         view.backgroundColor = .clear
 
+        dimmingView.backgroundColor = UIColor.black.withAlphaComponent(0.22)
+        dimmingView.addTarget(self, action: #selector(dismissPicker), for: .touchUpInside)
+
         panelView.backgroundColor = AppColors.solidBackground
         panelView.layer.cornerRadius = 24
         panelView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -115,12 +119,17 @@ final class RouteShareColorPickerViewController: UIViewController {
         paletteView.hitAreaOutset = Layout.paletteHitAreaOutset
         paletteView.addTarget(self, action: #selector(handlePaletteChanged), for: .valueChanged)
 
+        view.addSubview(dimmingView)
         view.addSubview(panelView)
         panelView.addSubview(applyToAllControl)
         applyToAllControl.addSubview(applyToAllLabel)
         applyToAllControl.addSubview(applyToAllSwitch)
         panelView.addSubview(closeButton)
         panelView.addSubview(paletteView)
+
+        dimmingView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
 
         panelView.snp.makeConstraints { make in
             make.leading.trailing.bottom.equalToSuperview()

@@ -163,8 +163,11 @@ enum AppTextKey: String {
     case routeCollectionImporting
     case routeCollectionMergeSectionTitle
     case routeHeatmap
+    case heatmapShareMask
+    case heatmapShareMaskOpacity
     case heatmapShareMonth
     case heatmapShareNoRoutes
+    case heatmapSharePhoto
     case heatmapShareSelectRouteForColor
     case heatmapShareTitle
     case heatmapShareWeek
@@ -511,8 +514,11 @@ enum AppLocalization {
             .routeCollectionImporting: "正在导入 GPX",
             .routeCollectionMergeSectionTitle: "合并",
             .routeHeatmap: "轨迹热图",
+            .heatmapShareMask: "遮罩",
+            .heatmapShareMaskOpacity: "遮罩透明度",
             .heatmapShareMonth: "月",
             .heatmapShareNoRoutes: "当前时间范围暂无轨迹",
+            .heatmapSharePhoto: "照片",
             .heatmapShareSelectRouteForColor: "先选择一条轨迹",
             .heatmapShareTitle: "分享轨迹合集",
             .heatmapShareWeek: "周",
@@ -737,8 +743,11 @@ enum AppLocalization {
             .routeCollectionImporting: "GPX を読み込み中",
             .routeCollectionMergeSectionTitle: "結合",
             .routeHeatmap: "軌跡ヒートマップ",
+            .heatmapShareMask: "マスク",
+            .heatmapShareMaskOpacity: "マスクの濃さ",
             .heatmapShareMonth: "月",
             .heatmapShareNoRoutes: "この期間にはルートがありません",
+            .heatmapSharePhoto: "写真",
             .heatmapShareSelectRouteForColor: "先にルートを選択してください",
             .heatmapShareTitle: "ルート集を共有",
             .heatmapShareWeek: "週",
@@ -963,8 +972,11 @@ enum AppLocalization {
             .routeCollectionImporting: "GPX 가져오는 중",
             .routeCollectionMergeSectionTitle: "병합",
             .routeHeatmap: "경로 히트맵",
+            .heatmapShareMask: "마스크",
+            .heatmapShareMaskOpacity: "마스크 투명도",
             .heatmapShareMonth: "월",
             .heatmapShareNoRoutes: "현재 기간에 경로가 없습니다",
+            .heatmapSharePhoto: "사진",
             .heatmapShareSelectRouteForColor: "먼저 경로를 선택하세요",
             .heatmapShareTitle: "경로 모음 공유",
             .heatmapShareWeek: "주",
@@ -1189,8 +1201,11 @@ enum AppLocalization {
             .routeCollectionImporting: "Importing GPX",
             .routeCollectionMergeSectionTitle: "Merged",
             .routeHeatmap: "Route Heatmap",
+            .heatmapShareMask: "Mask",
+            .heatmapShareMaskOpacity: "Mask Opacity",
             .heatmapShareMonth: "Month",
             .heatmapShareNoRoutes: "No routes in this range",
+            .heatmapSharePhoto: "Photo",
             .heatmapShareSelectRouteForColor: "Select a route first",
             .heatmapShareTitle: "Share Route Collection",
             .heatmapShareWeek: "Week",

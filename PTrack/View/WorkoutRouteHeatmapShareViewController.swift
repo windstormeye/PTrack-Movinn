@@ -7,6 +7,7 @@
 
 import CoreLocation
 import MapKit
+import PhotosUI
 import SnapKit
 import UIKit
 
@@ -31,6 +32,39 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
                 return .heatmapShareMonth
             case .year:
                 return .heatmapShareYear
+            }
+        }
+    }
+
+    private enum DataBrowserItem: Int, CaseIterable {
+        case week
+        case month
+        case year
+        case photo
+
+        var scope: DataScope? {
+            switch self {
+            case .week:
+                return .week
+            case .month:
+                return .month
+            case .year:
+                return .year
+            case .photo:
+                return nil
+            }
+        }
+
+        var titleKey: AppTextKey {
+            switch self {
+            case .week:
+                return .heatmapShareWeek
+            case .month:
+                return .heatmapShareMonth
+            case .year:
+                return .heatmapShareYear
+            case .photo:
+                return .heatmapSharePhoto
             }
         }
     }
@@ -116,8 +150,11 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     }()
     private let scrollView = UIScrollView()
     private let contentView = UIView()
+    private let previewContainerView = UIView()
     private let previewView = UIView()
     private let gradientView = AnimatedProGradientView()
+    private let photoBackgroundView = HeatmapSharePhotoBackgroundView()
+    private let photoBackgroundOverlayView = UIView()
     private let brandPillView = RouteShareBrandPillView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
@@ -128,6 +165,7 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     private let routeCollectionLayout = UICollectionViewFlowLayout()
     private let toolBarScrollView = UIScrollView()
     private let toolBarView = RouteShareToolBarView()
+    private var maskToolButton: UIButton { toolBarView.canvasColorButton }
     private var colorToolButton: UIButton { toolBarView.colorButton }
     private let exportLoadingView = RouteShareExportLoadingView()
     private lazy var exportBarButtonItem = UIBarButtonItem(
@@ -144,6 +182,8 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     )
 
     private var routeCollectionHeightConstraint: Constraint?
+    private var previewHeightConstraint: Constraint?
+    private var previewContainerMinimumHeightConstraint: Constraint?
     private var toolBarWidthConstraint: Constraint?
     private var selectedScope: DataScope = .month
     private var selectedWeekStartDate: Date
@@ -153,6 +193,16 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     private var routeColorsByWorkoutID: [String: UIColor] = [:]
     private var selectedWorkoutID: String?
     private var applyColorToAllRoutes = false
+    private var photoBackgroundImages: [UIImage] = []
+    private var photoBackgroundOverlayOpacity: CGFloat = 0.38
+    private var pendingPhotoSelectionID: UUID?
+    private var isPhotoBackgroundAdjustmentEnabled = false
+    private var photoBackgroundScale: CGFloat = 1
+    private var photoBackgroundTranslation: CGPoint = .zero
+    private weak var photoBackgroundPanGesture: UIPanGestureRecognizer?
+    private weak var photoBackgroundPinchGesture: UIPinchGestureRecognizer?
+    private weak var photoBackgroundDoubleTapGesture: UITapGestureRecognizer?
+    private weak var previewBlankTapGesture: UITapGestureRecognizer?
     private var currentColumnCount = 0
     private var routeCellSide = Layout.defaultRouteCellSide
     private var timeOptionsMenuView: HeatmapShareTimeOptionsMenuView?
@@ -163,6 +213,8 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     private var pendingPreviewReloadWorkItem: DispatchWorkItem?
     private let cacheLoadBatchSize = 128
     private let previewReloadThrottleInterval: TimeInterval = 0.22
+    private let photoBackgroundMinimumScale: CGFloat = 1
+    private let photoBackgroundMaximumScale: CGFloat = 4
 
     init(
         workouts: [TrackedWorkout],
@@ -255,6 +307,8 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateRouteCollectionLayoutIfNeeded()
+        updatePreviewContainerMinimumHeight()
+        applyPhotoBackgroundAdjustment()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -326,6 +380,10 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         previewView.backgroundColor = .black
 
         gradientView.apply(style: .paywallBackground, traitCollection: UITraitCollection(userInterfaceStyle: .dark))
+        photoBackgroundView.isHidden = true
+        photoBackgroundOverlayView.isHidden = true
+        photoBackgroundOverlayView.isUserInteractionEnabled = false
+        photoBackgroundOverlayView.backgroundColor = UIColor.black.withAlphaComponent(photoBackgroundOverlayOpacity)
 
         titleLabel.textColor = .white
         titleLabel.font = .systemFont(ofSize: 24, weight: .heavy)
@@ -344,20 +402,39 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         emptyLabel.textAlignment = .center
         emptyLabel.numberOfLines = 2
 
-        contentView.addSubview(previewView)
+        configurePhotoBackgroundGestures()
+
+        contentView.addSubview(previewContainerView)
+        previewContainerView.addSubview(previewView)
         previewView.addSubview(gradientView)
+        previewView.addSubview(photoBackgroundView)
+        previewView.addSubview(photoBackgroundOverlayView)
         previewView.addSubview(titleLabel)
         previewView.addSubview(subtitleLabel)
         previewView.addSubview(brandPillView)
         previewView.addSubview(emptyLabel)
         previewView.addSubview(routeCollectionView)
 
-        previewView.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(6)
-            make.leading.trailing.equalToSuperview().inset(Layout.previewHorizontalInset)
+        previewContainerView.snp.makeConstraints { make in
+            make.top.equalToSuperview()
+            make.leading.trailing.equalToSuperview()
+            previewContainerMinimumHeightConstraint = make.height.greaterThanOrEqualTo(1).constraint
             make.bottom.equalToSuperview().inset(24)
         }
+        previewView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.leading.trailing.equalToSuperview().inset(Layout.previewHorizontalInset)
+            previewHeightConstraint = make.height.equalTo(1).constraint
+            make.top.greaterThanOrEqualToSuperview().offset(6)
+            make.bottom.lessThanOrEqualToSuperview().inset(6)
+        }
         gradientView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        photoBackgroundView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        photoBackgroundOverlayView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
         titleLabel.snp.makeConstraints { make in
@@ -379,7 +456,7 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
             make.top.equalToSuperview().offset(Layout.previewHeaderHeight)
             make.leading.trailing.equalToSuperview().inset(Layout.previewSideInset)
             routeCollectionHeightConstraint = make.height.equalTo(1).constraint
-            make.bottom.equalTo(brandPillView.snp.top).offset(-Layout.routeGridToBrandSpacing)
+            make.bottom.lessThanOrEqualTo(brandPillView.snp.top).offset(-Layout.routeGridToBrandSpacing)
         }
         emptyLabel.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
@@ -416,6 +493,34 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         routeCollectionView.addGestureRecognizer(longPressGesture)
     }
 
+    private func configurePhotoBackgroundGestures() {
+        let doubleTapGesture = UITapGestureRecognizer(target: self, action: #selector(handlePhotoBackgroundDoubleTap(_:)))
+        doubleTapGesture.numberOfTapsRequired = 2
+        doubleTapGesture.cancelsTouchesInView = false
+        doubleTapGesture.delegate = self
+        previewView.addGestureRecognizer(doubleTapGesture)
+        photoBackgroundDoubleTapGesture = doubleTapGesture
+
+        let blankTapGesture = UITapGestureRecognizer(target: self, action: #selector(handlePreviewBlankTap(_:)))
+        blankTapGesture.cancelsTouchesInView = false
+        blankTapGesture.delegate = self
+        blankTapGesture.require(toFail: doubleTapGesture)
+        previewView.addGestureRecognizer(blankTapGesture)
+        previewBlankTapGesture = blankTapGesture
+
+        let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePhotoBackgroundPan(_:)))
+        panGesture.cancelsTouchesInView = false
+        panGesture.delegate = self
+        previewView.addGestureRecognizer(panGesture)
+        photoBackgroundPanGesture = panGesture
+
+        let pinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handlePhotoBackgroundPinch(_:)))
+        pinchGesture.cancelsTouchesInView = false
+        pinchGesture.delegate = self
+        previewView.addGestureRecognizer(pinchGesture)
+        photoBackgroundPinchGesture = pinchGesture
+    }
+
     private func configureBottomControls() {
         bottomControlsView.effect = nil
         bottomControlsView.backgroundColor = .clear
@@ -427,10 +532,10 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         toolBarScrollView.contentInset = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
 
         colorToolButton.addTarget(self, action: #selector(presentRouteColorPicker), for: .touchUpInside)
+        maskToolButton.addTarget(self, action: #selector(presentPhotoMaskOpacitySlider), for: .touchUpInside)
 
         [
             toolBarView.aspectRatioButton,
-            toolBarView.canvasColorButton,
             toolBarView.calorieFoodButton,
             toolBarView.mapStyleButton,
             toolBarView.collageButton,
@@ -496,13 +601,21 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     }
 
     private func configureToolButtons() {
+        maskToolButton.configuration = toolButtonConfiguration(
+            title: AppLocalization.text(.heatmapShareMask),
+            imageName: "circle.lefthalf.filled"
+        )
+        maskToolButton.isHidden = !hasPhotoBackground
+        maskToolButton.isEnabled = hasPhotoBackground
+        maskToolButton.alpha = hasPhotoBackground ? 1 : 0.45
+
         colorToolButton.configuration = toolButtonConfiguration(
             title: AppLocalization.text(.color),
             imageName: "paintpalette"
         )
         colorToolButton.isEnabled = selectedWorkoutID != nil
         colorToolButton.alpha = selectedWorkoutID == nil ? 0.45 : 1
-        toolBarWidthConstraint?.update(offset: RouteShareToolBarView.preferredWidth(for: 1))
+        toolBarWidthConstraint?.update(offset: RouteShareToolBarView.preferredWidth(for: toolBarView.visibleButtonCount()))
     }
 
     private func toolButtonConfiguration(title: String, imageName: String) -> UIButton.Configuration {
@@ -537,6 +650,52 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         }
         configureToolButtons()
         updateRouteCollectionLayoutIfNeeded()
+    }
+
+    private var hasPhotoBackground: Bool {
+        !photoBackgroundImages.isEmpty
+    }
+
+    private func updatePhotoBackground() {
+        let hasPhotoBackground = hasPhotoBackground
+        photoBackgroundView.images = photoBackgroundImages
+        photoBackgroundView.isHidden = !hasPhotoBackground
+        photoBackgroundOverlayView.isHidden = !hasPhotoBackground
+        photoBackgroundOverlayView.backgroundColor = UIColor.black.withAlphaComponent(photoBackgroundOverlayOpacity)
+        gradientView.isHidden = hasPhotoBackground
+        if !hasPhotoBackground {
+            isPhotoBackgroundAdjustmentEnabled = false
+            resetPhotoBackgroundAdjustment()
+        }
+        configureToolButtons()
+        dataBrowserCollectionView.reloadData()
+    }
+
+    private func resetPhotoBackgroundAdjustment() {
+        photoBackgroundScale = 1
+        photoBackgroundTranslation = .zero
+        applyPhotoBackgroundAdjustment()
+    }
+
+    private func applyPhotoBackgroundAdjustment() {
+        photoBackgroundTranslation = clampedPhotoBackgroundTranslation(photoBackgroundTranslation)
+        photoBackgroundView.contentScale = photoBackgroundScale
+        photoBackgroundView.contentTranslation = photoBackgroundTranslation
+    }
+
+    private func clampedPhotoBackgroundTranslation(_ translation: CGPoint) -> CGPoint {
+        let bounds = previewView.bounds
+        guard bounds.width > 0, bounds.height > 0 else {
+            return translation
+        }
+
+        let scaledWidth = bounds.width * photoBackgroundScale
+        let maxX = max((scaledWidth - bounds.width) / 2, 0)
+        let maxY = max(bounds.height, 1)
+        return CGPoint(
+            x: min(max(translation.x, -maxX), maxX),
+            y: min(max(translation.y, -maxY), maxY)
+        )
     }
 
     private func schedulePreviewReload() {
@@ -732,7 +891,9 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
             formatter.setLocalizedDateFormatFromTemplate("yyyyMMMM")
             return formatter.string(from: selectedMonthStartDate)
         case .year:
-            return "\(selectedYear)"
+            formatter.setLocalizedDateFormatFromTemplate("yyyy")
+            let components = DateComponents(calendar: .current, year: selectedYear, month: 1, day: 1)
+            return components.date.map(formatter.string(from:)) ?? "\(selectedYear) 年"
         }
     }
 
@@ -800,6 +961,35 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
             ? 128
             : CGFloat(rowCount) * side + CGFloat(max(rowCount - 1, 0)) * spacing
         routeCollectionHeightConstraint?.update(offset: height)
+        updatePreviewHeight(routeCollectionHeight: height)
+    }
+
+    private func updatePreviewHeight(routeCollectionHeight: CGFloat) {
+        let previewWidth = max(
+            previewView.bounds.width,
+            view.bounds.width - Layout.previewHorizontalInset * 2
+        )
+        guard previewWidth > 0 else {
+            return
+        }
+
+        let contentHeight = Layout.previewHeaderHeight
+            + routeCollectionHeight
+            + Layout.routeGridToBrandSpacing
+            + Layout.brandPillSize.height
+            + Layout.brandBottomInset
+        previewHeightConstraint?.update(offset: max(previewWidth, contentHeight))
+    }
+
+    private func updatePreviewContainerMinimumHeight() {
+        let bottomControlsHeight = bottomControlsView.bounds.height > 0
+            ? bottomControlsView.bounds.height
+            : 170
+        let availableHeight = view.bounds.height
+            - Layout.navigationBackgroundHeight
+            - bottomControlsHeight
+            - 12
+        previewContainerMinimumHeightConstraint?.update(offset: max(availableHeight, 1))
     }
 
     private func presentTimeOptions(for scope: DataScope, sourceView: UIView) {
@@ -926,8 +1116,108 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         routeColorsByWorkoutID.removeAll()
         selectedWorkoutID = nil
         applyColorToAllRoutes = false
+        photoBackgroundImages.removeAll()
+        pendingPhotoSelectionID = nil
+        photoBackgroundOverlayOpacity = 0.38
+        updatePhotoBackground()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         reloadPreviewContent()
+    }
+
+    @objc private func handlePhotoBackgroundDoubleTap(_ gestureRecognizer: UITapGestureRecognizer) {
+        guard gestureRecognizer.state == .ended,
+              hasPhotoBackground else {
+            return
+        }
+
+        isPhotoBackgroundAdjustmentEnabled = true
+        selectedWorkoutID = nil
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        routeCollectionView.reloadData()
+        configureToolButtons()
+    }
+
+    @objc private func handlePreviewBlankTap(_ gestureRecognizer: UITapGestureRecognizer) {
+        guard gestureRecognizer.state == .ended,
+              selectedWorkoutID != nil || isPhotoBackgroundAdjustmentEnabled else {
+            return
+        }
+
+        selectedWorkoutID = nil
+        isPhotoBackgroundAdjustmentEnabled = false
+        UISelectionFeedbackGenerator().selectionChanged()
+        routeCollectionView.reloadData()
+        configureToolButtons()
+    }
+
+    @objc private func handlePhotoBackgroundPan(_ gestureRecognizer: UIPanGestureRecognizer) {
+        guard hasPhotoBackground,
+              isPhotoBackgroundAdjustmentEnabled else {
+            return
+        }
+
+        let translation = gestureRecognizer.translation(in: previewView)
+        photoBackgroundTranslation = clampedPhotoBackgroundTranslation(
+            CGPoint(
+                x: photoBackgroundTranslation.x + translation.x,
+                y: photoBackgroundTranslation.y + translation.y
+            )
+        )
+        applyPhotoBackgroundAdjustment()
+        gestureRecognizer.setTranslation(.zero, in: previewView)
+    }
+
+    @objc private func handlePhotoBackgroundPinch(_ gestureRecognizer: UIPinchGestureRecognizer) {
+        guard hasPhotoBackground,
+              isPhotoBackgroundAdjustmentEnabled else {
+            return
+        }
+
+        photoBackgroundScale = min(
+            max(photoBackgroundScale * gestureRecognizer.scale, photoBackgroundMinimumScale),
+            photoBackgroundMaximumScale
+        )
+        applyPhotoBackgroundAdjustment()
+        gestureRecognizer.scale = 1
+    }
+
+    private func presentPhotoBackgroundPicker() {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = estimatedPhotoBackgroundSelectionLimit()
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+        pendingPhotoSelectionID = UUID()
+        present(picker, animated: true)
+    }
+
+    private func estimatedPhotoBackgroundSelectionLimit() -> Int {
+        view.layoutIfNeeded()
+        let fallbackWidth = max(view.bounds.width - Layout.previewHorizontalInset * 2, 1)
+        let previewWidth = max(previewView.bounds.width, fallbackWidth)
+        let previewHeight = max(previewView.bounds.height, previewWidth)
+        let estimatedPortraitPhotoHeight = previewWidth * 4 / 3
+        return min(max(Int(ceil(previewHeight / max(estimatedPortraitPhotoHeight, 1))), 1), 12)
+    }
+
+    @objc private func presentPhotoMaskOpacitySlider() {
+        guard hasPhotoBackground else {
+            return
+        }
+
+        let viewController = HeatmapShareMaskOpacityViewController(
+            initialOpacity: photoBackgroundOverlayOpacity
+        ) { [weak self] opacity in
+            guard let self else {
+                return
+            }
+
+            photoBackgroundOverlayOpacity = opacity
+            photoBackgroundOverlayView.backgroundColor = UIColor.black.withAlphaComponent(opacity)
+        }
+        viewController.modalPresentationStyle = .overFullScreen
+        viewController.modalTransitionStyle = .crossDissolve
+        present(viewController, animated: true)
     }
 
     @objc private func presentRouteColorPicker() {
@@ -1256,10 +1546,125 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
 
 }
 
+extension WorkoutRouteHeatmapShareViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+
+        guard !results.isEmpty else {
+            pendingPhotoSelectionID = nil
+            return
+        }
+
+        let selectionID = pendingPhotoSelectionID
+        var images = Array<UIImage?>(repeating: nil, count: results.count)
+        let dispatchGroup = DispatchGroup()
+
+        for (index, result) in results.enumerated() where result.itemProvider.canLoadObject(ofClass: UIImage.self) {
+            dispatchGroup.enter()
+            result.itemProvider.loadObject(ofClass: UIImage.self) { object, _ in
+                defer { dispatchGroup.leave() }
+                guard let image = object as? UIImage else {
+                    return
+                }
+                images[index] = Self.downsampledBackgroundImage(image)
+            }
+        }
+
+        dispatchGroup.notify(queue: .main) { [weak self] in
+            guard let self,
+                  pendingPhotoSelectionID == selectionID else {
+                return
+            }
+
+            pendingPhotoSelectionID = nil
+            let selectedImages = images.compactMap { $0 }
+            guard !selectedImages.isEmpty else {
+                return
+            }
+
+            photoBackgroundImages = selectedImages
+            photoBackgroundOverlayOpacity = max(photoBackgroundOverlayOpacity, 0.28)
+            isPhotoBackgroundAdjustmentEnabled = false
+            resetPhotoBackgroundAdjustment()
+            updatePhotoBackground()
+            Toast.show(AppLocalization.text(.photoBackgroundAdjustmentHint), in: view)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
+
+    private static func downsampledBackgroundImage(_ image: UIImage, maximumPixelWidth: CGFloat = 1_600) -> UIImage {
+        let pixelWidth = image.size.width * image.scale
+        guard pixelWidth > maximumPixelWidth,
+              image.size.width > 0,
+              image.size.height > 0 else {
+            return image
+        }
+
+        let targetSize = CGSize(
+            width: maximumPixelWidth,
+            height: maximumPixelWidth * image.size.height / image.size.width
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
+}
+
+extension WorkoutRouteHeatmapShareViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === previewBlankTapGesture
+            || gestureRecognizer === photoBackgroundDoubleTapGesture else {
+            return true
+        }
+
+        if gestureRecognizer === photoBackgroundDoubleTapGesture,
+           !hasPhotoBackground {
+            return false
+        }
+
+        let routeLocation = touch.location(in: routeCollectionView)
+        if routeCollectionView.bounds.contains(routeLocation),
+           routeCollectionView.indexPathForItem(at: routeLocation) != nil {
+            return false
+        }
+
+        return true
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === photoBackgroundPanGesture
+            || gestureRecognizer === photoBackgroundPinchGesture {
+            return hasPhotoBackground && isPhotoBackgroundAdjustmentEnabled
+        }
+
+        if gestureRecognizer === photoBackgroundDoubleTapGesture {
+            return hasPhotoBackground
+        }
+
+        return true
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        isPhotoBackgroundTransformGesture(gestureRecognizer)
+            && isPhotoBackgroundTransformGesture(otherGestureRecognizer)
+    }
+
+    private func isPhotoBackgroundTransformGesture(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === photoBackgroundPanGesture
+            || gestureRecognizer === photoBackgroundPinchGesture
+    }
+}
+
 extension WorkoutRouteHeatmapShareViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         if collectionView === dataBrowserCollectionView {
-            return DataScope.allCases.count
+            return DataBrowserItem.allCases.count
         }
 
         return displayedRouteItems.count
@@ -1274,13 +1679,13 @@ extension WorkoutRouteHeatmapShareViewController: UICollectionViewDataSource, UI
                 withReuseIdentifier: HeatmapShareDataScopeCell.reuseIdentifier,
                 for: indexPath
             ) as? HeatmapShareDataScopeCell,
-            let scope = DataScope(rawValue: indexPath.item) else {
+            let item = DataBrowserItem(rawValue: indexPath.item) else {
                 return UICollectionViewCell()
             }
 
             cell.configure(
-                title: AppLocalization.text(scope.titleKey),
-                isSelected: scope == selectedScope
+                title: AppLocalization.text(item.titleKey),
+                isSelected: item.scope.map { $0 == selectedScope } ?? hasPhotoBackground
             )
             return cell
         }
@@ -1304,7 +1709,12 @@ extension WorkoutRouteHeatmapShareViewController: UICollectionViewDataSource, UI
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if collectionView === dataBrowserCollectionView {
-            guard let scope = DataScope(rawValue: indexPath.item) else {
+            guard let item = DataBrowserItem(rawValue: indexPath.item) else {
+                return
+            }
+
+            guard let scope = item.scope else {
+                presentPhotoBackgroundPicker()
                 return
             }
 
@@ -1326,6 +1736,7 @@ extension WorkoutRouteHeatmapShareViewController: UICollectionViewDataSource, UI
             return
         }
 
+        isPhotoBackgroundAdjustmentEnabled = false
         selectedWorkoutID = displayedRouteItems[indexPath.item].id
         UISelectionFeedbackGenerator().selectionChanged()
         routeCollectionView.reloadData()
@@ -1685,6 +2096,179 @@ private final class HeatmapShareTimeOptionCell: UITableViewCell {
             make.leading.trailing.equalToSuperview().inset(12)
             make.centerY.equalToSuperview()
         }
+    }
+}
+
+private final class HeatmapSharePhotoBackgroundView: UIView {
+    var images: [UIImage] = [] {
+        didSet { setNeedsDisplay() }
+    }
+    var contentScale: CGFloat = 1 {
+        didSet { setNeedsDisplay() }
+    }
+    var contentTranslation: CGPoint = .zero {
+        didSet { setNeedsDisplay() }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+        contentMode = .redraw
+        isUserInteractionEnabled = false
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        backgroundColor = .black
+        contentMode = .redraw
+        isUserInteractionEnabled = false
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard !images.isEmpty,
+              rect.width > 0,
+              rect.height > 0 else {
+            UIColor.black.setFill()
+            UIRectFill(rect)
+            return
+        }
+
+        UIColor.black.setFill()
+        UIRectFill(rect)
+
+        let resolvedScale = max(contentScale, 1)
+        let drawWidth = rect.width * resolvedScale
+        let drawX = rect.midX - drawWidth / 2 + contentTranslation.x
+        let imageHeights = images.map { image in
+            let ratio = image.size.width > 0 ? image.size.height / image.size.width : 4 / 3
+            return max(drawWidth * ratio, 1)
+        }
+        let cycleHeight = max(imageHeights.reduce(0, +), 1)
+        var currentY = contentTranslation.y
+        while currentY > 0 {
+            currentY -= cycleHeight
+        }
+        while currentY + cycleHeight < 0 {
+            currentY += cycleHeight
+        }
+
+        var imageIndex = 0
+        let maxDrawCount = 240
+        while currentY < rect.height, imageIndex < maxDrawCount {
+            let image = images[imageIndex % images.count]
+            let imageHeight = imageHeights[imageIndex % imageHeights.count]
+            image.draw(in: CGRect(x: drawX, y: currentY, width: drawWidth, height: imageHeight))
+            currentY += imageHeight
+            imageIndex += 1
+        }
+    }
+}
+
+private final class HeatmapShareMaskOpacityViewController: UIViewController {
+    private enum Layout {
+        static let panelHeight: CGFloat = 148
+        static let panelCornerRadius: CGFloat = 22
+    }
+
+    private let dimmingView = UIControl()
+    private let panelView = UIView()
+    private let titleLabel = UILabel()
+    private let valueLabel = UILabel()
+    private let closeButton = UIButton(type: .system)
+    private let slider = UISlider()
+    private let onOpacityChanged: (CGFloat) -> Void
+
+    init(initialOpacity: CGFloat, onOpacityChanged: @escaping (CGFloat) -> Void) {
+        self.onOpacityChanged = onOpacityChanged
+        super.init(nibName: nil, bundle: nil)
+        slider.value = Float(min(max(initialOpacity, 0), 0.85))
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        configureViews()
+        updateValueLabel()
+    }
+
+    private func configureViews() {
+        view.backgroundColor = .clear
+
+        dimmingView.backgroundColor = UIColor.black.withAlphaComponent(0.22)
+        dimmingView.addTarget(self, action: #selector(dismissSelf), for: .touchUpInside)
+
+        panelView.backgroundColor = AppColors.solidBackground
+        panelView.layer.cornerRadius = Layout.panelCornerRadius
+        panelView.layer.cornerCurve = .continuous
+        panelView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+
+        titleLabel.text = AppLocalization.text(.heatmapShareMaskOpacity)
+        titleLabel.textColor = AppColors.solidForeground
+        titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        valueLabel.textColor = AppColors.foreground(alpha: 0.58)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        valueLabel.textAlignment = .left
+
+        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        closeButton.tintColor = AppColors.solidForeground
+        closeButton.addTarget(self, action: #selector(dismissSelf), for: .touchUpInside)
+
+        slider.minimumValue = 0
+        slider.maximumValue = 0.85
+        slider.minimumTrackTintColor = AppColors.movinnGreen
+        slider.maximumTrackTintColor = AppColors.foreground(alpha: 0.16)
+        slider.thumbTintColor = AppColors.movinnGreen
+        slider.addTarget(self, action: #selector(handleSliderChanged), for: .valueChanged)
+
+        view.addSubview(dimmingView)
+        view.addSubview(panelView)
+        panelView.addSubview(titleLabel)
+        panelView.addSubview(valueLabel)
+        panelView.addSubview(closeButton)
+        panelView.addSubview(slider)
+
+        dimmingView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        panelView.snp.makeConstraints { make in
+            make.leading.trailing.bottom.equalToSuperview()
+            make.height.equalTo(Layout.panelHeight)
+        }
+        titleLabel.snp.makeConstraints { make in
+            make.top.equalToSuperview().offset(22)
+            make.leading.equalToSuperview().offset(24)
+        }
+        valueLabel.snp.makeConstraints { make in
+            make.centerY.equalTo(titleLabel)
+            make.leading.equalTo(titleLabel.snp.trailing).offset(8)
+            make.trailing.lessThanOrEqualTo(closeButton.snp.leading).offset(-12)
+        }
+        closeButton.snp.makeConstraints { make in
+            make.centerY.equalTo(titleLabel)
+            make.trailing.equalToSuperview().inset(18)
+            make.size.equalTo(34)
+        }
+        slider.snp.makeConstraints { make in
+            make.top.equalTo(titleLabel.snp.bottom).offset(24)
+            make.leading.trailing.equalToSuperview().inset(24)
+        }
+    }
+
+    private func updateValueLabel() {
+        valueLabel.text = "\(Int(round(slider.value * 100)))%"
+    }
+
+    @objc private func handleSliderChanged() {
+        updateValueLabel()
+        onOpacityChanged(CGFloat(slider.value))
+    }
+
+    @objc private func dismissSelf() {
+        dismiss(animated: true)
     }
 }
 
