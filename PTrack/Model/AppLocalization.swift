@@ -187,6 +187,7 @@ enum AppTextKey: String {
     case sportsCareerSummary
     case sportsCareerWeeklyData
     case sportsCareerWeekDistanceFormat
+    case sportsCareerWeekTitleWithRangeFormat
     case sportTypeCountSummary
     case sportTypeTimeSummary
     case sportsCareer
@@ -527,6 +528,7 @@ enum AppLocalization {
             .sportsCareerSummary: "总览",
             .sportsCareerWeeklyData: "本周",
             .sportsCareerWeekDistanceFormat: "第 %d 周\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "第 %d 周 · %@-%@",
             .sportTypeCountSummary: "不同运动类型的运动次数汇总",
             .sportTypeTimeSummary: "运动时间汇总",
             .sportsCareer: "运动生涯",
@@ -745,6 +747,7 @@ enum AppLocalization {
             .sportsCareerSummary: "概要",
             .sportsCareerWeeklyData: "今週",
             .sportsCareerWeekDistanceFormat: "%d週目\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "%d週目 · %@-%@",
             .sportTypeCountSummary: "種目別ワークアウト回数",
             .sportTypeTimeSummary: "ワークアウト時間の集計",
             .sportsCareer: "運動履歴",
@@ -963,6 +966,7 @@ enum AppLocalization {
             .sportsCareerSummary: "요약",
             .sportsCareerWeeklyData: "이번 주",
             .sportsCareerWeekDistanceFormat: "%d주차\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "%d주차 · %@-%@",
             .sportTypeCountSummary: "운동 유형별 횟수 요약",
             .sportTypeTimeSummary: "운동 시간 요약",
             .sportsCareer: "운동 경력",
@@ -1181,6 +1185,7 @@ enum AppLocalization {
             .sportsCareerSummary: "Summary",
             .sportsCareerWeeklyData: "This Week",
             .sportsCareerWeekDistanceFormat: "Week %d\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "Week %d · %@-%@",
             .sportTypeCountSummary: "Workout Count by Type",
             .sportTypeTimeSummary: "Workout Time Summary",
             .sportsCareer: "Sports Career",
