@@ -13,9 +13,12 @@ final class RouteShareColorPickerViewController: UIViewController {
         static let topInset: CGFloat = 14
         static let horizontalInset: CGFloat = 22
         static let closeButtonSize: CGFloat = 34
+        static let applyToAllControlHeight: CGFloat = 26
         static let paletteTopSpacing: CGFloat = 12
         static let paletteHeight: CGFloat = 228
         static let bottomInset: CGFloat = 20
+        static let colorApplicationDelay: TimeInterval = 0.2
+        static let paletteHitAreaOutset: CGFloat = 18
         static var preferredContentHeight: CGFloat {
             topInset + closeButtonSize + paletteTopSpacing + paletteHeight + bottomInset
         }
@@ -24,16 +27,32 @@ final class RouteShareColorPickerViewController: UIViewController {
     private static let preferredPanelContentHeight = Layout.preferredContentHeight
 
     private let onColorChanged: (UIColor) -> Void
+    private let applyToAllInitialValue: Bool?
+    private let onApplyToAllChanged: ((Bool) -> Void)?
     private let panelView = UIView()
+    private let applyToAllControl = UIControl()
+    private let applyToAllLabel = UILabel()
+    private let applyToAllSwitch = UISwitch()
     private let closeButton = UIButton(type: .system)
     private let paletteView = RouteShareColorSpectrumView()
     private var panelHeightConstraint: Constraint?
+    private var pendingColorApplication: DispatchWorkItem?
+    private var pendingColor: UIColor?
+    private var colorApplicationSequence = 0
+
+    deinit {
+        pendingColorApplication?.cancel()
+    }
 
     init(
         initialColor: UIColor,
+        applyToAllInitiallyOn: Bool? = nil,
+        onApplyToAllChanged: ((Bool) -> Void)? = nil,
         onColorChanged: @escaping (UIColor) -> Void
     ) {
         self.onColorChanged = onColorChanged
+        self.applyToAllInitialValue = applyToAllInitiallyOn
+        self.onApplyToAllChanged = onApplyToAllChanged
         super.init(nibName: nil, bundle: nil)
         paletteView.selectedColor = initialColor
     }
@@ -56,13 +75,36 @@ final class RouteShareColorPickerViewController: UIViewController {
         updatePanelHeight()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePanelShadowPath()
+    }
+
     private func configureViews() {
         view.backgroundColor = .clear
 
         panelView.backgroundColor = AppColors.solidBackground
         panelView.layer.cornerRadius = 24
         panelView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        panelView.layer.masksToBounds = true
+        panelView.layer.masksToBounds = false
+        panelView.layer.shadowColor = UIColor.black.cgColor
+        panelView.layer.shadowOpacity = 0.18
+        panelView.layer.shadowRadius = 24
+        panelView.layer.shadowOffset = CGSize(width: 0, height: -8)
+
+        applyToAllControl.isHidden = applyToAllInitialValue == nil
+        applyToAllControl.addTarget(self, action: #selector(toggleApplyToAll), for: .touchUpInside)
+
+        applyToAllLabel.text = AppLocalization.text(.applyToAll)
+        applyToAllLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        applyToAllLabel.numberOfLines = 1
+        applyToAllLabel.adjustsFontSizeToFitWidth = true
+        applyToAllLabel.minimumScaleFactor = 0.78
+
+        applyToAllSwitch.isOn = applyToAllInitialValue ?? false
+        applyToAllSwitch.onTintColor = AppColors.movinnGreen
+        applyToAllSwitch.transform = CGAffineTransform(scaleX: 0.62, y: 0.62)
+        applyToAllSwitch.addTarget(self, action: #selector(handleApplyToAllSwitchChanged), for: .valueChanged)
 
         closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         closeButton.tintColor = AppColors.solidForeground
@@ -70,9 +112,13 @@ final class RouteShareColorPickerViewController: UIViewController {
 
         paletteView.layer.cornerRadius = 16
         paletteView.layer.masksToBounds = false
+        paletteView.hitAreaOutset = Layout.paletteHitAreaOutset
         paletteView.addTarget(self, action: #selector(handlePaletteChanged), for: .valueChanged)
 
         view.addSubview(panelView)
+        panelView.addSubview(applyToAllControl)
+        applyToAllControl.addSubview(applyToAllLabel)
+        applyToAllControl.addSubview(applyToAllSwitch)
         panelView.addSubview(closeButton)
         panelView.addSubview(paletteView)
 
@@ -87,6 +133,24 @@ final class RouteShareColorPickerViewController: UIViewController {
             make.size.equalTo(Layout.closeButtonSize)
         }
 
+        applyToAllControl.snp.makeConstraints { make in
+            make.centerY.equalTo(closeButton)
+            make.leading.equalToSuperview().offset(Layout.horizontalInset)
+            make.trailing.lessThanOrEqualTo(closeButton.snp.leading).offset(-12)
+            make.height.equalTo(Layout.applyToAllControlHeight)
+        }
+
+        applyToAllLabel.snp.makeConstraints { make in
+            make.leading.equalToSuperview()
+            make.centerY.equalToSuperview()
+        }
+
+        applyToAllSwitch.snp.makeConstraints { make in
+            make.leading.equalTo(applyToAllLabel.snp.trailing).offset(2)
+            make.trailing.equalToSuperview()
+            make.centerY.equalToSuperview()
+        }
+
         paletteView.snp.makeConstraints { make in
             make.top.equalTo(closeButton.snp.bottom).offset(Layout.paletteTopSpacing)
             make.leading.trailing.equalToSuperview().inset(Layout.horizontalInset)
@@ -99,6 +163,9 @@ final class RouteShareColorPickerViewController: UIViewController {
 
     private func updateColors() {
         panelView.backgroundColor = AppColors.solidBackground
+        panelView.layer.shadowColor = UIColor.black.cgColor
+        applyToAllControl.backgroundColor = .clear
+        applyToAllLabel.textColor = AppColors.solidForeground
         closeButton.tintColor = AppColors.solidForeground
     }
 
@@ -106,11 +173,80 @@ final class RouteShareColorPickerViewController: UIViewController {
         panelHeightConstraint?.update(offset: Self.preferredPanelContentHeight + view.safeAreaInsets.bottom)
     }
 
+    private func updatePanelShadowPath() {
+        guard panelView.bounds.width > 0, panelView.bounds.height > 0 else {
+            panelView.layer.shadowPath = nil
+            return
+        }
+
+        panelView.layer.shadowPath = UIBezierPath(
+            roundedRect: panelView.bounds,
+            byRoundingCorners: [.topLeft, .topRight],
+            cornerRadii: CGSize(width: 24, height: 24)
+        ).cgPath
+    }
+
     @objc private func handlePaletteChanged() {
-        onColorChanged(paletteView.selectedColor)
+        scheduleColorApplication(paletteView.selectedColor)
+    }
+
+    private func scheduleColorApplication(_ color: UIColor) {
+        pendingColor = color
+        pendingColorApplication?.cancel()
+        colorApplicationSequence += 1
+        let sequence = colorApplicationSequence
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.colorApplicationSequence == sequence else {
+                return
+            }
+
+            self.applyPendingColorIfNeeded()
+        }
+        pendingColorApplication = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Layout.colorApplicationDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelPendingColorApplication() {
+        colorApplicationSequence += 1
+        pendingColorApplication?.cancel()
+        pendingColorApplication = nil
+        pendingColor = nil
+    }
+
+    private func applyPendingColorIfNeeded() {
+        guard let color = pendingColor else {
+            return
+        }
+
+        pendingColorApplication?.cancel()
+        pendingColorApplication = nil
+        pendingColor = nil
+        colorApplicationSequence += 1
+        onColorChanged(color)
+    }
+
+    @objc private func toggleApplyToAll() {
+        applyToAllSwitch.setOn(!applyToAllSwitch.isOn, animated: true)
+        handleApplyToAllSwitchChanged()
+    }
+
+    @objc private func handleApplyToAllSwitchChanged() {
+        if applyToAllSwitch.isOn {
+            applyPendingColorIfNeeded()
+        } else {
+            cancelPendingColorApplication()
+            paletteView.selectedColor = .white
+        }
+        onApplyToAllChanged?(applyToAllSwitch.isOn)
     }
 
     @objc private func dismissPicker() {
+        applyPendingColorIfNeeded()
         dismiss(animated: true)
     }
 }
@@ -130,12 +266,16 @@ private final class RouteShareColorSpectrumView: UIControl {
     private var cachedImage: UIImage?
     private var imageGenerationID = 0
     private var selectedPoint: CGPoint = .zero
+    private var isUpdatingSelectionFromTouch = false
+    var hitAreaOutset: CGFloat = 0
 
     var selectedColor: UIColor = .white {
         didSet {
-            selectedPoint = Self.point(for: selectedColor, in: bounds.size)
+            if !isUpdatingSelectionFromTouch {
+                selectedPoint = Self.point(for: selectedColor, in: bounds.size)
+                setNeedsLayout()
+            }
             markerView.backgroundColor = selectedColor
-            setNeedsLayout()
         }
     }
 
@@ -153,6 +293,7 @@ private final class RouteShareColorSpectrumView: UIControl {
         super.layoutSubviews()
         imageView.layer.cornerRadius = layer.cornerRadius
         imageView.layer.masksToBounds = true
+        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: layer.cornerRadius).cgPath
         updatePaletteImageIfNeeded()
         if selectedPoint == .zero {
             selectedPoint = Self.point(for: selectedColor, in: bounds.size)
@@ -170,9 +311,17 @@ private final class RouteShareColorSpectrumView: UIControl {
         return true
     }
 
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: -hitAreaOutset, dy: -hitAreaOutset).contains(point)
+    }
+
     private func configureViews() {
         backgroundColor = .clear
         isMultipleTouchEnabled = false
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.26
+        layer.shadowRadius = 16
+        layer.shadowOffset = CGSize(width: 0, height: 8)
 
         imageView.contentMode = .scaleToFill
         imageView.clipsToBounds = true
@@ -209,7 +358,9 @@ private final class RouteShareColorSpectrumView: UIControl {
             y: min(max(location.y, 0), bounds.height)
         )
         selectedPoint = clampedPoint
+        isUpdatingSelectionFromTouch = true
         selectedColor = Self.color(at: clampedPoint, in: bounds.size)
+        isUpdatingSelectionFromTouch = false
         selectedPoint = clampedPoint
         updateMarkerFrame()
         sendActions(for: .valueChanged)

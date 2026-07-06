@@ -62,6 +62,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private var hasUserAdjustedMapRegion = false
     private var hasPresentedSportsCareerSheet = false
     private var suppressSportsCareerSheetPresentation = false
+    private var shouldRestoreSportsCareerSheetOnNextAppearance = false
     private var hasPreparedForPermanentDismissal = false
     private var selectedFilters = HeatmapFilterStore.shared.selectedFilters()
     private var selectedYear: Int?
@@ -126,6 +127,13 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if shouldRestoreSportsCareerSheetOnNextAppearance {
+            shouldRestoreSportsCareerSheetOnNextAppearance = false
+            suppressSportsCareerSheetPresentation = false
+            presentSportsCareerSheetIfNeeded()
+            return
+        }
+
         if suppressSportsCareerSheetPresentation {
             suppressSportsCareerSheetPresentation = false
         } else {
@@ -668,6 +676,12 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
     private func makeMoreMenu() -> UIMenu {
         let filterActions = HeatmapFilter.allCases.map(makeFilterMenuAction)
+        let shareAction = UIAction(
+            title: AppLocalization.text(.share),
+            image: UIImage(systemName: "square.and.arrow.up.on.square")
+        ) { [weak self] _ in
+            self?.showHeatmapShare()
+        }
 
         let mapStyleActions = AppMapDisplayStyle.menuCases.map { style in
             UIAction(
@@ -682,6 +696,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             title: "",
             identifier: UIMenu.Identifier("studio.pj.PTrack.heatmap.more"),
             children: [
+                shareAction,
                 UIMenu(
                     title: AppLocalization.text(.sportType),
                     image: UIImage(systemName: "figure.walk"),
@@ -706,6 +721,24 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 )
             ]
         )
+    }
+
+    private func showHeatmapShare() {
+        dismissSportsCareerSheetForNavigation { [weak self] in
+            guard let self else {
+                return
+            }
+
+            let shareViewController = WorkoutRouteHeatmapShareViewController(
+                workouts: self.workouts.filter(self.isWorkoutIncludedBySelectedFilters),
+                referenceDate: self.filteredStatisticReferenceDate,
+                timelineWorkouts: self.filteredStatisticWorkouts,
+                selectedFilters: self.selectedFilters,
+                selectedYear: self.selectedYear
+            )
+            self.shouldRestoreSportsCareerSheetOnNextAppearance = true
+            self.navigationController?.pushViewController(shareViewController, animated: true)
+        }
     }
 
     private func makeTimeMenuActions() -> [UIMenuElement] {
@@ -839,6 +872,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
 
             let resolvedWorkout = self.cacheStore.loadWorkout(id: workout.id) ?? workout
             let detailViewController = WorkoutRouteDetailViewController(workout: resolvedWorkout)
+            self.shouldRestoreSportsCareerSheetOnNextAppearance = true
             self.navigationController?.pushViewController(detailViewController, animated: true)
         }
     }

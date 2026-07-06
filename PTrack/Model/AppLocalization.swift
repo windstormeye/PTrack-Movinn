@@ -29,6 +29,7 @@ enum AppLanguage: String, CaseIterable {
 
 enum AppTextKey: String {
     case all
+    case applyToAll
     case appearanceSettings
     case appearanceSystem
     case appLanguage
@@ -162,6 +163,12 @@ enum AppTextKey: String {
     case routeCollectionImporting
     case routeCollectionMergeSectionTitle
     case routeHeatmap
+    case heatmapShareMonth
+    case heatmapShareNoRoutes
+    case heatmapShareSelectRouteForColor
+    case heatmapShareTitle
+    case heatmapShareWeek
+    case heatmapShareYear
     case routeLoading
     case routeMerge
     case routeMergeCompletedMessage
@@ -370,6 +377,7 @@ enum AppLocalization {
     private static let translations: [AppLanguage: [AppTextKey: String]] = [
         .chinese: [
             .all: "全部",
+            .applyToAll: "应用到全部",
             .appearanceSettings: "外观设置",
             .appearanceSystem: "跟随系统",
             .appLanguage: "App 语言",
@@ -503,6 +511,12 @@ enum AppLocalization {
             .routeCollectionImporting: "正在导入 GPX",
             .routeCollectionMergeSectionTitle: "合并",
             .routeHeatmap: "轨迹热图",
+            .heatmapShareMonth: "月",
+            .heatmapShareNoRoutes: "当前时间范围暂无轨迹",
+            .heatmapShareSelectRouteForColor: "先选择一条轨迹",
+            .heatmapShareTitle: "分享轨迹合集",
+            .heatmapShareWeek: "周",
+            .heatmapShareYear: "年",
             .routeLoading: "正在加载轨迹",
             .routeMerge: "合并路线",
             .routeMergeCompletedMessage: "合并完成，可以去路线页面里查看。",
@@ -589,6 +603,7 @@ enum AppLocalization {
         ],
         .japanese: [
             .all: "すべて",
+            .applyToAll: "すべてに適用",
             .appearanceSettings: "外観設定",
             .appearanceSystem: "システムに合わせる",
             .appLanguage: "アプリの言語",
@@ -722,6 +737,12 @@ enum AppLocalization {
             .routeCollectionImporting: "GPX を読み込み中",
             .routeCollectionMergeSectionTitle: "結合",
             .routeHeatmap: "軌跡ヒートマップ",
+            .heatmapShareMonth: "月",
+            .heatmapShareNoRoutes: "この期間にはルートがありません",
+            .heatmapShareSelectRouteForColor: "先にルートを選択してください",
+            .heatmapShareTitle: "ルート集を共有",
+            .heatmapShareWeek: "週",
+            .heatmapShareYear: "年",
             .routeLoading: "ルートを読み込み中",
             .routeMerge: "ルートを結合",
             .routeMergeCompletedMessage: "結合が完了しました。ルート画面で確認できます。",
@@ -808,6 +829,7 @@ enum AppLocalization {
         ],
         .korean: [
             .all: "전체",
+            .applyToAll: "전체에 적용",
             .appearanceSettings: "화면 모드",
             .appearanceSystem: "시스템 설정 따르기",
             .appLanguage: "앱 언어",
@@ -941,6 +963,12 @@ enum AppLocalization {
             .routeCollectionImporting: "GPX 가져오는 중",
             .routeCollectionMergeSectionTitle: "병합",
             .routeHeatmap: "경로 히트맵",
+            .heatmapShareMonth: "월",
+            .heatmapShareNoRoutes: "현재 기간에 경로가 없습니다",
+            .heatmapShareSelectRouteForColor: "먼저 경로를 선택하세요",
+            .heatmapShareTitle: "경로 모음 공유",
+            .heatmapShareWeek: "주",
+            .heatmapShareYear: "년",
             .routeLoading: "경로 불러오는 중",
             .routeMerge: "경로 병합",
             .routeMergeCompletedMessage: "병합이 완료되었습니다. 경로 화면에서 확인할 수 있어요.",
@@ -1027,6 +1055,7 @@ enum AppLocalization {
         ],
         .english: [
             .all: "All",
+            .applyToAll: "Apply to All",
             .appearanceSettings: "Appearance",
             .appearanceSystem: "Follow System",
             .appLanguage: "App Language",
@@ -1160,6 +1189,12 @@ enum AppLocalization {
             .routeCollectionImporting: "Importing GPX",
             .routeCollectionMergeSectionTitle: "Merged",
             .routeHeatmap: "Route Heatmap",
+            .heatmapShareMonth: "Month",
+            .heatmapShareNoRoutes: "No routes in this range",
+            .heatmapShareSelectRouteForColor: "Select a route first",
+            .heatmapShareTitle: "Share Route Collection",
+            .heatmapShareWeek: "Week",
+            .heatmapShareYear: "Year",
             .routeLoading: "Loading Route",
             .routeMerge: "Merge Routes",
             .routeMergeCompletedMessage: "The route has been merged. You can view it on the Routes page.",
