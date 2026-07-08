@@ -38,6 +38,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     let workout: TrackedWorkout
     private let presentationMode: PresentationMode
     private let providedMergeSourceWorkouts: [TrackedWorkout]?
+    private let isDemoMode: Bool
     private let mediaStore = RouteMediaStore()
     private let mapContainerView = AppMapContainerView()
     private var mapView: MKMapView { mapContainerView.mapView }
@@ -130,11 +131,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
     init(
         workout: TrackedWorkout,
         presentationMode: PresentationMode = .workout,
-        mergeSourceWorkouts: [TrackedWorkout]? = nil
+        mergeSourceWorkouts: [TrackedWorkout]? = nil,
+        isDemoMode: Bool = false
     ) {
         self.workout = workout
         self.presentationMode = presentationMode
         providedMergeSourceWorkouts = mergeSourceWorkouts
+        self.isDemoMode = isDemoMode
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -184,7 +187,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         super.viewWillAppear(animated)
         navigationController?.setNavigationBarHidden(false, animated: animated)
         configureDefaultNavigationBar()
-        if presentationMode == .workout {
+        if presentationMode == .workout, !isDemoMode {
             refreshMoreMenuForPhotoAuthorizationState()
             applyRouteMediaVisibilityPreference()
         } else {
@@ -373,6 +376,19 @@ final class WorkoutRouteDetailViewController: UIViewController {
             }
         }
 
+        if isDemoMode {
+            return UIMenu(
+                title: "",
+                children: [
+                    UIMenu(
+                        title: AppLocalization.text(.mapStyle),
+                        image: UIImage(systemName: "map"),
+                        children: mapStyleActions
+                    )
+                ]
+            )
+        }
+
         guard presentationMode == .workout else {
             return UIMenu(
                 title: "",
@@ -554,7 +570,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func refreshMoreMenuForPhotoAuthorizationState(reloadMediaIfAuthorizationJustGranted: Bool = true) {
-        guard presentationMode == .workout else {
+        guard presentationMode == .workout, !isDemoMode else {
             navigationItem.rightBarButtonItem = makeMoreBarButtonItem()
             return
         }
@@ -737,7 +753,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func configureRouteMediaVisibilityButton() {
-        routeMediaVisibilityButton.isHidden = presentationMode != .workout
+        routeMediaVisibilityButton.isHidden = presentationMode != .workout || isDemoMode
         routeMediaVisibilityButton.overrideUserInterfaceStyle = .light
         routeMediaVisibilityButton.accessibilityLabel = AppLocalization.text(.photoMatching)
         routeMediaVisibilityIconView.overrideUserInterfaceStyle = .light
@@ -1386,7 +1402,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
         startRouteLoadingIfNeeded()
         if presentationMode == .workout {
             loadRouteLocationTitle()
-            loadRouteMedia()
+            if !isDemoMode {
+                loadRouteMedia()
+            }
         }
     }
 
@@ -1515,6 +1533,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private var canDisplayRouteMediaAnnotations: Bool {
         presentationMode == .workout
+            && !isDemoMode
             && RouteMediaVisibilityPreference.isEnabled
             && PhotoLibraryAuthorizationManager.authorizationState == .authorized
     }

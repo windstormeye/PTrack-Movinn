@@ -62,6 +62,11 @@ enum AppTextKey: String {
     case debugProAccessMockEnabled
     case debugProAccessSimulation
     case debugProAccessUnlocked
+    case demoModeEntry
+    case demoModeExit
+    case demoModeExitMessage
+    case demoModeExitTitle
+    case demoModeTitle
     case developerWebsite
     case developerTools
     case disable
@@ -413,6 +418,11 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "启用 Pro 模拟",
             .debugProAccessSimulation: "模拟 Pro 功能解锁",
             .debugProAccessUnlocked: "已解锁",
+            .demoModeEntry: "查看演示模式",
+            .demoModeExit: "退出演示模式",
+            .demoModeExitMessage: "退出后将回到真实数据模式。",
+            .demoModeExitTitle: "退出演示模式？",
+            .demoModeTitle: "演示模式",
             .developerWebsite: "开发者网站",
             .developerTools: "开发者工具",
             .disable: "关闭",
@@ -642,6 +652,11 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "Pro 模擬を有効化",
             .debugProAccessSimulation: "Pro 状態をシミュレート",
             .debugProAccessUnlocked: "解放済み",
+            .demoModeEntry: "デモモードを見る",
+            .demoModeExit: "デモモードを終了",
+            .demoModeExitMessage: "終了すると実データのモードに戻ります。",
+            .demoModeExitTitle: "デモモードを終了しますか？",
+            .demoModeTitle: "デモモード",
             .developerWebsite: "開発者サイト",
             .developerTools: "開発者ツール",
             .disable: "オフにする",
@@ -871,6 +886,11 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "Pro 시뮬레이션 켜기",
             .debugProAccessSimulation: "Pro 상태 시뮬레이션",
             .debugProAccessUnlocked: "잠금 해제됨",
+            .demoModeEntry: "데모 모드 보기",
+            .demoModeExit: "데모 모드 종료",
+            .demoModeExitMessage: "종료하면 실제 데이터 모드로 돌아갑니다.",
+            .demoModeExitTitle: "데모 모드를 종료할까요?",
+            .demoModeTitle: "데모 모드",
             .developerWebsite: "개발자 웹사이트",
             .developerTools: "개발자 도구",
             .disable: "끄기",
@@ -1100,6 +1120,11 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "Enable Pro Mock",
             .debugProAccessSimulation: "Simulate Pro Access",
             .debugProAccessUnlocked: "Unlocked",
+            .demoModeEntry: "View Demo Mode",
+            .demoModeExit: "Exit Demo Mode",
+            .demoModeExitMessage: "After exiting, the app will return to real data mode.",
+            .demoModeExitTitle: "Exit Demo Mode?",
+            .demoModeTitle: "Demo Mode",
             .developerWebsite: "Developer Website",
             .developerTools: "Developer Tools",
             .disable: "Disable",

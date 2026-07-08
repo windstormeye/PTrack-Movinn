@@ -138,6 +138,9 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     private let referenceDate: Date
     private let cacheStore = WorkoutCacheStore()
     private let cacheLoadQueue = DispatchQueue(label: "studio.pj.PTrack.heatmap-share-cache-load", qos: .userInitiated)
+    private let allowsCacheAugmentation: Bool
+    private let allowsPhotoBackground: Bool
+    private let allowsPhotoLibrarySaving: Bool
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let navigationTitleLabel = UILabel()
     private let cacheLoadingIndicator = UIActivityIndicatorView(style: .medium)
@@ -215,14 +218,23 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     private let previewReloadThrottleInterval: TimeInterval = 0.22
     private let photoBackgroundMinimumScale: CGFloat = 1
     private let photoBackgroundMaximumScale: CGFloat = 4
+    private var dataBrowserItems: [DataBrowserItem] {
+        allowsPhotoBackground ? DataBrowserItem.allCases : DataBrowserItem.allCases.filter { $0 != .photo }
+    }
 
     init(
         workouts: [TrackedWorkout],
         referenceDate: Date? = nil,
         timelineWorkouts: [TrackedWorkout]? = nil,
         selectedFilters: Set<HeatmapFilter> = Set(HeatmapFilter.allCases),
-        selectedYear: Int? = nil
+        selectedYear: Int? = nil,
+        allowsCacheAugmentation: Bool = true,
+        allowsPhotoBackground: Bool = true,
+        allowsPhotoLibrarySaving: Bool = true
     ) {
+        self.allowsCacheAugmentation = allowsCacheAugmentation
+        self.allowsPhotoBackground = allowsPhotoBackground
+        self.allowsPhotoLibrarySaving = allowsPhotoLibrarySaving
         self.selectedFilters = selectedFilters
         selectedYearFilter = selectedYear
         let routeItems = Self.routePreviewItems(
@@ -722,6 +734,12 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     }
 
     private func startCachedWorkoutLoading() {
+        guard allowsCacheAugmentation else {
+            hasCompletedCachedWorkoutLoad = true
+            setCachedWorkoutLoading(false)
+            return
+        }
+
         guard !isLoadingCachedWorkouts, !hasCompletedCachedWorkoutLoad else {
             return
         }
@@ -1182,6 +1200,10 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     }
 
     private func presentPhotoBackgroundPicker() {
+        guard allowsPhotoBackground else {
+            return
+        }
+
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
         configuration.selectionLimit = estimatedPhotoBackgroundSelectionLimit()
@@ -1281,6 +1303,18 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
             setSelectionChromeHidden: { _ in },
             restoreSelection: {}
         )
+
+        guard allowsPhotoLibrarySaving else {
+            hideExportLoading()
+            selectedWorkoutID = previouslySelectedWorkoutID.flatMap { id in
+                displayedRouteItems.contains { $0.id == id } ? id : nil
+            }
+            routeCollectionView.reloadData()
+            configureToolButtons()
+            presentPreviewImageShareSheet(image)
+            return
+        }
+
         RouteSharePhotoLibrarySaver.saveImage(image) { [weak self] result in
             guard let self else {
                 return
@@ -1300,6 +1334,12 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
                 showAlert(title: AppLocalization.text(.share), message: detailedErrorMessage(error))
             }
         }
+    }
+
+    private func presentPreviewImageShareSheet(_ image: UIImage) {
+        let activityViewController = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+        activityViewController.popoverPresentationController?.barButtonItem = exportBarButtonItem
+        present(activityViewController, animated: true)
     }
 
     private func showExportLoading() {
@@ -1664,7 +1704,7 @@ extension WorkoutRouteHeatmapShareViewController: UIGestureRecognizerDelegate {
 extension WorkoutRouteHeatmapShareViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         if collectionView === dataBrowserCollectionView {
-            return DataBrowserItem.allCases.count
+            return dataBrowserItems.count
         }
 
         return displayedRouteItems.count
@@ -1679,9 +1719,10 @@ extension WorkoutRouteHeatmapShareViewController: UICollectionViewDataSource, UI
                 withReuseIdentifier: HeatmapShareDataScopeCell.reuseIdentifier,
                 for: indexPath
             ) as? HeatmapShareDataScopeCell,
-            let item = DataBrowserItem(rawValue: indexPath.item) else {
+            dataBrowserItems.indices.contains(indexPath.item) else {
                 return UICollectionViewCell()
             }
+            let item = dataBrowserItems[indexPath.item]
 
             cell.configure(
                 title: AppLocalization.text(item.titleKey),
@@ -1709,9 +1750,10 @@ extension WorkoutRouteHeatmapShareViewController: UICollectionViewDataSource, UI
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if collectionView === dataBrowserCollectionView {
-            guard let item = DataBrowserItem(rawValue: indexPath.item) else {
+            guard dataBrowserItems.indices.contains(indexPath.item) else {
                 return
             }
+            let item = dataBrowserItems[indexPath.item]
 
             guard let scope = item.scope else {
                 presentPhotoBackgroundPicker()

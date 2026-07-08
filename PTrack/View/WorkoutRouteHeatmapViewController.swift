@@ -16,6 +16,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     )
 
     private var workouts: [TrackedWorkout]
+    private let isDemoMode: Bool
     private var knownWorkoutIDs: Set<String>
     private var statisticWorkouts: [TrackedWorkout]
     private var knownStatisticWorkoutIDs: Set<String>
@@ -91,8 +92,9 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private let maximumPreparedRoutePoolCount = 1_800
     private let regionCacheReloadDelay: TimeInterval = 0.45
 
-    init(workouts: [TrackedWorkout]) {
+    init(workouts: [TrackedWorkout], isDemoMode: Bool = false) {
         self.workouts = workouts
+        self.isDemoMode = isDemoMode
         knownWorkoutIDs = []
         statisticWorkouts = Self.statisticsWorkouts(from: workouts)
         knownStatisticWorkoutIDs = Set(statisticWorkouts.map(\.id))
@@ -383,6 +385,13 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         }
 
         hasStartedHeatmapLoading = true
+        if isDemoMode {
+            prepareHeatmapRoutes()
+            hasCompletedCachedWorkoutLoad = true
+            setCachedWorkoutLoading(false)
+            return
+        }
+
         let cachedRouteRestoreState = restoreCachedHeatmapRoutesIfAvailable()
         hasRestoredCachedRoutes = cachedRouteRestoreState.didRestore
         hasRestoredCompleteCachedRoutes = cachedRouteRestoreState.isComplete
@@ -734,7 +743,10 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 referenceDate: self.filteredStatisticReferenceDate,
                 timelineWorkouts: self.filteredStatisticWorkouts,
                 selectedFilters: self.selectedFilters,
-                selectedYear: self.selectedYear
+                selectedYear: self.selectedYear,
+                allowsCacheAugmentation: !self.isDemoMode,
+                allowsPhotoBackground: !self.isDemoMode,
+                allowsPhotoLibrarySaving: !self.isDemoMode
             )
             self.shouldRestoreSportsCareerSheetOnNextAppearance = true
             self.navigationController?.pushViewController(shareViewController, animated: true)
@@ -870,8 +882,13 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 return
             }
 
-            let resolvedWorkout = self.cacheStore.loadWorkout(id: workout.id) ?? workout
-            let detailViewController = WorkoutRouteDetailViewController(workout: resolvedWorkout)
+            let resolvedWorkout = self.isDemoMode
+                ? workout
+                : (self.cacheStore.loadWorkout(id: workout.id) ?? workout)
+            let detailViewController = WorkoutRouteDetailViewController(
+                workout: resolvedWorkout,
+                isDemoMode: self.isDemoMode
+            )
             self.shouldRestoreSportsCareerSheetOnNextAppearance = true
             self.navigationController?.pushViewController(detailViewController, animated: true)
         }
@@ -886,6 +903,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
         let routePoolMapRect = resetCamera ? MKMapRect.world : routeLoadingMapRect()
         let maximumPreparedRoutePoolCount = maximumPreparedRoutePoolCount
         let heatmapRouteCacheStore = heatmapRouteCacheStore
+        let usesPersistentRouteCache = !isDemoMode
 
         DispatchQueue.global(qos: .userInitiated).async {
             var routes: [HeatmapRoute] = []
@@ -894,12 +912,18 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             focusRoutes.reserveCapacity(min(workouts.count, maximumPreparedRoutePoolCount))
 
             for workout in workouts {
-                let route = Self.cachedOrMakeHeatmapRoute(
-                    for: workout,
-                    samplingRatio: samplingRatio,
-                    maximumPointCount: maximumRoutePointCount,
-                    routeCacheStore: heatmapRouteCacheStore
-                )
+                let route = usesPersistentRouteCache
+                    ? Self.cachedOrMakeHeatmapRoute(
+                        for: workout,
+                        samplingRatio: samplingRatio,
+                        maximumPointCount: maximumRoutePointCount,
+                        routeCacheStore: heatmapRouteCacheStore
+                    )
+                    : Self.makeHeatmapRoute(
+                        for: workout,
+                        samplingRatio: samplingRatio,
+                        maximumPointCount: maximumRoutePointCount
+                    )
                 guard let route else {
                     continue
                 }

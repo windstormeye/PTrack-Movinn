@@ -90,6 +90,7 @@ class ViewController: UIViewController {
     private let routeBookPanelDetailStackView = UIStackView()
     private let routeBookReplayRulerView = WorkoutRouteReplayRulerView()
     private let emptyDataSourceView = HomeDataSourceEmptyView()
+    private let demoModeEntryButton = UIButton(type: .system)
     private let defaultColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
     private let lineSpacing: CGFloat = 2
@@ -170,6 +171,7 @@ class ViewController: UIViewController {
         configureHeaderView()
         configureScrollDateIndicator()
         configureEmptyDataSourceView()
+        configureDemoModeEntryButton()
         configureLoadingIndicator()
         registerLanguageObserver()
         registerStravaImportObserver()
@@ -227,6 +229,7 @@ class ViewController: UIViewController {
         navigationController?.setNavigationBarHidden(true, animated: animated)
         clearRouteImportIndicatorsIfNeededOnHomeAppear()
         applyRouteBookInterfaceState()
+        updateDemoModeEntryVisibility()
         updateFullScreenInsets(force: true)
     }
 
@@ -998,6 +1001,10 @@ class ViewController: UIViewController {
         moreButton.menu = makeHeaderMoreMenu()
     }
 
+    @objc private func handleDemoModeEntryButtonTap() {
+        DemoModeCoordinator.activate(from: self)
+    }
+
     private func configureLoadingIndicator() {
         loadingIndicator.hidesWhenStopped = true
         loadingIndicator.translatesAutoresizingMaskIntoConstraints = true
@@ -1025,6 +1032,23 @@ class ViewController: UIViewController {
         }
 
         updateEmptyDataSourceVisibility()
+    }
+
+    private func configureDemoModeEntryButton() {
+        demoModeEntryButton.setTitle(AppLocalization.text(.demoModeEntry), for: .normal)
+        demoModeEntryButton.setTitleColor(.secondaryLabel, for: .normal)
+        demoModeEntryButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+        demoModeEntryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        demoModeEntryButton.backgroundColor = .clear
+        demoModeEntryButton.addTarget(self, action: #selector(handleDemoModeEntryButtonTap), for: .touchUpInside)
+
+        view.addSubview(demoModeEntryButton)
+        demoModeEntryButton.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom).inset(8)
+            make.height.greaterThanOrEqualTo(30)
+        }
+        updateDemoModeEntryVisibility()
     }
 
     private func beginLoadingOperation() {
@@ -1098,8 +1122,23 @@ class ViewController: UIViewController {
         store.authorizationState == .authorized || StravaManager.shared.hasStoredAuthorization
     }
 
+    private var hasUserSelectedPrimaryDataSource: Bool {
+        DemoModeStore.hasSelectedPrimaryDataSource
+            || store.authorizationState != .notDetermined
+            || StravaManager.shared.authorizationState != .notDetermined
+    }
+
+    private var shouldShowHomeDemoModeEntry: Bool {
+        !isRouteBookModeActive && !hasUserSelectedPrimaryDataSource
+    }
+
+    private func updateDemoModeEntryVisibility() {
+        demoModeEntryButton.isHidden = !shouldShowHomeDemoModeEntry
+    }
+
     private func updateHeaderReadAuthorizationState() {
         totalDistanceLabel.isHidden = isRouteBookModeActive || !hasReadableDataSourceAuthorization
+        updateDemoModeEntryVisibility()
         updateLoadingIndicatorVisibility()
         updateHeaderMoreButtonMode()
     }
@@ -1150,7 +1189,13 @@ class ViewController: UIViewController {
         view.layoutIfNeeded()
         let headerMaxY = headerView.convert(headerView.bounds, to: view).maxY
 
-        let contentInset = UIEdgeInsets(top: headerMaxY + headerBottomPadding, left: 0, bottom: 0, right: 0)
+        let bottomInset: CGFloat = shouldShowHomeDemoModeEntry ? 46 : 0
+        let contentInset = UIEdgeInsets(
+            top: headerMaxY + headerBottomPadding,
+            left: 0,
+            bottom: bottomInset,
+            right: 0
+        )
         guard force || collectionView.contentInset != contentInset else {
             return
         }
@@ -1405,6 +1450,7 @@ class ViewController: UIViewController {
     }
 
     @objc private func handleLanguageDidChange() {
+        demoModeEntryButton.setTitle(AppLocalization.text(.demoModeEntry), for: .normal)
         updateTotalDistanceText()
         updateRouteBookPanelText()
         emptyDataSourceView.updateLocalizedText()
@@ -2516,6 +2562,9 @@ class ViewController: UIViewController {
     }
 
     private func handleEmptyAppleHealthSelection() {
+        DemoModeStore.markPrimaryDataSourceSelected()
+        updateDemoModeEntryVisibility()
+        updateFullScreenInsets(force: true)
         switch store.authorizationState {
         case .authorized:
             Toast.show(AppLocalization.text(.healthDataReadAuthorized), in: view)
@@ -2562,6 +2611,9 @@ class ViewController: UIViewController {
     }
 
     private func handleEmptyStravaSelection() {
+        DemoModeStore.markPrimaryDataSourceSelected()
+        updateDemoModeEntryVisibility()
+        updateFullScreenInsets(force: true)
         guard !isStravaSyncInProgress else {
             return
         }
@@ -2582,6 +2634,7 @@ class ViewController: UIViewController {
 
             do {
                 _ = try await StravaManager.shared.authorize(presentationContextProvider: self)
+                self.updateDemoModeEntryVisibility()
                 self.loadStravaWorkouts(
                     excludingStravaActivityIDs: excludedActivityIDs,
                     presentsErrors: true
@@ -3292,6 +3345,7 @@ class ViewController: UIViewController {
         setRouteBookScaleViewVisible(isRouteBookModeActive)
         routeGridView.isHidden = isRouteBookModeActive
         collectionView.isHidden = isRouteBookModeActive
+        updateDemoModeEntryVisibility()
         headerView.backgroundColor = isRouteBookModeActive ? .clear : AppColors.solidBackground
         headerBlurView.isHidden = true
         updateRouteBookHeaderColors()
@@ -3309,6 +3363,7 @@ class ViewController: UIViewController {
             dismissRouteBookPanelSheetIfNeeded(animated: false)
             view.bringSubviewToFront(headerView)
             view.bringSubviewToFront(scrollDateIndicatorView)
+            view.bringSubviewToFront(demoModeEntryButton)
             updateEmptyDataSourceVisibility()
         }
 

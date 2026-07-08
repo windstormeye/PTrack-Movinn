@@ -42,6 +42,7 @@ final class MoreSettingsViewController: UIViewController {
                 #if DEBUG
                 items.append(.developerTools)
                 #endif
+                items.append(.demoMode)
                 items.append(.developerWebsite)
                 return items
             }
@@ -57,6 +58,7 @@ final class MoreSettingsViewController: UIViewController {
         case appleHealth
         case strava
         case systemPhotos
+        case demoMode
         #if DEBUG
         case developerTools
         #endif
@@ -80,6 +82,8 @@ final class MoreSettingsViewController: UIViewController {
                 return .strava
             case .systemPhotos:
                 return .systemPhotos
+            case .demoMode:
+                return .demoModeEntry
             #if DEBUG
             case .developerTools:
                 return .developerTools
@@ -107,6 +111,8 @@ final class MoreSettingsViewController: UIViewController {
                 return "figure.run"
             case .systemPhotos:
                 return "photo.on.rectangle"
+            case .demoMode:
+                return "play.circle"
             #if DEBUG
             case .developerTools:
                 return "hammer.fill"
@@ -334,7 +340,7 @@ final class MoreSettingsViewController: UIViewController {
             }
         case .iCloudRouteSync:
             return RouteCollectionCloudSyncSettings.isEnabled ? .connected : nil
-        case .proStatus, .appLanguage, .appearanceSettings, .widgets, .developerWebsite:
+        case .proStatus, .appLanguage, .appearanceSettings, .widgets, .demoMode, .developerWebsite:
             return nil
         #if DEBUG
         case .developerTools:
@@ -449,6 +455,7 @@ final class MoreSettingsViewController: UIViewController {
     }
 
     private func requestHealthAuthorization() {
+        DemoModeStore.markPrimaryDataSourceSelected()
         switch healthWorkoutStore.authorizationState {
         case .authorized:
             Toast.show(AppLocalization.text(.healthDataReadAuthorized), in: view)
@@ -519,6 +526,7 @@ final class MoreSettingsViewController: UIViewController {
     }
 
     private func handleStravaSelection() {
+        DemoModeStore.markPrimaryDataSourceSelected()
         if connectionIndicatorState(for: .strava) == .connected {
             presentStravaAlreadyAuthorizedAlert()
             return
@@ -797,7 +805,7 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
                 title: AppLocalization.text(item.titleKey),
                 indicatorColor: indicatorColor
             )
-        case .appLanguage, .appearanceSettings, .widgets, .developerWebsite:
+        case .appLanguage, .appearanceSettings, .widgets, .demoMode, .developerWebsite:
             cell.configureSystemIcon(
                 iconName: item.iconName,
                 title: AppLocalization.text(item.titleKey),
@@ -858,6 +866,8 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
             handleStravaSelection()
         case .systemPhotos:
             handlePhotoLibrarySelection()
+        case .demoMode:
+            DemoModeCoordinator.activate(from: self)
         #if DEBUG
         case .developerTools:
             presentDeveloperTools()

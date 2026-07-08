@@ -23,6 +23,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         AppAppearanceStore.shared.apply(to: window)
         window.makeKeyAndVisible()
         self.window = window
+        DispatchQueue.main.async {
+            DemoModeCoordinator.presentIfNeeded(in: window)
+        }
 
         if !connectionOptions.urlContexts.isEmpty {
             handleURLContexts(connectionOptions.urlContexts)
