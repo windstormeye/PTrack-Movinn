@@ -14,6 +14,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         RouteCollectionCloudSyncCoordinator.shared.startIfEnabled()
+        HeatmapRouteCacheStore.shared.prewarmCompleteRouteCache()
         Task { @MainActor in
             _ = ProSubscriptionManager.shared
         }

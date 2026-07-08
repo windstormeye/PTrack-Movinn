@@ -54,6 +54,8 @@ final class SportsCareerViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private var collectionView: UICollectionView!
     private var statistics: SportsCareerStatistics?
+    private var statisticsReferenceDate: Date?
+    private var weeklyReferenceDate: Date?
     private var statisticsLoadToken = UUID()
     private var hasPlayedAppearanceAnimation = false
     private var monthlyWorkoutSelectionIndexesByDateKey: [String: Int] = [:]
@@ -62,9 +64,14 @@ final class SportsCareerViewController: UIViewController {
     private let navigationBackgroundHeight: CGFloat = 124
     private let sheetContentTopInset: CGFloat = 30
 
-    init(workouts: [TrackedWorkout], presentationStyle: PresentationStyle = .pushed) {
+    init(
+        workouts: [TrackedWorkout],
+        presentationStyle: PresentationStyle = .pushed,
+        referenceDate: Date? = nil
+    ) {
         self.workouts = workouts
         self.presentationStyle = presentationStyle
+        statisticsReferenceDate = referenceDate
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -243,19 +250,28 @@ final class SportsCareerViewController: UIViewController {
         )
     }
 
-    func updateWorkouts(_ workouts: [TrackedWorkout], animated: Bool) {
+    func updateWorkouts(
+        _ workouts: [TrackedWorkout],
+        animated: Bool,
+        referenceDate: Date? = nil
+    ) {
         let incomingIDs = Set(workouts.map(\.id))
-        guard incomingIDs != Set(self.workouts.map(\.id)) else {
+        guard incomingIDs != Set(self.workouts.map(\.id))
+                || referenceDate != statisticsReferenceDate else {
             return
         }
 
         self.workouts = workouts
+        statisticsReferenceDate = referenceDate
+        weeklyReferenceDate = nil
         reloadStatisticsAsync(animatedFromPrevious: animated)
     }
 
     private func reloadStatisticsAsync(animatedFromPrevious: Bool = false) {
         let loadToken = UUID()
         let workouts = workouts
+        let statisticsReferenceDate = statisticsReferenceDate
+        let weeklyReferenceDate = weeklyReferenceDate
         let language = AppLanguageStore.shared.language
         let previousStatistics = statistics
         let shouldShowLoading = !animatedFromPrevious || previousStatistics == nil
@@ -269,6 +285,8 @@ final class SportsCareerViewController: UIViewController {
         DispatchQueue.global(qos: .userInitiated).async {
             let statistics = SportsCareerStatistics(
                 workouts: workouts,
+                now: statisticsReferenceDate ?? Date(),
+                weeklyReferenceDate: weeklyReferenceDate,
                 language: language
             )
 
@@ -490,7 +508,7 @@ extension SportsCareerViewController: UICollectionViewDataSource {
                 cell.configureLoading()
             }
             return cell
-        case .weekly: 
+        case .weekly:
             guard let cell = collectionView.dequeueReusableCell(
                 withReuseIdentifier: CareerWeeklyChartCell.reuseIdentifier,
                 for: indexPath
@@ -498,8 +516,14 @@ extension SportsCareerViewController: UICollectionViewDataSource {
                 return UICollectionViewCell()
             }
 
-            if let statistics {
-                cell.configure(rows: statistics.weeklyDistanceRows)
+            cell.onSwipeWeek = { [weak self] offset in
+                self?.showAdjacentWeek(offset: offset)
+            }
+            cell.rowsForWeekOffset = { [weak self] offset in
+                self?.rowsForWeek(offset: offset)
+            }
+            if let rows = weeklyDistanceRowsForCurrentReference() {
+                cell.configure(rows: rows)
             } else {
                 cell.configureLoading()
             }
@@ -543,9 +567,137 @@ extension SportsCareerViewController: UICollectionViewDataSource {
         }
 
         headerView.configure(
-            title: AppLocalization.text(section.titleKey)
+            title: title(for: section)
         )
         return headerView
+    }
+
+    private func title(for section: Section) -> String {
+        guard section == .weekly else {
+            return AppLocalization.text(section.titleKey)
+        }
+
+        return weeklySectionTitle()
+    }
+
+    private var effectiveWeeklyReferenceDate: Date {
+        weeklyReferenceDate ?? statisticsReferenceDate ?? Date()
+    }
+
+    private func weeklySectionTitle() -> String {
+        let calendar = sportsCareerWeekCalendar(from: .current)
+        let referenceDate = effectiveWeeklyReferenceDate
+
+        if isCurrentRealWeek(referenceDate, calendar: calendar) {
+            return AppLocalization.text(.sportsCareerWeeklyData)
+        }
+
+        guard let weekInterval = calendar.dateInterval(of: .weekOfYear, for: referenceDate) else {
+            return AppLocalization.text(.sportsCareerWeeklyData)
+        }
+
+        let weekOfYear = min(max(calendar.component(.weekOfYear, from: referenceDate), 1), 53)
+        let endDate = calendar.date(byAdding: .day, value: -1, to: weekInterval.end) ?? weekInterval.end
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+
+        return AppLocalization.format(
+            .sportsCareerWeekTitleWithRangeFormat,
+            weekOfYear,
+            formatter.string(from: weekInterval.start),
+            formatter.string(from: endDate)
+        )
+    }
+
+    private func isCurrentRealWeek(_ date: Date, calendar: Calendar) -> Bool {
+        let now = Date()
+        return calendar.component(.yearForWeekOfYear, from: date) == calendar.component(.yearForWeekOfYear, from: now)
+            && calendar.component(.weekOfYear, from: date) == calendar.component(.weekOfYear, from: now)
+    }
+
+    private func showAdjacentWeek(offset: Int) {
+        guard let targetDate = targetWeeklyReferenceDate(offset: offset) else {
+            return
+        }
+
+        weeklyReferenceDate = targetDate
+        UISelectionFeedbackGenerator().selectionChanged()
+        updateVisibleWeeklyHeader()
+    }
+
+    private func rowsForWeek(offset: Int) -> [SportsCareerStatistics.WeeklyDistanceRow]? {
+        guard let targetDate = targetWeeklyReferenceDate(offset: offset) else {
+            return nil
+        }
+
+        return SportsCareerStatistics.makeWeeklyDistanceRows(
+            workouts: workouts,
+            calendar: .current,
+            now: targetDate,
+            language: AppLanguageStore.shared.language
+        )
+    }
+
+    private func weeklyDistanceRowsForCurrentReference() -> [SportsCareerStatistics.WeeklyDistanceRow]? {
+        guard let statistics else {
+            return nil
+        }
+
+        guard weeklyReferenceDate != nil else {
+            return statistics.weeklyDistanceRows
+        }
+
+        return SportsCareerStatistics.makeWeeklyDistanceRows(
+            workouts: workouts,
+            calendar: .current,
+            now: effectiveWeeklyReferenceDate,
+            language: AppLanguageStore.shared.language
+        )
+    }
+
+    private func updateVisibleWeeklyHeader() {
+        let weeklyIndexPath = IndexPath(item: 0, section: Section.weekly.rawValue)
+        guard let headerView = collectionView.supplementaryView(
+            forElementKind: UICollectionView.elementKindSectionHeader,
+            at: weeklyIndexPath
+        ) as? CareerSectionHeaderView else {
+            return
+        }
+
+        headerView.configure(title: title(for: .weekly))
+    }
+
+    private func targetWeeklyReferenceDate(offset: Int) -> Date? {
+        guard offset != 0 else {
+            return nil
+        }
+
+        let calendar = sportsCareerWeekCalendar(from: .current)
+        guard let targetDate = calendar.date(
+            byAdding: .weekOfYear,
+            value: offset,
+            to: effectiveWeeklyReferenceDate
+        ),
+        canDisplayWeek(containing: targetDate, calendar: calendar) else {
+            return nil
+        }
+
+        return targetDate
+    }
+
+    private func canDisplayWeek(containing date: Date, calendar: Calendar) -> Bool {
+        let referenceYear = calendar.component(.yearForWeekOfYear, from: statisticsReferenceDate ?? Date())
+        guard calendar.component(.yearForWeekOfYear, from: date) == referenceYear else {
+            return false
+        }
+
+        let now = Date()
+        guard referenceYear == calendar.component(.yearForWeekOfYear, from: now) else {
+            return true
+        }
+
+        return calendar.component(.weekOfYear, from: date) <= calendar.component(.weekOfYear, from: now)
     }
 }
 
@@ -673,6 +825,7 @@ private struct SportsCareerStatistics {
         workouts: [TrackedWorkout],
         calendar: Calendar = .current,
         now: Date = Date(),
+        weeklyReferenceDate: Date? = nil,
         language: AppLanguage = AppLanguageStore.shared.language
     ) {
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
@@ -716,7 +869,7 @@ private struct SportsCareerStatistics {
         weeklyDistanceRows = Self.makeWeeklyDistanceRows(
             workouts: workouts,
             calendar: calendar,
-            now: now,
+            now: weeklyReferenceDate ?? now,
             language: language
         )
         sportDistributionSlices = Self.makeSportDistributionSlices(from: sportRows)
@@ -812,7 +965,7 @@ private struct SportsCareerStatistics {
         .sorted { $0.date < $1.date }
     }
 
-    private static func makeWeeklyDistanceRows(
+    static func makeWeeklyDistanceRows(
         workouts: [TrackedWorkout],
         calendar: Calendar,
         now: Date,
@@ -1866,6 +2019,7 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
     private var activitySymbolsByDateKey: [String: [String]] = [:]
     private var activityWorkoutsByDateKey: [String: [TrackedWorkout]] = [:]
     private var displayedMonthDate = Date()
+    private var configuredReferenceMonthDate: Date?
     private var calendar = Calendar.current
     private var hasConfiguredMonth = false
     private lazy var monthPanGestureRecognizer: UIPanGestureRecognizer = {
@@ -1905,9 +2059,12 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
             (dateKey(for: day.date), day.workouts)
         })
 
-        if !hasConfiguredMonth {
-            displayedMonthDate = Self.startOfMonth(for: monthDate, calendar: calendar)
+        let referenceMonthDate = Self.startOfMonth(for: monthDate, calendar: calendar)
+        if !hasConfiguredMonth || configuredReferenceMonthDate != referenceMonthDate {
+            displayedMonthDate = referenceMonthDate
+            configuredReferenceMonthDate = referenceMonthDate
             hasConfiguredMonth = true
+            clearInteractiveMonthTransition(keepingTarget: false)
         }
 
         reloadMonth()
@@ -2238,6 +2395,7 @@ private final class CareerMonthCalendarCell: UICollectionViewCell, UIGestureReco
                 targetContentView.transform = .identity
             } completion: { _ in
                 self.displayedMonthDate = targetMonthDate
+                UISelectionFeedbackGenerator().selectionChanged()
                 self.pageContentView?.removeFromSuperview()
                 self.pageContentView = targetContentView
                 self.clearInteractiveMonthTransition(keepingTarget: true)
@@ -2417,11 +2575,25 @@ private final class CareerCalendarDayView: UIView {
     }
 }
 
-private final class CareerWeeklyChartCell: UICollectionViewCell {
+private final class CareerWeeklyChartCell: UICollectionViewCell, UIGestureRecognizerDelegate {
     static let reuseIdentifier = "CareerWeeklyChartCell"
 
-    private let hostingView = CareerChartHostingView()
+    private let pageContainerView = UIView()
     private let loadingView = CareerLoadingView()
+    private var pageContentView: UIView?
+    private var interactiveTargetContentView: UIView?
+    private var interactiveTargetRows: [SportsCareerStatistics.WeeklyDistanceRow]?
+    private var interactiveTargetOffset: Int?
+    private var rows: [SportsCareerStatistics.WeeklyDistanceRow] = []
+    private lazy var weekPanGestureRecognizer: UIPanGestureRecognizer = {
+        let gestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleWeekPan(_:)))
+        gestureRecognizer.cancelsTouchesInView = false
+        gestureRecognizer.delegate = self
+        return gestureRecognizer
+    }()
+
+    var onSwipeWeek: ((Int) -> Void)?
+    var rowsForWeekOffset: ((Int) -> [SportsCareerStatistics.WeeklyDistanceRow]?)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -2433,14 +2605,26 @@ private final class CareerWeeklyChartCell: UICollectionViewCell {
         configureViews()
     }
 
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onSwipeWeek = nil
+        rowsForWeekOffset = nil
+        clearInteractiveWeekTransition(keepingTarget: false)
+    }
+
     func configure(rows: [SportsCareerStatistics.WeeklyDistanceRow]) {
-        hostingView.isHidden = false
+        self.rows = rows
+        pageContainerView.isHidden = false
+        weekPanGestureRecognizer.isEnabled = true
         loadingView.hide()
-        hostingView.setContent(CareerWeeklyDistanceChart(rows: rows))
+        clearInteractiveWeekTransition(keepingTarget: false)
+        installPageView(makeWeekPageView(rows: rows))
     }
 
     func configureLoading() {
-        hostingView.isHidden = true
+        pageContainerView.isHidden = true
+        weekPanGestureRecognizer.isEnabled = false
+        clearInteractiveWeekTransition(keepingTarget: false)
         loadingView.show()
     }
 
@@ -2449,14 +2633,177 @@ private final class CareerWeeklyChartCell: UICollectionViewCell {
         contentView.layer.cornerRadius = 8
         contentView.layer.masksToBounds = true
 
-        contentView.addSubview(hostingView)
+        pageContainerView.clipsToBounds = true
+
+        contentView.addSubview(pageContainerView)
         contentView.addSubview(loadingView)
-        hostingView.snp.makeConstraints { make in
+        contentView.addGestureRecognizer(weekPanGestureRecognizer)
+
+        pageContainerView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
         loadingView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
+    }
+
+    private func makeWeekPageView(rows: [SportsCareerStatistics.WeeklyDistanceRow]) -> UIView {
+        let hostingView = CareerChartHostingView()
+        hostingView.setContent(CareerWeeklyDistanceChart(rows: rows))
+        return hostingView
+    }
+
+    private func installPageView(_ pageView: UIView) {
+        pageContentView?.removeFromSuperview()
+        pageContentView = pageView
+        pageContainerView.addSubview(pageView)
+        pageView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === weekPanGestureRecognizer else {
+            return true
+        }
+
+        let velocity = weekPanGestureRecognizer.velocity(in: contentView)
+        return abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func handleWeekPan(_ gestureRecognizer: UIPanGestureRecognizer) {
+        switch gestureRecognizer.state {
+        case .began:
+            pageContainerView.layoutIfNeeded()
+        case .changed:
+            updateInteractiveWeekTransition(translationX: gestureRecognizer.translation(in: contentView).x)
+        case .ended:
+            finishInteractiveWeekTransition(
+                translationX: gestureRecognizer.translation(in: contentView).x,
+                velocityX: gestureRecognizer.velocity(in: contentView).x
+            )
+        case .cancelled, .failed:
+            cancelInteractiveWeekTransition()
+        default:
+            break
+        }
+    }
+
+    private func updateInteractiveWeekTransition(translationX: CGFloat) {
+        let width = max(pageContainerView.bounds.width, 1)
+        guard abs(translationX) > 1 else {
+            pageContentView?.transform = .identity
+            interactiveTargetContentView?.transform = .identity
+            return
+        }
+
+        let offset = translationX < 0 ? 1 : -1
+        prepareInteractiveWeekTransitionIfNeeded(offset: offset)
+
+        let clampedTranslationX = min(max(translationX, -width), width)
+        guard let targetContentView = interactiveTargetContentView else {
+            pageContentView?.transform = CGAffineTransform(translationX: clampedTranslationX * 0.18, y: 0)
+            return
+        }
+
+        pageContentView?.transform = CGAffineTransform(translationX: clampedTranslationX, y: 0)
+        let incomingStartX = offset > 0 ? width : -width
+        targetContentView.transform = CGAffineTransform(
+            translationX: incomingStartX + clampedTranslationX,
+            y: 0
+        )
+    }
+
+    private func prepareInteractiveWeekTransitionIfNeeded(offset: Int) {
+        guard interactiveTargetOffset != offset else {
+            return
+        }
+
+        interactiveTargetContentView?.removeFromSuperview()
+        interactiveTargetContentView = nil
+        interactiveTargetRows = nil
+        interactiveTargetOffset = nil
+
+        guard let rows = rowsForWeekOffset?(offset) else {
+            return
+        }
+
+        let targetContentView = makeWeekPageView(rows: rows)
+        pageContainerView.addSubview(targetContentView)
+        targetContentView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        pageContainerView.layoutIfNeeded()
+
+        let width = max(pageContainerView.bounds.width, 1)
+        targetContentView.transform = CGAffineTransform(translationX: offset > 0 ? width : -width, y: 0)
+        interactiveTargetContentView = targetContentView
+        interactiveTargetRows = rows
+        interactiveTargetOffset = offset
+    }
+
+    private func finishInteractiveWeekTransition(translationX: CGFloat, velocityX: CGFloat) {
+        guard let targetContentView = interactiveTargetContentView,
+              let targetOffset = interactiveTargetOffset else {
+            cancelInteractiveWeekTransition()
+            return
+        }
+
+        let width = max(pageContainerView.bounds.width, 1)
+        let progress = min(abs(translationX) / width, 1)
+        let shouldFinish = progress > 0.32 || abs(velocityX) > 520
+
+        if shouldFinish {
+            let outgoingX = targetOffset > 0 ? -width : width
+            let targetRows = interactiveTargetRows
+            UIView.animate(
+                withDuration: 0.24,
+                delay: 0,
+                options: [.curveEaseOut, .allowUserInteraction]
+            ) {
+                self.pageContentView?.transform = CGAffineTransform(translationX: outgoingX, y: 0)
+                targetContentView.transform = .identity
+            } completion: { _ in
+                self.rows = targetRows ?? self.rows
+                self.pageContentView?.removeFromSuperview()
+                self.pageContentView = targetContentView
+                self.clearInteractiveWeekTransition(keepingTarget: true)
+                self.onSwipeWeek?(targetOffset)
+            }
+        } else {
+            cancelInteractiveWeekTransition()
+        }
+    }
+
+    private func cancelInteractiveWeekTransition() {
+        guard let targetContentView = interactiveTargetContentView,
+              let targetOffset = interactiveTargetOffset else {
+            pageContentView?.transform = .identity
+            return
+        }
+
+        let width = max(pageContainerView.bounds.width, 1)
+        let targetX = targetOffset > 0 ? width : -width
+        UIView.animate(
+            withDuration: 0.2,
+            delay: 0,
+            options: [.curveEaseOut, .allowUserInteraction]
+        ) {
+            self.pageContentView?.transform = .identity
+            targetContentView.transform = CGAffineTransform(translationX: targetX, y: 0)
+        } completion: { _ in
+            self.clearInteractiveWeekTransition(keepingTarget: false)
+        }
+    }
+
+    private func clearInteractiveWeekTransition(keepingTarget: Bool) {
+        pageContentView?.transform = .identity
+        if !keepingTarget {
+            interactiveTargetContentView?.removeFromSuperview()
+        }
+        interactiveTargetContentView = nil
+        interactiveTargetRows = nil
+        interactiveTargetOffset = nil
     }
 }
 

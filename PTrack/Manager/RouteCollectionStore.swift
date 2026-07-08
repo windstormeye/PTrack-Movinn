@@ -34,6 +34,21 @@ final class RouteCollectionStore {
         return []
     }
 
+    func loadRoute(id: String) -> TrackedWorkout? {
+        let fileURL = routeFileURL(for: id)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+
+        do {
+            let data = try Data(contentsOf: fileURL)
+            return try JSONDecoder().decode(TrackedWorkout.self, from: data)
+        } catch {
+            print("PTrack Route Collection: failed to decode route cache file \(fileURL.lastPathComponent): \(error)")
+            return nil
+        }
+    }
+
     @discardableResult
     func append(_ workout: TrackedWorkout) -> [TrackedWorkout] {
         append([workout])

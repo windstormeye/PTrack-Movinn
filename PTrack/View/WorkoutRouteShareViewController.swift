@@ -964,8 +964,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         view.backgroundColor = AppColors.sharePageBackground
         scrollView.backgroundColor = AppColors.sharePageBackground
         contentView.backgroundColor = AppColors.sharePageBackground
-        bottomControlsView.effect = UIBlurEffect(style: .systemThinMaterial)
-        bottomControlsView.contentView.backgroundColor = AppColors.sharePageBackground.withAlphaComponent(0.82)
+        bottomControlsView.effect = nil
+        bottomControlsView.backgroundColor = .clear
+        bottomControlsView.contentView.backgroundColor = .clear
         toolBarView.backgroundColor = AppColors.toolbarBackground
         resetBarButtonItem.tintColor = AppColors.solidForeground
         applySelectedCanvasColor()

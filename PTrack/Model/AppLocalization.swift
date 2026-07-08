@@ -29,6 +29,7 @@ enum AppLanguage: String, CaseIterable {
 
 enum AppTextKey: String {
     case all
+    case applyToAll
     case appearanceSettings
     case appearanceSystem
     case appLanguage
@@ -162,6 +163,15 @@ enum AppTextKey: String {
     case routeCollectionImporting
     case routeCollectionMergeSectionTitle
     case routeHeatmap
+    case heatmapShareMask
+    case heatmapShareMaskOpacity
+    case heatmapShareMonth
+    case heatmapShareNoRoutes
+    case heatmapSharePhoto
+    case heatmapShareSelectRouteForColor
+    case heatmapShareTitle
+    case heatmapShareWeek
+    case heatmapShareYear
     case routeLoading
     case routeMerge
     case routeMergeCompletedMessage
@@ -187,6 +197,7 @@ enum AppTextKey: String {
     case sportsCareerSummary
     case sportsCareerWeeklyData
     case sportsCareerWeekDistanceFormat
+    case sportsCareerWeekTitleWithRangeFormat
     case sportTypeCountSummary
     case sportTypeTimeSummary
     case sportsCareer
@@ -369,6 +380,7 @@ enum AppLocalization {
     private static let translations: [AppLanguage: [AppTextKey: String]] = [
         .chinese: [
             .all: "全部",
+            .applyToAll: "应用到全部",
             .appearanceSettings: "外观设置",
             .appearanceSystem: "跟随系统",
             .appLanguage: "App 语言",
@@ -502,6 +514,15 @@ enum AppLocalization {
             .routeCollectionImporting: "正在导入 GPX",
             .routeCollectionMergeSectionTitle: "合并",
             .routeHeatmap: "轨迹热图",
+            .heatmapShareMask: "遮罩",
+            .heatmapShareMaskOpacity: "遮罩透明度",
+            .heatmapShareMonth: "月",
+            .heatmapShareNoRoutes: "当前时间范围暂无轨迹",
+            .heatmapSharePhoto: "照片",
+            .heatmapShareSelectRouteForColor: "先选择一条轨迹",
+            .heatmapShareTitle: "分享轨迹合集",
+            .heatmapShareWeek: "周",
+            .heatmapShareYear: "年",
             .routeLoading: "正在加载轨迹",
             .routeMerge: "合并路线",
             .routeMergeCompletedMessage: "合并完成，可以去路线页面里查看。",
@@ -527,6 +548,7 @@ enum AppLocalization {
             .sportsCareerSummary: "总览",
             .sportsCareerWeeklyData: "本周",
             .sportsCareerWeekDistanceFormat: "第 %d 周\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "第 %d 周 · %@-%@",
             .sportTypeCountSummary: "不同运动类型的运动次数汇总",
             .sportTypeTimeSummary: "运动时间汇总",
             .sportsCareer: "运动生涯",
@@ -587,6 +609,7 @@ enum AppLocalization {
         ],
         .japanese: [
             .all: "すべて",
+            .applyToAll: "すべてに適用",
             .appearanceSettings: "外観設定",
             .appearanceSystem: "システムに合わせる",
             .appLanguage: "アプリの言語",
@@ -720,6 +743,15 @@ enum AppLocalization {
             .routeCollectionImporting: "GPX を読み込み中",
             .routeCollectionMergeSectionTitle: "結合",
             .routeHeatmap: "軌跡ヒートマップ",
+            .heatmapShareMask: "マスク",
+            .heatmapShareMaskOpacity: "マスクの濃さ",
+            .heatmapShareMonth: "月",
+            .heatmapShareNoRoutes: "この期間にはルートがありません",
+            .heatmapSharePhoto: "写真",
+            .heatmapShareSelectRouteForColor: "先にルートを選択してください",
+            .heatmapShareTitle: "ルート集を共有",
+            .heatmapShareWeek: "週",
+            .heatmapShareYear: "年",
             .routeLoading: "ルートを読み込み中",
             .routeMerge: "ルートを結合",
             .routeMergeCompletedMessage: "結合が完了しました。ルート画面で確認できます。",
@@ -745,6 +777,7 @@ enum AppLocalization {
             .sportsCareerSummary: "概要",
             .sportsCareerWeeklyData: "今週",
             .sportsCareerWeekDistanceFormat: "%d週目\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "%d週目 · %@-%@",
             .sportTypeCountSummary: "種目別ワークアウト回数",
             .sportTypeTimeSummary: "ワークアウト時間の集計",
             .sportsCareer: "運動履歴",
@@ -805,6 +838,7 @@ enum AppLocalization {
         ],
         .korean: [
             .all: "전체",
+            .applyToAll: "전체에 적용",
             .appearanceSettings: "화면 모드",
             .appearanceSystem: "시스템 설정 따르기",
             .appLanguage: "앱 언어",
@@ -938,6 +972,15 @@ enum AppLocalization {
             .routeCollectionImporting: "GPX 가져오는 중",
             .routeCollectionMergeSectionTitle: "병합",
             .routeHeatmap: "경로 히트맵",
+            .heatmapShareMask: "마스크",
+            .heatmapShareMaskOpacity: "마스크 투명도",
+            .heatmapShareMonth: "월",
+            .heatmapShareNoRoutes: "현재 기간에 경로가 없습니다",
+            .heatmapSharePhoto: "사진",
+            .heatmapShareSelectRouteForColor: "먼저 경로를 선택하세요",
+            .heatmapShareTitle: "경로 모음 공유",
+            .heatmapShareWeek: "주",
+            .heatmapShareYear: "년",
             .routeLoading: "경로 불러오는 중",
             .routeMerge: "경로 병합",
             .routeMergeCompletedMessage: "병합이 완료되었습니다. 경로 화면에서 확인할 수 있어요.",
@@ -963,6 +1006,7 @@ enum AppLocalization {
             .sportsCareerSummary: "요약",
             .sportsCareerWeeklyData: "이번 주",
             .sportsCareerWeekDistanceFormat: "%d주차\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "%d주차 · %@-%@",
             .sportTypeCountSummary: "운동 유형별 횟수 요약",
             .sportTypeTimeSummary: "운동 시간 요약",
             .sportsCareer: "운동 경력",
@@ -1023,6 +1067,7 @@ enum AppLocalization {
         ],
         .english: [
             .all: "All",
+            .applyToAll: "Apply to All",
             .appearanceSettings: "Appearance",
             .appearanceSystem: "Follow System",
             .appLanguage: "App Language",
@@ -1156,6 +1201,15 @@ enum AppLocalization {
             .routeCollectionImporting: "Importing GPX",
             .routeCollectionMergeSectionTitle: "Merged",
             .routeHeatmap: "Route Heatmap",
+            .heatmapShareMask: "Mask",
+            .heatmapShareMaskOpacity: "Mask Opacity",
+            .heatmapShareMonth: "Month",
+            .heatmapShareNoRoutes: "No routes in this range",
+            .heatmapSharePhoto: "Photo",
+            .heatmapShareSelectRouteForColor: "Select a route first",
+            .heatmapShareTitle: "Share Route Collection",
+            .heatmapShareWeek: "Week",
+            .heatmapShareYear: "Year",
             .routeLoading: "Loading Route",
             .routeMerge: "Merge Routes",
             .routeMergeCompletedMessage: "The route has been merged. You can view it on the Routes page.",
@@ -1181,6 +1235,7 @@ enum AppLocalization {
             .sportsCareerSummary: "Summary",
             .sportsCareerWeeklyData: "This Week",
             .sportsCareerWeekDistanceFormat: "Week %d\n%.1f km",
+            .sportsCareerWeekTitleWithRangeFormat: "Week %d · %@-%@",
             .sportTypeCountSummary: "Workout Count by Type",
             .sportTypeTimeSummary: "Workout Time Summary",
             .sportsCareer: "Sports Career",
