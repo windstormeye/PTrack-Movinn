@@ -15,7 +15,9 @@ import UIKit
 class ViewController: UIViewController {
     private enum DefaultsKey {
         static let healthHistoricalBackfillCompleted = "studio.pj.PTrack.health.historicalBackfillCompleted"
+        static let healthHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.health.historicalBackfillCacheCommitCompleted"
         static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
+        static let stravaHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.strava.historicalBackfillCacheCommitCompleted"
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
@@ -40,6 +42,7 @@ class ViewController: UIViewController {
     private var pendingWorkouts: [TrackedWorkout] = []
     private var pendingFlushWorkItem: DispatchWorkItem?
     private var pendingCacheSaveWorkItem: DispatchWorkItem?
+    private var cacheSaveCompletionHandlers: [() -> Void] = []
     private var dirtyCacheWorkoutIDs = Set<String>()
     private var deletedCacheWorkoutIDs = Set<String>()
     private var isCacheSaveInProgress = false
@@ -1901,7 +1904,7 @@ class ViewController: UIViewController {
                     self.scheduleCacheSave(delay: 0)
                     print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
                 }
-                self.markStravaHistoricalBackfillCompletedIfNeeded(
+                self.markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
                     after: startDate,
                     didCompleteWithoutActivityFailures: importResult.didCompleteWithoutActivityFailures
                 )
@@ -1946,7 +1949,7 @@ class ViewController: UIViewController {
     }
 
     private func latestStravaStartDateForIncrementalSync() -> Date? {
-        guard UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) else {
+        guard !shouldRunStravaHistoricalBackfill() else {
             print("PTrack Strava: historical backfill not completed; requesting full activity history")
             return nil
         }
@@ -1959,18 +1962,34 @@ class ViewController: UIViewController {
         return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
     }
 
-    private func markStravaHistoricalBackfillCompletedIfNeeded(
+    private func shouldRunStravaHistoricalBackfill() -> Bool {
+        UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) == false
+            || UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) == false
+    }
+
+    private func markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
         after startDate: Date?,
         didCompleteWithoutActivityFailures: Bool
     ) {
         guard startDate == nil,
-              didCompleteWithoutActivityFailures,
-              !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) else {
+              didCompleteWithoutActivityFailures else {
+            return
+        }
+
+        runAfterPendingCacheSave { [weak self] in
+            self?.markStravaHistoricalBackfillCompleted()
+        }
+    }
+
+    private func markStravaHistoricalBackfillCompleted() {
+        guard !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
+                || !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) else {
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
-        print("PTrack Strava: historical backfill marked completed")
+        UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
+        print("PTrack Strava: historical backfill marked completed after cache save")
     }
 
     private static func debugDateString(_ date: Date?) -> String {
@@ -1985,7 +2004,7 @@ class ViewController: UIViewController {
         let cachedIDs = knownWorkoutIDs
         let staleWorkouts = workouts.filter(\.needsHealthDataRefresh)
         let staleWorkoutIDs = Set(staleWorkouts.map(\.id))
-        let shouldBackfillHistory = !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted)
+        let shouldBackfillHistory = shouldRunHealthHistoricalBackfill()
         let queryStartDate = shouldBackfillHistory
             ? nil
             : staleWorkouts.map(\.startDate).min() ?? workouts.map(\.startDate).max()
@@ -2018,6 +2037,11 @@ class ViewController: UIViewController {
                 }
             }
         )
+    }
+
+    private func shouldRunHealthHistoricalBackfill() -> Bool {
+        UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) == false
+            || UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted) == false
     }
 
     private func upsertTrackedWorkout(_ workout: TrackedWorkout) {
@@ -2298,6 +2322,7 @@ class ViewController: UIViewController {
         let dirtyWorkoutIDs = dirtyCacheWorkoutIDs
         let deletedWorkoutIDs = deletedCacheWorkoutIDs
         guard !dirtyWorkoutIDs.isEmpty || !deletedWorkoutIDs.isEmpty else {
+            runCacheSaveCompletionHandlersIfReady()
             return
         }
 
@@ -2335,9 +2360,34 @@ class ViewController: UIViewController {
 
                 if shouldScheduleNextSave {
                     self.scheduleCacheSave(delay: 0)
+                } else if didSave {
+                    self.runCacheSaveCompletionHandlersIfReady()
                 }
             }
         }
+    }
+
+    private func runAfterPendingCacheSave(_ handler: @escaping () -> Void) {
+        guard isCacheSaveInProgress || !dirtyCacheWorkoutIDs.isEmpty || !deletedCacheWorkoutIDs.isEmpty else {
+            handler()
+            return
+        }
+
+        cacheSaveCompletionHandlers.append(handler)
+        scheduleCacheSave(delay: 0)
+    }
+
+    private func runCacheSaveCompletionHandlersIfReady() {
+        guard !isCacheSaveInProgress,
+              dirtyCacheWorkoutIDs.isEmpty,
+              deletedCacheWorkoutIDs.isEmpty,
+              !cacheSaveCompletionHandlers.isEmpty else {
+            return
+        }
+
+        let handlers = cacheSaveCompletionHandlers
+        cacheSaveCompletionHandlers.removeAll()
+        handlers.forEach { $0() }
     }
 
     private func restoreUncommittedCacheChanges(
@@ -2383,7 +2433,7 @@ class ViewController: UIViewController {
             print(
                 "PTrack HealthKit: route query completed, loaded routes: \(loadResult.trackedWorkoutCount), route failures: \(loadResult.failedRouteLoadCount)"
             )
-            markHealthHistoricalBackfillCompletedIfNeeded(
+            markHealthHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
                 didRunHistoricalBackfill: didRunHistoricalBackfill,
                 didCompleteWithoutRouteFailures: loadResult.didCompleteWithoutRouteFailures
             )
@@ -2404,18 +2454,29 @@ class ViewController: UIViewController {
         runPendingStravaSyncAfterHealthIfNeeded()
     }
 
-    private func markHealthHistoricalBackfillCompletedIfNeeded(
+    private func markHealthHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
         didRunHistoricalBackfill: Bool,
         didCompleteWithoutRouteFailures: Bool
     ) {
         guard didRunHistoricalBackfill,
-              didCompleteWithoutRouteFailures,
-              !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) else {
+              didCompleteWithoutRouteFailures else {
+            return
+        }
+
+        runAfterPendingCacheSave { [weak self] in
+            self?.markHealthHistoricalBackfillCompleted()
+        }
+    }
+
+    private func markHealthHistoricalBackfillCompleted() {
+        guard !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted)
+                || !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted) else {
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.healthHistoricalBackfillCompleted)
-        print("PTrack HealthKit: historical backfill marked completed")
+        UserDefaults.standard.set(true, forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted)
+        print("PTrack HealthKit: historical backfill marked completed after cache save")
     }
 
     private func showHeatmap() {
