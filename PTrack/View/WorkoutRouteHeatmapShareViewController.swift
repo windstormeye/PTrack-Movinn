@@ -870,7 +870,7 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
                     && item.startDate >= interval.start
                     && item.startDate < interval.end
             }
-            .sorted { $0.startDate < $1.startDate }
+            .sorted { $0.startDate > $1.startDate }
     }
 
     private func dateIntervalForCurrentScope() -> DateInterval? {
