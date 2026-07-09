@@ -34,10 +34,13 @@ final class ProPaywallViewController: UIViewController {
     private let termsButton = UIButton(type: .system)
 
     private var productLoadTask: Task<Void, Never>?
+    private var codeRedemptionTask: Task<Void, Never>?
     private var purchaseTask: Task<Void, Never>?
     private var restoreTask: Task<Void, Never>?
+    private var isRedeemingCode = false
     private var isPurchasing = false
     private var isRestoring = false
+    private var hasCompletedProFlow = false
 
     init(onPurchaseCompleted: (() -> Void)? = nil) {
         self.onPurchaseCompleted = onPurchaseCompleted
@@ -54,6 +57,7 @@ final class ProPaywallViewController: UIViewController {
     deinit {
         NotificationCenter.default.removeObserver(self)
         productLoadTask?.cancel()
+        codeRedemptionTask?.cancel()
         purchaseTask?.cancel()
         restoreTask?.cancel()
     }
@@ -336,7 +340,7 @@ final class ProPaywallViewController: UIViewController {
         configuration.attributedTitle = attributedTitle
         purchaseButton.configuration = configuration
         purchaseButton.isEnabled = true
-        purchaseButton.isUserInteractionEnabled = !isPurchasing && !isRestoring
+        purchaseButton.isUserInteractionEnabled = !isRedeemingCode && !isPurchasing && !isRestoring
     }
 
     private func prepareSubscription() {
@@ -353,6 +357,12 @@ final class ProPaywallViewController: UIViewController {
         updateLinkButtonsEnabledState()
     }
 
+    private func setCodeRedemptionInProgress(_ isInProgress: Bool) {
+        isRedeemingCode = isInProgress
+        updatePurchaseButton()
+        updateLinkButtonsEnabledState()
+    }
+
     private func setRestoreInProgress(_ isInProgress: Bool) {
         isRestoring = isInProgress
         updatePurchaseButton()
@@ -360,7 +370,7 @@ final class ProPaywallViewController: UIViewController {
     }
 
     private func updateLinkButtonsEnabledState() {
-        let isEnabled = !isPurchasing && !isRestoring
+        let isEnabled = !isRedeemingCode && !isPurchasing && !isRestoring
         codeRedemptionButton.isEnabled = isEnabled
         privacyButton.isEnabled = isEnabled
         restoreButton.isEnabled = isEnabled
@@ -370,6 +380,11 @@ final class ProPaywallViewController: UIViewController {
     }
 
     private func completeProFlow(with message: String) {
+        guard !hasCompletedProFlow else {
+            return
+        }
+
+        hasCompletedProFlow = true
         Toast.show(message, in: view)
         dismiss(animated: true) { [onPurchaseCompleted] in
             onPurchaseCompleted?()
@@ -401,11 +416,36 @@ final class ProPaywallViewController: UIViewController {
     }
 
     @objc private func handleCodeRedemption() {
-        guard !isPurchasing, !isRestoring else {
+        guard !isRedeemingCode, !isPurchasing, !isRestoring,
+              let windowScene = view.window?.windowScene else {
             return
         }
 
-        SKPaymentQueue.default().presentCodeRedemptionSheet()
+        setCodeRedemptionInProgress(true)
+        codeRedemptionTask?.cancel()
+        codeRedemptionTask = Task { @MainActor [weak self] in
+            do {
+                try await AppStore.presentOfferCodeRedeemSheet(in: windowScene)
+                let isProUser = await ProSubscriptionManager.shared.refreshAccess()
+                guard let self, !Task.isCancelled else {
+                    return
+                }
+
+                codeRedemptionTask = nil
+                setCodeRedemptionInProgress(false)
+                if isProUser {
+                    completeProFlow(with: AppLocalization.text(.proPurchaseSuccess))
+                }
+            } catch {
+                guard let self, !Task.isCancelled else {
+                    return
+                }
+
+                codeRedemptionTask = nil
+                setCodeRedemptionInProgress(false)
+                presentErrorAlert(error)
+            }
+        }
     }
 
     @objc private func handlePurchase() {
@@ -486,6 +526,14 @@ final class ProPaywallViewController: UIViewController {
 
     @objc private func handleProSubscriptionDidChange() {
         updatePurchaseButton()
+        guard ProSubscriptionManager.shared.isProUser,
+              !isRedeemingCode,
+              !isPurchasing,
+              !isRestoring else {
+            return
+        }
+
+        completeProFlow(with: AppLocalization.text(.proPurchaseSuccess))
     }
 }
 
