@@ -1766,6 +1766,7 @@ class ViewController: UIViewController {
 
                 switch result {
                 case .success(.settingsRequired):
+                    self.store.markAuthorizationVerified()
                     self.loadAuthorizedHealthWorkouts(showsLoadingIndicator: showsLoadingIndicator)
                 case .success(.canRequest), .failure:
                     self.updateHeaderReadAuthorizationState()
@@ -2659,9 +2660,8 @@ class ViewController: UIViewController {
                 case .success(.canRequest):
                     self.requestHealthAuthorizationAndLoadWorkouts()
                 case .success(.settingsRequired):
-                    self.presentHealthAuthorizationSettingsAlert()
-                    self.updateHeaderReadAuthorizationState()
-                    self.updateEmptyDataSourceVisibility()
+                    self.store.markAuthorizationVerified()
+                    self.loadAuthorizedHealthWorkouts()
                 case .failure(let error):
                     self.presentHealthAuthorizationError(error)
                     self.updateHeaderReadAuthorizationState()
