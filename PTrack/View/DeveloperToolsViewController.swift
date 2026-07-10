@@ -10,6 +10,7 @@ import UIKit
 
 final class DeveloperToolsViewController: UITableViewController {
     private enum Section: Int, CaseIterable {
+        case homeData
         case proAccess
     }
 
@@ -46,6 +47,7 @@ final class DeveloperToolsViewController: UITableViewController {
     }
 
     private let cellReuseIdentifier = "DeveloperToolCell"
+    private let homeEmptyDataSwitch = UISwitch()
     private let proMockSwitch = UISwitch()
 
     init() {
@@ -70,6 +72,8 @@ final class DeveloperToolsViewController: UITableViewController {
     private func configureViews() {
         view.backgroundColor = .systemGroupedBackground
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: cellReuseIdentifier)
+        homeEmptyDataSwitch.onTintColor = AppColors.movinnGreen
+        homeEmptyDataSwitch.addTarget(self, action: #selector(handleHomeEmptyDataSwitchValueChanged), for: .valueChanged)
         proMockSwitch.onTintColor = AppColors.movinnGreen
         proMockSwitch.addTarget(self, action: #selector(handleProMockSwitchValueChanged), for: .valueChanged)
         navigationItem.rightBarButtonItem = UIBarButtonItem(
@@ -116,12 +120,18 @@ final class DeveloperToolsViewController: UITableViewController {
         tableView.reloadSections(IndexSet(integer: Section.proAccess.rawValue), with: .automatic)
     }
 
+    @objc private func handleHomeEmptyDataSwitchValueChanged() {
+        HomeEmptyDataDebugStore.setEnabled(homeEmptyDataSwitch.isOn)
+    }
+
     override func numberOfSections(in tableView: UITableView) -> Int {
         Section.allCases.count
     }
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         switch Section.allCases[section] {
+        case .homeData:
+            return 1
         case .proAccess:
             return 1 + ProAccessOption.allCases.count
         }
@@ -129,6 +139,8 @@ final class DeveloperToolsViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch Section.allCases[section] {
+        case .homeData:
+            return AppLocalization.text(.debugHomeDataSimulation)
         case .proAccess:
             return AppLocalization.text(.debugProAccessSimulation)
         }
@@ -140,6 +152,17 @@ final class DeveloperToolsViewController: UITableViewController {
     ) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: cellReuseIdentifier, for: indexPath)
         switch Section.allCases[indexPath.section] {
+        case .homeData:
+            var content = cell.defaultContentConfiguration()
+            content.text = AppLocalization.text(.debugSimulateHomeEmptyData)
+            content.image = UIImage(systemName: "rectangle.stack.badge.minus")
+            content.imageProperties.tintColor = AppColors.movinnGreen
+            cell.contentConfiguration = content
+            cell.accessoryType = .none
+            cell.selectionStyle = .default
+            homeEmptyDataSwitch.isOn = HomeEmptyDataDebugStore.isEnabled
+            cell.accessoryView = homeEmptyDataSwitch
+            cell.tintColor = AppColors.movinnGreen
         case .proAccess:
             if indexPath.row == 0 {
                 var content = cell.defaultContentConfiguration()
@@ -178,6 +201,9 @@ final class DeveloperToolsViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         switch Section.allCases[indexPath.section] {
+        case .homeData:
+            homeEmptyDataSwitch.setOn(!homeEmptyDataSwitch.isOn, animated: true)
+            handleHomeEmptyDataSwitchValueChanged()
         case .proAccess:
             if indexPath.row == 0 {
                 proMockSwitch.setOn(!proMockSwitch.isOn, animated: true)
@@ -193,6 +219,22 @@ final class DeveloperToolsViewController: UITableViewController {
             ProSubscriptionManager.shared.setDebugProAccessOverride(option.isProUser)
             tableView.reloadSections(IndexSet(integer: indexPath.section), with: .automatic)
         }
+    }
+}
+
+enum HomeEmptyDataDebugStore {
+    private static let isEnabledKey = "studio.pj.PTrack.debug.simulateHomeEmptyData"
+
+    static var isEnabled: Bool {
+        UserDefaults.standard.bool(forKey: isEnabledKey)
+    }
+
+    static func setEnabled(_ isEnabled: Bool) {
+        guard self.isEnabled != isEnabled else {
+            return
+        }
+
+        UserDefaults.standard.set(isEnabled, forKey: isEnabledKey)
     }
 }
 #endif

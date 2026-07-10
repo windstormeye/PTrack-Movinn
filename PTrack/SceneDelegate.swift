@@ -10,6 +10,7 @@ import UIKit
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     var window: UIWindow?
+    private var shouldCheckForUpdateOnNextActivation = true
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
@@ -42,6 +43,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneDidBecomeActive(_ scene: UIScene) {
         RouteCollectionCloudSyncCoordinator.shared.startIfEnabled()
         notifyPendingSharedRoutesDidChangeIfNeeded()
+        AppUpdateManager.shared.resumePendingPresentation(in: window)
+        if shouldCheckForUpdateOnNextActivation {
+            shouldCheckForUpdateOnNextActivation = false
+            AppUpdateManager.shared.checkAutomatically(in: window)
+        }
+        AppReviewPromptManager.shared.resumePendingRequest()
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
@@ -59,6 +66,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
+        shouldCheckForUpdateOnNextActivation = true
         // Called as the scene transitions from the foreground to the background.
         // Use this method to save data, release shared resources, and store enough scene-specific state information
         // to restore the scene back to its current state.

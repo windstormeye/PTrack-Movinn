@@ -22,7 +22,8 @@ enum GPXRouteExporterError: LocalizedError {
 enum GPXRouteExporter {
     nonisolated static func data(
         routeName: String,
-        coordinates routeCoordinates: [RouteCoordinate]
+        coordinates routeCoordinates: [RouteCoordinate],
+        appMetadata: GPXRouteAppMetadata? = nil
     ) throws -> Data {
         let coordinates = routeCoordinates.filter { coordinate in
             coordinate.latitude.isFinite
@@ -34,15 +35,30 @@ enum GPXRouteExporter {
         }
 
         let timestampFormatter = ISO8601DateFormatter()
-        timestampFormatter.formatOptions = [.withInternetDateTime]
+        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         let routeName = escapedXML(routeName)
+        let encodedAppMetadata: String?
+        if let appMetadata {
+            encodedAppMetadata = try JSONEncoder().encode(appMetadata).base64EncodedString()
+        } else {
+            encodedAppMetadata = nil
+        }
+        let appMetadataXML = encodedAppMetadata.map { encodedValue in
+            """
+                <extensions>
+                  <movinn:routeData encoding="base64">\(encodedValue)</movinn:routeData>
+                </extensions>
+
+            """
+        } ?? ""
         var xml = """
         <?xml version="1.0" encoding="UTF-8"?>
-        <gpx version="1.1" creator="Movinn" xmlns="http://www.topografix.com/GPX/1/1">
+        <gpx version="1.1" creator="Movinn" xmlns="http://www.topografix.com/GPX/1/1" xmlns:movinn="\(GPXRouteAppMetadata.namespaceURI)">
           <metadata>
             <name>\(routeName)</name>
             <time>\(timestampFormatter.string(from: Date()))</time>
+        \(appMetadataXML)
           </metadata>
           <trk>
             <name>\(routeName)</name>
@@ -82,6 +98,27 @@ enum GPXRouteExporter {
         )
     }
 
+    nonisolated static func iCloudDocumentData(for workout: TrackedWorkout) throws -> Data {
+        let routeCollectionID = workout.routeCollectionIdentifier ?? workout.id
+        let routeName = workout.routeCollectionTitle ?? "Movinn Route"
+        let metadata = GPXRouteAppMetadata(
+            routeCollectionID: routeCollectionID,
+            title: routeName,
+            sourceName: workout.routeCollectionSourceName,
+            importedAt: workout.routeCollectionImportedAt,
+            distanceMeters: workout.distanceMeters,
+            durationSeconds: workout.durationSeconds,
+            startDate: workout.startDate,
+            activityTypeRawValue: workout.activityTypeRawValue,
+            additionalMetadata: workout.metadata?.filter { !TrackedWorkout.routeCollectionCanonicalMetadataKeys.contains($0.key) }
+        )
+        return try data(
+            routeName: routeName,
+            coordinates: workout.routeDetailCoordinates,
+            appMetadata: metadata
+        )
+    }
+
     nonisolated static func suggestedFileName(routeName: String) -> String {
         let routeName = sanitizedFileName(routeName)
         return "\(routeName).gpx"
@@ -92,12 +129,29 @@ enum GPXRouteExporter {
     }
 
     nonisolated private static func escapedXML(_ value: String) -> String {
-        value
+        var xmlSafeValue = ""
+        for scalar in value.unicodeScalars where isValidXMLScalar(scalar) {
+            xmlSafeValue.append(contentsOf: String(scalar))
+        }
+
+        return xmlSafeValue
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&apos;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    nonisolated private static func isValidXMLScalar(_ scalar: UnicodeScalar) -> Bool {
+        switch scalar.value {
+        case 0x9, 0xA, 0xD,
+             0x20...0xD7FF,
+             0xE000...0xFFFD,
+             0x10000...0x10FFFF:
+            return true
+        default:
+            return false
+        }
     }
 
     nonisolated private static func coordinateValueString(_ value: Double) -> String {

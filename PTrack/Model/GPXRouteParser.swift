@@ -6,11 +6,80 @@
 //
 
 import CoreLocation
+import CryptoKit
 import Foundation
 
-struct GPXParsedRoute {
+nonisolated struct GPXRouteAppMetadata: Codable {
+    static let namespaceURI = "https://movinn.app/xmlschemas/gpx/1"
+
+    let schemaVersion: Int
+    let routeCollectionID: String
+    let title: String?
+    let sourceName: String?
+    let importedAt: Date?
+    let distanceMeters: Double?
+    let durationSeconds: TimeInterval?
+    let startDate: Date?
+    let activityTypeRawValue: UInt?
+    let additionalMetadata: [String: TrackedMetadataValue]?
+
+    nonisolated init(
+        schemaVersion: Int = 1,
+        routeCollectionID: String,
+        title: String?,
+        sourceName: String?,
+        importedAt: Date?,
+        distanceMeters: Double?,
+        durationSeconds: TimeInterval?,
+        startDate: Date?,
+        activityTypeRawValue: UInt?,
+        additionalMetadata: [String: TrackedMetadataValue]?
+    ) {
+        self.schemaVersion = schemaVersion
+        self.routeCollectionID = routeCollectionID
+        self.title = title
+        self.sourceName = sourceName
+        self.importedAt = importedAt
+        self.distanceMeters = distanceMeters
+        self.durationSeconds = durationSeconds
+        self.startDate = startDate
+        self.activityTypeRawValue = activityTypeRawValue
+        self.additionalMetadata = additionalMetadata
+    }
+}
+
+nonisolated struct GPXParsedRoute {
     let title: String?
     let coordinates: [RouteCoordinate]
+    let appMetadata: GPXRouteAppMetadata?
+}
+
+enum GPXRouteIdentity {
+    nonisolated static func routeCollectionID(embeddedID: String?, documentData: Data) -> String {
+        validatedEmbeddedID(embeddedID) ?? "gpx-\(sha256Hex(documentData).prefix(32))"
+    }
+
+    nonisolated static func validatedEmbeddedID(_ candidate: String?) -> String? {
+        guard let candidate else {
+            return nil
+        }
+        let value = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.utf8.count <= 120 else {
+            return nil
+        }
+
+        let allowedCharacters = CharacterSet(
+            charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_."
+        )
+        guard value.unicodeScalars.allSatisfy(allowedCharacters.contains) else {
+            return nil
+        }
+        return value
+    }
+
+    private nonisolated static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 enum GPXRouteParserError: LocalizedError {
@@ -32,8 +101,9 @@ enum GPXRouteParser {
         let delegate = GPXRouteParserDelegate(fallbackDate: fallbackDate)
         let parser = XMLParser(data: data)
         parser.delegate = delegate
+        parser.shouldProcessNamespaces = true
 
-        guard parser.parse() else {
+        guard parser.parse(), !delegate.hasInvalidAppMetadata else {
             throw GPXRouteParserError.invalidDocument
         }
 
@@ -44,7 +114,8 @@ enum GPXRouteParser {
 
         return GPXParsedRoute(
             title: delegate.title,
-            coordinates: coordinates
+            coordinates: coordinates,
+            appMetadata: delegate.appMetadata
         )
     }
 }
@@ -66,6 +137,8 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
     private var parsedPoints: [MutablePoint] = []
 
     private(set) var title: String?
+    private(set) var appMetadata: GPXRouteAppMetadata?
+    private(set) var hasInvalidAppMetadata = false
 
     init(fallbackDate: Date) {
         self.fallbackDate = fallbackDate
@@ -119,16 +192,37 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
 
         switch name {
         case "name":
-            if title == nil, currentPoint == nil, !value.isEmpty {
+            let parentElement = elementStack.dropLast().last
+            if title == nil,
+               currentPoint == nil,
+               !value.isEmpty,
+               parentElement == "metadata" || parentElement == "trk" || parentElement == "rte" {
                 title = value
             }
         case "ele":
-            if let altitude = Double(value) {
+            if let altitude = Double(value), altitude.isFinite {
                 currentPoint?.altitude = altitude
             }
         case "time":
             if let date = date(from: value) {
                 currentPoint?.timestamp = date
+            }
+        case "routedata":
+            let ancestors = elementStack.dropLast()
+            let isMetadataExtension = ancestors.count >= 2
+                && ancestors[ancestors.index(ancestors.endIndex, offsetBy: -2)] == "metadata"
+                && ancestors.last == "extensions"
+            guard namespaceURI == GPXRouteAppMetadata.namespaceURI, isMetadataExtension else {
+                break
+            }
+
+            if let data = Data(base64Encoded: value, options: [.ignoreUnknownCharacters]),
+               let metadata = try? JSONDecoder().decode(GPXRouteAppMetadata.self, from: data),
+               metadata.schemaVersion == 1,
+               GPXRouteIdentity.validatedEmbeddedID(metadata.routeCollectionID) != nil {
+                appMetadata = metadata
+            } else {
+                hasInvalidAppMetadata = true
             }
         case "trkpt", "rtept":
             if let currentPoint {
@@ -157,7 +251,7 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
     }
 
     private func normalizedElementName(_ name: String) -> String {
-        name.split(separator: ":").last.map(String.init) ?? name
+        (name.split(separator: ":").last.map(String.init) ?? name).lowercased()
     }
 
     private func date(from string: String) -> Date? {
