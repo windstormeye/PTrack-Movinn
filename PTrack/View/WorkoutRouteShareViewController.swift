@@ -574,6 +574,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         collageView.onLayoutChanged = { [weak self] layout in
             self?.selectedCollageLayout = layout
         }
+        collageView.onTileSwap = { [weak self] sourceIndex, destinationIndex in
+            self?.swapCollagePhotos(from: sourceIndex, to: destinationIndex)
+        }
         collageView.onCanvasTap = { [weak self] in
             self?.clearPreviewSelections()
         }
@@ -1562,11 +1565,12 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         let playbackToken = UUID()
         collageLivePhotoPlaybackToken = playbackToken
-        let scale = max(UIScreen.main.scale, 2)
-        let targetWidth = max(previewView.bounds.width, 720) * scale
-        let targetHeight = max(previewView.bounds.height, 900) * scale
         var pendingCount = sources.count
+        var nextSourceIndex = 0
+        var activeRequestCount = 0
         var playbacks: [Int: RouteShareCollageLivePhotoPlayback] = [:]
+        var completedTileIndices = Set<Int>()
+        let maximumConcurrentRequests = 2
 
         let options = PHLivePhotoRequestOptions()
         options.deliveryMode = .highQualityFormat
@@ -1610,46 +1614,94 @@ final class WorkoutRouteShareViewController: UIViewController {
             self.collageView.playLivePhotos(orderedPlaybacks, playbackDuration: playbackDuration)
         }
 
-        sources.forEach { source in
-            let requestID = PHImageManager.default().requestLivePhoto(
-                for: source.asset,
-                targetSize: CGSize(width: targetWidth, height: targetHeight),
-                contentMode: .aspectFill,
-                options: options
-            ) { [weak self] livePhoto, info in
-                guard let self,
-                      !self.hasPreparedForPermanentDismissal,
-                      collageLivePhotoPlaybackToken == playbackToken else {
-                    return
-                }
+        func finishSource(
+            _ source: (tileIndex: Int, item: SharePhotoItem, asset: PHAsset),
+            livePhoto: PHLivePhoto?,
+            previewInfo: CollageLivePhotoPreviewInfo?
+        ) {
+            guard !hasPreparedForPermanentDismissal,
+                  collageLivePhotoPlaybackToken == playbackToken,
+                  completedTileIndices.insert(source.tileIndex).inserted else {
+                return
+            }
 
-                if (info?[PHImageCancelledKey] as? Bool) == true
-                    || (info?[PHImageResultIsDegradedKey] as? Bool) == true {
-                    return
-                }
+            activeRequestCount = max(activeRequestCount - 1, 0)
+            completePlayback(source, livePhoto, previewInfo)
+            startPendingRequests()
+        }
 
-                guard let livePhoto else {
+        func startPendingRequests() {
+            guard !hasPreparedForPermanentDismissal,
+                  collageLivePhotoPlaybackToken == playbackToken else {
+                return
+            }
+
+            while activeRequestCount < maximumConcurrentRequests,
+                  nextSourceIndex < sources.count {
+                let source = sources[nextSourceIndex]
+                nextSourceIndex += 1
+                activeRequestCount += 1
+                let targetSize = collageLivePhotoTargetSize(for: source.tileIndex)
+                let requestID = PHImageManager.default().requestLivePhoto(
+                    for: source.asset,
+                    targetSize: targetSize,
+                    contentMode: .aspectFill,
+                    options: options
+                ) { [weak self] livePhoto, info in
                     DispatchQueue.main.async {
-                        completePlayback(source, nil, nil)
-                    }
-                    return
-                }
-
-                let task = Task { [weak self] in
-                    let previewInfo = await Self.previewInfo(forLivePhotoAsset: source.asset)
-                    await MainActor.run {
                         guard let self,
                               !self.hasPreparedForPermanentDismissal,
                               self.collageLivePhotoPlaybackToken == playbackToken else {
                             return
                         }
-                        completePlayback(source, livePhoto, previewInfo)
+
+                        if (info?[PHImageResultIsDegradedKey] as? Bool) == true {
+                            return
+                        }
+                        if (info?[PHImageCancelledKey] as? Bool) == true || livePhoto == nil {
+                            finishSource(source, livePhoto: nil, previewInfo: nil)
+                            return
+                        }
+                        guard let livePhoto else {
+                            finishSource(source, livePhoto: nil, previewInfo: nil)
+                            return
+                        }
+
+                        let task = Task { [weak self] in
+                            let previewInfo = await Self.previewInfo(
+                                forLivePhotoAsset: source.asset,
+                                maximumSize: targetSize
+                            )
+                            await MainActor.run {
+                                guard let self,
+                                      !self.hasPreparedForPermanentDismissal,
+                                      self.collageLivePhotoPlaybackToken == playbackToken else {
+                                    return
+                                }
+                                finishSource(source, livePhoto: livePhoto, previewInfo: previewInfo)
+                            }
+                        }
+                        self.collageLivePhotoFrameTasks.append(task)
                     }
                 }
-                collageLivePhotoFrameTasks.append(task)
+                collageLivePhotoRequestIDs.append(requestID)
             }
-            collageLivePhotoRequestIDs.append(requestID)
         }
+
+        startPendingRequests()
+    }
+
+    private func collageLivePhotoTargetSize(for tileIndex: Int) -> CGSize {
+        collageView.layoutIfNeeded()
+        let tileSize = collageView.renderInfoForTile(at: tileIndex)?.tileFrame.size
+            ?? previewView.bounds.size
+        let scale = max(UIScreen.main.scale, 2)
+        let minimumLength: CGFloat = 320
+        let maximumLength: CGFloat = 1_600
+        return CGSize(
+            width: min(max(tileSize.width * scale, minimumLength), maximumLength),
+            height: min(max(tileSize.height * scale, minimumLength), maximumLength)
+        )
     }
 
     private func cancelCollageLivePhotoRequest() {
@@ -1670,7 +1722,10 @@ final class WorkoutRouteShareViewController: UIViewController {
         asset.duration > 0.2 ? asset.duration : defaultLivePhotoPreviewDuration
     }
 
-    nonisolated private static func previewInfo(forLivePhotoAsset asset: PHAsset) async -> CollageLivePhotoPreviewInfo {
+    nonisolated private static func previewInfo(
+        forLivePhotoAsset asset: PHAsset,
+        maximumSize: CGSize
+    ) async -> CollageLivePhotoPreviewInfo {
         guard let pairedVideoResource = pairedVideoResource(for: asset) else {
             return CollageLivePhotoPreviewInfo(
                 freezeImage: nil,
@@ -1697,6 +1752,7 @@ final class WorkoutRouteShareViewController: UIViewController {
                 : fallbackLivePhotoPreviewDuration(for: asset)
             let generator = AVAssetImageGenerator(asset: videoAsset)
             generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = maximumSize
             let frameTimeSeconds = max(resolvedDuration - 0.05, 0)
             let frameTime = CMTime(seconds: frameTimeSeconds, preferredTimescale: 600)
             let cgImage = try generator.copyCGImage(at: frameTime, actualTime: nil)
@@ -1849,7 +1905,10 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func collageSlotCount() -> Int {
-        min(max(collagePhotoIndices.count, 2), 4)
+        min(
+            max(collagePhotoIndices.count, 2),
+            RouteShareCollageLayout.maximumPhotoCount
+        )
     }
 
     private func collageLayoutForCurrentStyle(photoCount: Int) -> RouteShareCollageLayout? {
@@ -2017,7 +2076,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         if let existingIndex = proposedIndices.firstIndex(of: index) {
             proposedIndices.remove(at: existingIndex)
-        } else if proposedIndices.count < 4 {
+        } else if proposedIndices.count < RouteShareCollageLayout.maximumPhotoCount {
             proposedIndices.append(index)
         } else {
             proposedIndices.removeFirst()
@@ -2049,6 +2108,20 @@ final class WorkoutRouteShareViewController: UIViewController {
             proposedIndices[slotIndex] = photoIndex
         }
         return proposedIndices
+    }
+
+    private func swapCollagePhotos(from sourceIndex: Int, to destinationIndex: Int) {
+        guard collagePhotoIndices.indices.contains(sourceIndex),
+              collagePhotoIndices.indices.contains(destinationIndex),
+              sourceIndex != destinationIndex else {
+            return
+        }
+
+        collagePhotoIndices.swapAt(sourceIndex, destinationIndex)
+        cancelCollageLivePhotoRequest()
+        collageView.stopLivePhotoPlayback()
+        representedPreviewPhotoID = nil
+        updatePreviewPhoto()
     }
 
     @objc private func cycleCollageLayout() {
@@ -3173,26 +3246,53 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         selectedPreviewModule = nil
         updatePreviewSelection()
-        showExportLoading(text: AppLocalization.text(.photoSaving))
+        showExportLoading(text: AppLocalization.text(.photoSaving), progress: 0)
+        DispatchQueue.main.async { [weak self] in
+            self?.renderAndSavePreviewImage()
+        }
+    }
+
+    private func renderAndSavePreviewImage() {
         view.layoutIfNeeded()
-        let image = RouteSharePreviewRenderer.image(
+        RouteSharePreviewRenderer.renderImage(
             from: previewView,
             setSelectionChromeHidden: setSelectionChromeHidden,
-            restoreSelection: updatePreviewSelection
-        )
-        RouteSharePhotoLibrarySaver.saveImage(image) { [weak self] result in
-            guard let self else {
-                return
-            }
+            restoreSelection: updatePreviewSelection,
+            progressHandler: { [weak self] progress in
+                self?.exportLoadingView.update(progress: progress * 0.82)
+            },
+            completion: { [weak self] renderResult in
+                guard let self else {
+                    return
+                }
 
-            hideExportLoading()
-            switch result {
-            case .success:
-                showSavedToPhotosAlert()
-            case .failure(let error):
-                showAlert(title: AppLocalization.text(.share), message: error.localizedDescription)
+                switch renderResult {
+                case .success(let image):
+                    exportLoadingView.update(progress: 0.84)
+                    RouteSharePhotoLibrarySaver.saveImage(image) { [weak self] result in
+                        guard let self else {
+                            return
+                        }
+
+                        switch result {
+                        case .success:
+                            exportLoadingView.update(progress: 1)
+                            hideExportLoading()
+                            showSavedToPhotosAlert()
+                        case .failure(let error):
+                            hideExportLoading()
+                            showAlert(
+                                title: AppLocalization.text(.share),
+                                message: error.localizedDescription
+                            )
+                        }
+                    }
+                case .failure(let error):
+                    hideExportLoading()
+                    showAlert(title: AppLocalization.text(.share), message: error.localizedDescription)
+                }
             }
-        }
+        )
     }
 
     private func selectedLivePhotoExportSource() -> LivePhotoExportSource? {
@@ -3220,9 +3320,12 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func exportAndShareLivePhoto(source: LivePhotoExportSource) {
         selectedPreviewModule = nil
         updatePreviewSelection()
-        showExportLoading(text: AppLocalization.text(.livePhotoSaving))
+        showExportLoading(text: AppLocalization.text(.livePhotoSaving), progress: 0)
         view.layoutIfNeeded()
         let outputSize = RouteSharePreviewRenderer.outputPixelSize(for: previewView.bounds.size)
+        let progressHandler: (Double) -> Void = { [weak self] progress in
+            self?.exportLoadingView.update(progress: progress * 0.94)
+        }
         let completion: (Result<RouteShareLivePhotoExport, Error>) -> Void = { [weak self] result in
             guard let self else {
                 return
@@ -3230,17 +3333,20 @@ final class WorkoutRouteShareViewController: UIViewController {
 
             switch result {
             case .success(let livePhotoExport):
+                exportLoadingView.update(progress: 0.97)
                 RouteSharePhotoLibrarySaver.saveLivePhoto(livePhotoExport) { [weak self] saveResult in
                     guard let self else {
                         return
                     }
 
-                    hideExportLoading()
                     try? FileManager.default.removeItem(at: livePhotoExport.directoryURL)
                     switch saveResult {
                     case .success:
+                        exportLoadingView.update(progress: 1)
+                        hideExportLoading()
                         showSavedToPhotosAlert()
                     case .failure(let error):
+                        hideExportLoading()
                         showAlert(title: AppLocalization.text(.share), message: detailedErrorMessage(error))
                     }
                 }
@@ -3272,6 +3378,7 @@ final class WorkoutRouteShareViewController: UIViewController {
                 backgroundTransform: currentBackgroundRenderTransform(outputSize: outputSize),
                 canvasColor: selectedCanvasColor,
                 includesAudio: true,
+                progressHandler: progressHandler,
                 completion: completion
             )
         case .collage(let sources):
@@ -3296,6 +3403,7 @@ final class WorkoutRouteShareViewController: UIViewController {
                     ),
                     canvasColor: selectedCanvasColor,
                     includesAudio: true,
+                    progressHandler: progressHandler,
                     completion: completion
                 )
                 return
@@ -3328,6 +3436,7 @@ final class WorkoutRouteShareViewController: UIViewController {
                 outputSize: outputSize,
                 canvasColor: selectedCanvasColor,
                 includesAudio: true,
+                progressHandler: progressHandler,
                 completion: completion
             )
         }
@@ -3494,16 +3603,17 @@ final class WorkoutRouteShareViewController: UIViewController {
         return path
     }
 
-    private func showExportLoading(text: String) {
+    private func showExportLoading(text: String, progress: Double? = nil) {
         exportBarButtonItem.isEnabled = false
         resetBarButtonItem.isEnabled = false
-        exportLoadingView.show(text: text, in: view)
+        exportLoadingView.show(text: text, progress: progress, in: view)
     }
 
     private func hideExportLoading() {
-        exportBarButtonItem.isEnabled = true
-        resetBarButtonItem.isEnabled = true
-        exportLoadingView.hide()
+        exportLoadingView.hide { [weak self] in
+            self?.exportBarButtonItem.isEnabled = true
+            self?.resetBarButtonItem.isEnabled = true
+        }
     }
 
     private func showSavedToPhotosAlert() {

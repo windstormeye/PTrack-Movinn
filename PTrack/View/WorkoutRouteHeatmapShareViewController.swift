@@ -113,7 +113,6 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     private enum Layout {
         static let navigationBackgroundHeight: CGFloat = 124
         static let previewHorizontalInset: CGFloat = 16
-        static let previewCornerRadius: CGFloat = 18
         static let previewTopInset: CGFloat = 22
         static let previewSideInset: CGFloat = 18
         static let previewHeaderHeight: CGFloat = 72
@@ -386,9 +385,7 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
     }
 
     private func configurePreviewView() {
-        previewView.layer.cornerRadius = Layout.previewCornerRadius
-        previewView.layer.cornerCurve = .continuous
-        previewView.layer.masksToBounds = true
+        previewView.clipsToBounds = true
         previewView.backgroundColor = .black
 
         gradientView.apply(style: .paywallBackground, traitCollection: UITraitCollection(userInterfaceStyle: .dark))
@@ -1294,46 +1291,76 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         selectedWorkoutID = nil
         routeCollectionView.reloadData()
         configureToolButtons()
-        showExportLoading()
+        showExportLoading(progress: 0)
+        DispatchQueue.main.async { [weak self] in
+            self?.renderAndSavePreviewImage(previouslySelectedWorkoutID: previouslySelectedWorkoutID)
+        }
+    }
+
+    private func renderAndSavePreviewImage(previouslySelectedWorkoutID: String?) {
         view.layoutIfNeeded()
         previewView.layoutIfNeeded()
 
-        let image = RouteSharePreviewRenderer.image(
+        RouteSharePreviewRenderer.renderImage(
             from: previewView,
             setSelectionChromeHidden: { _ in },
-            restoreSelection: {}
+            restoreSelection: {},
+            progressHandler: { [weak self] progress in
+                self?.exportLoadingView.update(progress: progress * 0.82)
+            },
+            completion: { [weak self] renderResult in
+                guard let self else {
+                    return
+                }
+
+                switch renderResult {
+                case .success(let image):
+                    guard allowsPhotoLibrarySaving else {
+                        exportLoadingView.update(progress: 1)
+                        hideExportLoading()
+                        restoreSelectedWorkoutAfterExport(previouslySelectedWorkoutID)
+                        presentPreviewImageShareSheet(image)
+                        return
+                    }
+
+                    exportLoadingView.update(progress: 0.84)
+                    RouteSharePhotoLibrarySaver.saveImage(image) { [weak self] result in
+                        guard let self else {
+                            return
+                        }
+
+                        restoreSelectedWorkoutAfterExport(previouslySelectedWorkoutID)
+                        switch result {
+                        case .success:
+                            exportLoadingView.update(progress: 1)
+                            hideExportLoading()
+                            showSavedToPhotosAlert()
+                        case .failure(let error):
+                            hideExportLoading()
+                            showAlert(
+                                title: AppLocalization.text(.share),
+                                message: detailedErrorMessage(error)
+                            )
+                        }
+                    }
+                case .failure(let error):
+                    restoreSelectedWorkoutAfterExport(previouslySelectedWorkoutID)
+                    hideExportLoading()
+                    showAlert(
+                        title: AppLocalization.text(.share),
+                        message: detailedErrorMessage(error)
+                    )
+                }
+            }
         )
+    }
 
-        guard allowsPhotoLibrarySaving else {
-            hideExportLoading()
-            selectedWorkoutID = previouslySelectedWorkoutID.flatMap { id in
-                displayedRouteItems.contains { $0.id == id } ? id : nil
-            }
-            routeCollectionView.reloadData()
-            configureToolButtons()
-            presentPreviewImageShareSheet(image)
-            return
+    private func restoreSelectedWorkoutAfterExport(_ workoutID: String?) {
+        selectedWorkoutID = workoutID.flatMap { id in
+            displayedRouteItems.contains { $0.id == id } ? id : nil
         }
-
-        RouteSharePhotoLibrarySaver.saveImage(image) { [weak self] result in
-            guard let self else {
-                return
-            }
-
-            hideExportLoading()
-            selectedWorkoutID = previouslySelectedWorkoutID.flatMap { id in
-                self.displayedRouteItems.contains { $0.id == id } ? id : nil
-            }
-            routeCollectionView.reloadData()
-            configureToolButtons()
-
-            switch result {
-            case .success:
-                showSavedToPhotosAlert()
-            case .failure(let error):
-                showAlert(title: AppLocalization.text(.share), message: detailedErrorMessage(error))
-            }
-        }
+        routeCollectionView.reloadData()
+        configureToolButtons()
     }
 
     private func presentPreviewImageShareSheet(_ image: UIImage) {
@@ -1342,16 +1369,21 @@ final class WorkoutRouteHeatmapShareViewController: UIViewController {
         present(activityViewController, animated: true)
     }
 
-    private func showExportLoading() {
+    private func showExportLoading(progress: Double? = nil) {
         exportBarButtonItem.isEnabled = false
         resetBarButtonItem.isEnabled = false
-        exportLoadingView.show(text: AppLocalization.text(.photoSaving), in: view)
+        exportLoadingView.show(
+            text: AppLocalization.text(.photoSaving),
+            progress: progress,
+            in: view
+        )
     }
 
     private func hideExportLoading() {
-        exportBarButtonItem.isEnabled = true
-        resetBarButtonItem.isEnabled = true
-        exportLoadingView.hide()
+        exportLoadingView.hide { [weak self] in
+            self?.exportBarButtonItem.isEnabled = true
+            self?.resetBarButtonItem.isEnabled = true
+        }
     }
 
     private func showSavedToPhotosAlert() {
