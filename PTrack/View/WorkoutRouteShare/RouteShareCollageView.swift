@@ -27,6 +27,8 @@ struct RouteShareCollageTileRenderInfo {
 }
 
 struct RouteShareCollageLayout: Equatable {
+    static let maximumPhotoCount = 9
+
     enum Kind: String {
         case twoVertical
         case twoHorizontal
@@ -37,6 +39,21 @@ struct RouteShareCollageLayout: Equatable {
         case fourGrid
         case fourVertical
         case fourHorizontal
+        case fiveHeroTop
+        case fiveHeroLeft
+        case fiveRows
+        case sixPortraitGrid
+        case sixLandscapeGrid
+        case sixCascade
+        case sevenHeroTop
+        case sevenHeroLeft
+        case sevenBalanced
+        case eightPortraitGrid
+        case eightLandscapeGrid
+        case eightBalanced
+        case nineGrid
+        case nineHeroTop
+        case nineHeroLeft
 
         var photoCount: Int {
             switch self {
@@ -46,6 +63,16 @@ struct RouteShareCollageLayout: Equatable {
                 return 3
             case .fourGrid, .fourVertical, .fourHorizontal:
                 return 4
+            case .fiveHeroTop, .fiveHeroLeft, .fiveRows:
+                return 5
+            case .sixPortraitGrid, .sixLandscapeGrid, .sixCascade:
+                return 6
+            case .sevenHeroTop, .sevenHeroLeft, .sevenBalanced:
+                return 7
+            case .eightPortraitGrid, .eightLandscapeGrid, .eightBalanced:
+                return 8
+            case .nineGrid, .nineHeroTop, .nineHeroLeft:
+                return 9
             }
         }
     }
@@ -73,6 +100,36 @@ struct RouteShareCollageLayout: Equatable {
                 RouteShareCollageLayout(kind: .fourVertical, dividers: [0.25, 0.5, 0.75]),
                 RouteShareCollageLayout(kind: .fourHorizontal, dividers: [0.25, 0.5, 0.75])
             ]
+        case 5:
+            return [
+                RouteShareCollageLayout(kind: .fiveHeroTop, dividers: [0.42, 0.71]),
+                RouteShareCollageLayout(kind: .fiveHeroLeft, dividers: [0.44, 0.72]),
+                RouteShareCollageLayout(kind: .fiveRows, dividers: [0.5])
+            ]
+        case 6:
+            return [
+                RouteShareCollageLayout(kind: .sixPortraitGrid, dividers: [1.0 / 3.0, 2.0 / 3.0]),
+                RouteShareCollageLayout(kind: .sixLandscapeGrid, dividers: [0.5]),
+                RouteShareCollageLayout(kind: .sixCascade, dividers: [0.38, 0.68])
+            ]
+        case 7:
+            return [
+                RouteShareCollageLayout(kind: .sevenHeroTop, dividers: [0.4, 0.7]),
+                RouteShareCollageLayout(kind: .sevenHeroLeft, dividers: [0.44, 0.72]),
+                RouteShareCollageLayout(kind: .sevenBalanced, dividers: [0.3, 0.7])
+            ]
+        case 8:
+            return [
+                RouteShareCollageLayout(kind: .eightPortraitGrid, dividers: [0.25, 0.5, 0.75]),
+                RouteShareCollageLayout(kind: .eightLandscapeGrid, dividers: [0.5]),
+                RouteShareCollageLayout(kind: .eightBalanced, dividers: [0.34, 0.67])
+            ]
+        case 9:
+            return [
+                RouteShareCollageLayout(kind: .nineGrid, dividers: [1.0 / 3.0, 2.0 / 3.0]),
+                RouteShareCollageLayout(kind: .nineHeroTop, dividers: [0.42, 0.71]),
+                RouteShareCollageLayout(kind: .nineHeroLeft, dividers: [0.42, 0.71])
+            ]
         default:
             return []
         }
@@ -85,6 +142,7 @@ struct RouteShareCollageLayout: Equatable {
 
 final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     var onLayoutChanged: ((RouteShareCollageLayout) -> Void)?
+    var onTileSwap: ((_ sourceIndex: Int, _ destinationIndex: Int) -> Void)?
     var onCanvasTap: (() -> Void)?
     var onCropInteraction: (() -> Void)?
 
@@ -97,7 +155,9 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     private var layout = RouteShareCollageLayout(kind: .twoVertical, dividers: [0.5])
     private var items: [RouteSharePhotoItem] = []
     private var representedItemIDs: [String] = []
-    private var imageRequestIDs: [PHImageRequestID] = []
+    private var imageRequestIDs: [Int: PHImageRequestID] = [:]
+    private var imageRequestTokens: [Int: UUID] = [:]
+    private var imageRetryCounts: [String: Int] = [:]
     private var tileContainerViews: [UIView] = []
     private var tileImageViews: [UIImageView] = []
     private var tileMaskLayers: [CAShapeLayer] = []
@@ -113,16 +173,24 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     private var cropPanStartTranslation: CGPoint = .zero
     private var cropPinchStartScale: CGFloat = 1
     private var cropRotationStart: CGFloat = 0
+    private var tileReorderSourceIndex: Int?
+    private var tileReorderTargetIndex: Int?
+    private var tileReorderTouchOffset: CGPoint = .zero
+    private var tileReorderSnapshotView: UIView?
     private var isEditingChromeHidden = false
     private var canvasColor: UIColor = .white
     private let cropSelectionLayer = CAShapeLayer()
+    private let tileReorderTargetLayer = CAShapeLayer()
     private let dividerLayer = CAShapeLayer()
+    private let tileReorderImpactFeedback = UIImpactFeedbackGenerator(style: .medium)
+    private let tileReorderSelectionFeedback = UISelectionFeedbackGenerator()
     private weak var dividerPanGesture: UIPanGestureRecognizer?
     private weak var cropDoubleTapGesture: UITapGestureRecognizer?
     private weak var cropCancelTapGesture: UITapGestureRecognizer?
     private weak var cropPanGesture: UIPanGestureRecognizer?
     private weak var cropPinchGesture: UIPinchGestureRecognizer?
     private weak var cropRotationGesture: UIRotationGestureRecognizer?
+    private weak var tileReorderLongPressGesture: UILongPressGestureRecognizer?
     private var isDividerInteractionEnabled = true
 
     override init(frame: CGRect) {
@@ -146,10 +214,23 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     }
 
     func configure(items: [RouteSharePhotoItem], layout: RouteShareCollageLayout) {
-        let clampedItems = Array(items.prefix(4))
+        let clampedItems = Array(items.prefix(RouteShareCollageLayout.maximumPhotoCount))
         let itemIDs = clampedItems.map(\.id)
         let needsImageReload = itemIDs != representedItemIDs
         let slotCount = max(layout.kind.photoCount, clampedItems.count)
+        var reusableImagesByItemID: [String: UIImage] = [:]
+        if needsImageReload {
+            for (index, itemID) in representedItemIDs.enumerated()
+                where tileImageViews.indices.contains(index) {
+                if let image = tileImageViews[index].image {
+                    reusableImagesByItemID[itemID] = image
+                }
+            }
+        }
+
+        if needsImageReload {
+            resetTileReorderState()
+        }
 
         self.layout = layout
         self.items = clampedItems
@@ -163,18 +244,27 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
             stopLivePhotoPlayback()
             cancelImageRequests()
             representedItemIDs = itemIDs
+            imageRetryCounts.removeAll()
             clearTileImages()
+            for (index, itemID) in itemIDs.enumerated()
+                where tileImageViews.indices.contains(index) {
+                tileImageViews[index].image = reusableImagesByItemID[itemID]
+            }
             requestImages()
+        } else {
+            requestMissingImages()
         }
 
         updateLayoutPaths()
     }
 
     func clear() {
+        resetTileReorderState()
         cancelImageRequests()
         stopLivePhotoPlayback()
         items = []
         representedItemIDs = []
+        imageRetryCounts.removeAll()
         activeCropIndex = nil
         cropAdjustments.removeAll()
         clearTileImages()
@@ -193,8 +283,12 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     }
 
     func setCropSelectionChromeHidden(_ hidden: Bool) {
+        if hidden {
+            resetTileReorderState()
+        }
         isEditingChromeHidden = hidden
         cropSelectionLayer.isHidden = hidden
+        tileReorderTargetLayer.isHidden = hidden || tileReorderTargetIndex == nil
         updateDividerHandleFrames()
     }
 
@@ -215,11 +309,13 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
     }
 
     func clearCropSelection() {
+        resetTileReorderState()
         activeCropIndex = nil
         updateCropSelectionPath()
     }
 
     func resetCropAdjustments() {
+        resetTileReorderState()
         activeCropIndex = nil
         cropAdjustments.removeAll()
         tileImageViews.indices.forEach { index in
@@ -372,6 +468,12 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         cropSelectionLayer.lineDashPattern = [6, 4]
         layer.addSublayer(cropSelectionLayer)
 
+        tileReorderTargetLayer.fillColor = AppColors.movinnGreen.withAlphaComponent(0.14).cgColor
+        tileReorderTargetLayer.strokeColor = AppColors.movinnGreen.cgColor
+        tileReorderTargetLayer.lineWidth = 3
+        tileReorderTargetLayer.isHidden = true
+        layer.addSublayer(tileReorderTargetLayer)
+
         dividerLayer.fillColor = UIColor.clear.cgColor
         updateDividerColor()
         dividerLayer.lineWidth = 1.5
@@ -400,6 +502,17 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         cropPanGesture.delegate = self
         addGestureRecognizer(cropPanGesture)
         self.cropPanGesture = cropPanGesture
+
+        let tileReorderLongPressGesture = UILongPressGestureRecognizer(
+            target: self,
+            action: #selector(handleTileReorderLongPress(_:))
+        )
+        tileReorderLongPressGesture.minimumPressDuration = 0.32
+        tileReorderLongPressGesture.allowableMovement = 12
+        tileReorderLongPressGesture.delegate = self
+        addGestureRecognizer(tileReorderLongPressGesture)
+        self.tileReorderLongPressGesture = tileReorderLongPressGesture
+        cropPanGesture.require(toFail: tileReorderLongPressGesture)
 
         let cropPinchGesture = UIPinchGestureRecognizer(target: self, action: #selector(handleCropPinch(_:)))
         cropPinchGesture.delegate = self
@@ -457,6 +570,29 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
     private func requestImages() {
         for (index, item) in items.enumerated() {
+            guard tileImageViews.indices.contains(index) else {
+                continue
+            }
+
+            switch item {
+            case .uploaded(let image):
+                tileImageViews[index].image = image
+                updateImageFrame(at: index)
+                applyCropTransform(at: index)
+            case .routeMedia(let mediaItem):
+                requestImage(for: mediaItem.asset, at: index, representedID: item.id)
+            }
+        }
+    }
+
+    private func requestMissingImages() {
+        for (index, item) in items.enumerated() {
+            guard tileImageViews.indices.contains(index),
+                  tileImageViews[index].image == nil,
+                  imageRequestTokens[index] == nil else {
+                continue
+            }
+
             switch item {
             case .uploaded(let image):
                 tileImageViews[index].image = image
@@ -470,37 +606,120 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
     private func requestImage(for asset: PHAsset, at index: Int, representedID: String) {
         let scale = max(UIScreen.main.scale, 2)
-        let targetLength = max(bounds.width, bounds.height, 720) * scale
+        let paths = tilePaths(in: bounds)
+        let tileSize = paths.indices.contains(index) ? paths[index].bounds.size : bounds.size
+        let minimumTargetLength: CGFloat = 320
+        let maximumTargetLength: CGFloat = 2_048
+        let targetSize = CGSize(
+            width: min(max(tileSize.width * scale, minimumTargetLength), maximumTargetLength),
+            height: min(max(tileSize.height * scale, minimumTargetLength), maximumTargetLength)
+        )
         let options = PHImageRequestOptions()
         options.deliveryMode = .opportunistic
         options.resizeMode = .fast
         options.isNetworkAccessAllowed = true
 
+        let requestToken = UUID()
+        imageRequestTokens[index] = requestToken
         let requestID = PHImageManager.default().requestImage(
             for: asset,
-            targetSize: CGSize(width: targetLength, height: targetLength),
+            targetSize: targetSize,
             contentMode: .aspectFill,
             options: options
-        ) { [weak self] image, _ in
-            guard let self,
-                  representedItemIDs.indices.contains(index),
-                  representedItemIDs[index] == representedID,
-                  tileImageViews.indices.contains(index) else {
-                return
+        ) { [weak self] image, info in
+            DispatchQueue.main.async {
+                self?.handleImageResult(
+                    image,
+                    info: info,
+                    asset: asset,
+                    index: index,
+                    representedID: representedID,
+                    requestToken: requestToken
+                )
             }
+        }
+        if imageRequestTokens[index] == requestToken {
+            imageRequestIDs[index] = requestID
+        }
+    }
 
+    private func handleImageResult(
+        _ image: UIImage?,
+        info: [AnyHashable: Any]?,
+        asset: PHAsset,
+        index: Int,
+        representedID: String,
+        requestToken: UUID
+    ) {
+        guard imageRequestTokens[index] == requestToken,
+              representedItemIDs.indices.contains(index),
+              representedItemIDs[index] == representedID,
+              tileImageViews.indices.contains(index) else {
+            return
+        }
+
+        let wasCancelled = (info?[PHImageCancelledKey] as? Bool) == true
+        if wasCancelled {
+            finishImageRequest(at: index, requestToken: requestToken)
+            if tileImageViews[index].image == nil {
+                scheduleImageRetry(for: asset, at: index, representedID: representedID)
+            }
+            return
+        }
+
+        if let image {
             tileImageViews[index].image = image
             updateImageFrame(at: index)
             applyCropTransform(at: index)
         }
-        imageRequestIDs.append(requestID)
+
+        let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+        let requestError = info?[PHImageErrorKey] as? Error
+        guard requestError != nil || !isDegraded else {
+            return
+        }
+
+        finishImageRequest(at: index, requestToken: requestToken)
+        if image == nil, tileImageViews[index].image == nil {
+            scheduleImageRetry(for: asset, at: index, representedID: representedID)
+        }
+    }
+
+    private func finishImageRequest(at index: Int, requestToken: UUID) {
+        guard imageRequestTokens[index] == requestToken else {
+            return
+        }
+        imageRequestTokens.removeValue(forKey: index)
+        imageRequestIDs.removeValue(forKey: index)
+    }
+
+    private func scheduleImageRetry(for asset: PHAsset, at index: Int, representedID: String) {
+        let retryCount = imageRetryCounts[representedID, default: 0]
+        guard retryCount < 2 else {
+            return
+        }
+        imageRetryCounts[representedID] = retryCount + 1
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self,
+                  representedItemIDs.indices.contains(index),
+                  representedItemIDs[index] == representedID,
+                  tileImageViews.indices.contains(index),
+                  tileImageViews[index].image == nil,
+                  imageRequestTokens[index] == nil else {
+                return
+            }
+            requestImage(for: asset, at: index, representedID: representedID)
+        }
     }
 
     private func cancelImageRequests() {
-        imageRequestIDs.forEach { requestID in
+        let requestIDs = Array(imageRequestIDs.values)
+        imageRequestTokens.removeAll()
+        imageRequestIDs.removeAll()
+        requestIDs.forEach { requestID in
             PHImageManager.default().cancelImageRequest(requestID)
         }
-        imageRequestIDs.removeAll()
     }
 
     private func updateLayoutPaths() {
@@ -543,13 +762,15 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         dividerLayer.frame = bounds
         dividerLayer.path = dividerPath.cgPath
         updateCropSelectionPath(paths: paths)
+        updateTileReorderTargetPath(paths: paths)
         updateDividerHandleFrames()
 
         CATransaction.commit()
     }
 
     private func updateCropSelectionPath(paths: [UIBezierPath]? = nil) {
-        guard let activeCropIndex,
+        guard tileReorderSourceIndex == nil,
+              let activeCropIndex,
               items.indices.contains(activeCropIndex) else {
             cropSelectionLayer.path = nil
             return
@@ -742,9 +963,16 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         if !isEditingChromeHidden {
             layer.addSublayer(cropSelectionLayer)
         }
+        tileReorderTargetLayer.removeFromSuperlayer()
+        if !isEditingChromeHidden {
+            layer.addSublayer(tileReorderTargetLayer)
+        }
         dividerLayer.removeFromSuperlayer()
         layer.addSublayer(dividerLayer)
         dividerHandleViews.forEach(bringSubviewToFront)
+        if let tileReorderSnapshotView {
+            bringSubviewToFront(tileReorderSnapshotView)
+        }
     }
 
     private func updateDividerHandles(count: Int) {
@@ -806,7 +1034,14 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
     private func dividerHandleCenters() -> [CGPoint] {
         switch layout.kind {
-        case .twoVertical, .twoHorizontal, .twoDiagonal, .threeVertical, .threeHorizontal, .threeDiagonal, .fourVertical, .fourHorizontal:
+        case .twoVertical, .twoHorizontal, .twoDiagonal,
+             .threeVertical, .threeHorizontal, .threeDiagonal,
+             .fourVertical, .fourHorizontal,
+             .fiveHeroTop, .fiveHeroLeft, .fiveRows,
+             .sixPortraitGrid, .sixLandscapeGrid, .sixCascade,
+             .sevenHeroTop, .sevenHeroLeft, .sevenBalanced,
+             .eightPortraitGrid, .eightLandscapeGrid, .eightBalanced,
+             .nineGrid, .nineHeroTop, .nineHeroLeft:
             return adjustableDividers().compactMap(dividerHandleCenter)
         case .fourGrid:
             let xDivider = layout.dividers.first ?? 0.5
@@ -822,9 +1057,15 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
     private func dividerHandleCenter(for divider: CGFloat) -> CGPoint? {
         switch layout.kind {
-        case .twoVertical, .threeVertical, .fourVertical:
+        case .twoVertical, .threeVertical, .fourVertical,
+             .fiveHeroLeft, .sevenHeroLeft, .nineHeroLeft:
             return CGPoint(x: bounds.minX + bounds.width * divider, y: bounds.midY)
-        case .twoHorizontal, .threeHorizontal, .fourHorizontal:
+        case .twoHorizontal, .threeHorizontal, .fourHorizontal,
+             .fiveHeroTop, .fiveRows,
+             .sixPortraitGrid, .sixLandscapeGrid, .sixCascade,
+             .sevenHeroTop, .sevenBalanced,
+             .eightPortraitGrid, .eightLandscapeGrid, .eightBalanced,
+             .nineGrid, .nineHeroTop:
             return CGPoint(x: bounds.midX, y: bounds.minY + bounds.height * divider)
         case .twoDiagonal, .threeDiagonal:
             return diagonalSegment(in: bounds, constant: diagonalConstant(for: divider)).map { segment in
@@ -858,6 +1099,36 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
             return verticalPaths(in: rect, dividers: layout.dividers)
         case .fourHorizontal:
             return horizontalPaths(in: rect, dividers: layout.dividers)
+        case .fiveHeroTop:
+            return rowGroupPaths(in: rect, itemCounts: [1, 2, 2], dividers: layout.dividers)
+        case .fiveHeroLeft:
+            return columnGroupPaths(in: rect, itemCounts: [1, 2, 2], dividers: layout.dividers)
+        case .fiveRows:
+            return rowGroupPaths(in: rect, itemCounts: [2, 3], dividers: layout.dividers)
+        case .sixPortraitGrid:
+            return rowGroupPaths(in: rect, itemCounts: [2, 2, 2], dividers: layout.dividers)
+        case .sixLandscapeGrid:
+            return rowGroupPaths(in: rect, itemCounts: [3, 3], dividers: layout.dividers)
+        case .sixCascade:
+            return rowGroupPaths(in: rect, itemCounts: [1, 2, 3], dividers: layout.dividers)
+        case .sevenHeroTop:
+            return rowGroupPaths(in: rect, itemCounts: [1, 3, 3], dividers: layout.dividers)
+        case .sevenHeroLeft:
+            return columnGroupPaths(in: rect, itemCounts: [1, 3, 3], dividers: layout.dividers)
+        case .sevenBalanced:
+            return rowGroupPaths(in: rect, itemCounts: [2, 3, 2], dividers: layout.dividers)
+        case .eightPortraitGrid:
+            return rowGroupPaths(in: rect, itemCounts: [2, 2, 2, 2], dividers: layout.dividers)
+        case .eightLandscapeGrid:
+            return rowGroupPaths(in: rect, itemCounts: [4, 4], dividers: layout.dividers)
+        case .eightBalanced:
+            return rowGroupPaths(in: rect, itemCounts: [3, 2, 3], dividers: layout.dividers)
+        case .nineGrid:
+            return rowGroupPaths(in: rect, itemCounts: [3, 3, 3], dividers: layout.dividers)
+        case .nineHeroTop:
+            return rowGroupPaths(in: rect, itemCounts: [1, 4, 4], dividers: layout.dividers)
+        case .nineHeroLeft:
+            return columnGroupPaths(in: rect, itemCounts: [1, 4, 4], dividers: layout.dividers)
         }
     }
 
@@ -883,6 +1154,70 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
                 height: edges[index + 1] - edges[index]
             ))
         }
+    }
+
+    private func rowGroupPaths(
+        in rect: CGRect,
+        itemCounts: [Int],
+        dividers: [CGFloat]
+    ) -> [UIBezierPath] {
+        let rowEdges = sectionEdges(count: itemCounts.count, dividers: dividers).map {
+            rect.minY + rect.height * $0
+        }
+        var paths: [UIBezierPath] = []
+
+        for (rowIndex, itemCount) in itemCounts.enumerated() where itemCount > 0 {
+            let itemWidth = rect.width / CGFloat(itemCount)
+            for itemIndex in 0..<itemCount {
+                paths.append(UIBezierPath(rect: CGRect(
+                    x: rect.minX + CGFloat(itemIndex) * itemWidth,
+                    y: rowEdges[rowIndex],
+                    width: itemWidth,
+                    height: rowEdges[rowIndex + 1] - rowEdges[rowIndex]
+                )))
+            }
+        }
+
+        return paths
+    }
+
+    private func columnGroupPaths(
+        in rect: CGRect,
+        itemCounts: [Int],
+        dividers: [CGFloat]
+    ) -> [UIBezierPath] {
+        let columnEdges = sectionEdges(count: itemCounts.count, dividers: dividers).map {
+            rect.minX + rect.width * $0
+        }
+        var paths: [UIBezierPath] = []
+
+        for (columnIndex, itemCount) in itemCounts.enumerated() where itemCount > 0 {
+            let itemHeight = rect.height / CGFloat(itemCount)
+            for itemIndex in 0..<itemCount {
+                paths.append(UIBezierPath(rect: CGRect(
+                    x: columnEdges[columnIndex],
+                    y: rect.minY + CGFloat(itemIndex) * itemHeight,
+                    width: columnEdges[columnIndex + 1] - columnEdges[columnIndex],
+                    height: itemHeight
+                )))
+            }
+        }
+
+        return paths
+    }
+
+    private func sectionEdges(count: Int, dividers: [CGFloat]) -> [CGFloat] {
+        guard count > 1 else {
+            return [0, 1]
+        }
+
+        let resolvedDividers: [CGFloat]
+        if dividers.count == count - 1 {
+            resolvedDividers = sortedDividers(dividers)
+        } else {
+            resolvedDividers = (1..<count).map { CGFloat($0) / CGFloat(count) }
+        }
+        return [0] + resolvedDividers + [1]
     }
 
     private func gridFourPaths(in rect: CGRect, dividers: [CGFloat]) -> [UIBezierPath] {
@@ -1065,9 +1400,15 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         let distances: [(Int, CGFloat)] = adjustableDividers.enumerated().map { index, divider in
             let distance: CGFloat
             switch layout.kind {
-            case .twoVertical, .threeVertical, .fourVertical:
+            case .twoVertical, .threeVertical, .fourVertical,
+                 .fiveHeroLeft, .sevenHeroLeft, .nineHeroLeft:
                 distance = abs(point.x - bounds.minX - bounds.width * divider)
-            case .twoHorizontal, .threeHorizontal, .fourHorizontal:
+            case .twoHorizontal, .threeHorizontal, .fourHorizontal,
+                 .fiveHeroTop, .fiveRows,
+                 .sixPortraitGrid, .sixLandscapeGrid, .sixCascade,
+                 .sevenHeroTop, .sevenBalanced,
+                 .eightPortraitGrid, .eightLandscapeGrid, .eightBalanced,
+                 .nineGrid, .nineHeroTop:
                 distance = abs(point.y - bounds.minY - bounds.height * divider)
             case .twoDiagonal, .threeDiagonal:
                 let constant = diagonalConstant(for: divider)
@@ -1105,6 +1446,178 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
         let paths = tilePaths(in: bounds)
         return paths.indices.reversed().first { index in
             items.indices.contains(index) && paths[index].contains(point)
+        }
+    }
+
+    private func beginTileReorder(at location: CGPoint) {
+        guard tileReorderSourceIndex == nil,
+              let activeCropIndex,
+              tileIndex(at: location) == activeCropIndex,
+              tileContainerViews.indices.contains(activeCropIndex),
+              let snapshotView = tileContainerViews[activeCropIndex].snapshotView(afterScreenUpdates: false) else {
+            return
+        }
+
+        let sourceFrame = tileContainerViews[activeCropIndex].frame
+        tileReorderSourceIndex = activeCropIndex
+        tileReorderTargetIndex = nil
+        tileReorderTouchOffset = CGPoint(
+            x: location.x - sourceFrame.midX,
+            y: location.y - sourceFrame.midY
+        )
+        tileReorderSnapshotView = snapshotView
+
+        snapshotView.frame = sourceFrame
+        snapshotView.isUserInteractionEnabled = false
+        snapshotView.layer.shadowColor = UIColor.black.cgColor
+        snapshotView.layer.shadowOpacity = 0.28
+        snapshotView.layer.shadowRadius = 10
+        snapshotView.layer.shadowOffset = CGSize(width: 0, height: 4)
+        addSubview(snapshotView)
+        tileContainerViews[activeCropIndex].alpha = 0.22
+        cropSelectionLayer.path = nil
+        updateTileReorderTargetPath()
+        bringSubviewToFront(snapshotView)
+
+        tileReorderImpactFeedback.prepare()
+        tileReorderSelectionFeedback.prepare()
+        tileReorderImpactFeedback.impactOccurred()
+        UIView.animate(
+            withDuration: 0.16,
+            delay: 0,
+            options: [.beginFromCurrentState, .curveEaseOut]
+        ) {
+            snapshotView.transform = CGAffineTransform(scaleX: 1.04, y: 1.04)
+        }
+        onCropInteraction?()
+    }
+
+    private func updateTileReorder(at location: CGPoint) {
+        guard let sourceIndex = tileReorderSourceIndex,
+              let snapshotView = tileReorderSnapshotView else {
+            return
+        }
+
+        snapshotView.center = CGPoint(
+            x: location.x - tileReorderTouchOffset.x,
+            y: location.y - tileReorderTouchOffset.y
+        )
+        let hoveredIndex = tileIndex(at: location)
+        let targetIndex = hoveredIndex == sourceIndex ? nil : hoveredIndex
+        if targetIndex != tileReorderTargetIndex {
+            tileReorderTargetIndex = targetIndex
+            updateTileReorderTargetPath()
+            if targetIndex != nil {
+                tileReorderSelectionFeedback.selectionChanged()
+                tileReorderSelectionFeedback.prepare()
+            }
+        }
+        bringSubviewToFront(snapshotView)
+    }
+
+    private func finishTileReorder(cancelled: Bool) {
+        guard let sourceIndex = tileReorderSourceIndex else {
+            resetTileReorderState()
+            return
+        }
+
+        let destinationIndex = cancelled ? nil : tileReorderTargetIndex
+        let paths = tilePaths(in: bounds)
+        let destinationFrame = destinationIndex.flatMap { index in
+            paths.indices.contains(index) ? paths[index].bounds : nil
+        }
+        guard let snapshotView = tileReorderSnapshotView else {
+            completeTileReorder(from: sourceIndex, to: destinationIndex)
+            return
+        }
+
+        let sourceFrame = paths.indices.contains(sourceIndex)
+            ? paths[sourceIndex].bounds
+            : tileContainerViews[sourceIndex].frame
+        let targetFrame = destinationFrame ?? sourceFrame
+        let scaleX = targetFrame.width / max(snapshotView.bounds.width, 1)
+        let scaleY = targetFrame.height / max(snapshotView.bounds.height, 1)
+
+        UIView.animate(
+            withDuration: 0.2,
+            delay: 0,
+            options: [.beginFromCurrentState, .curveEaseInOut]
+        ) {
+            snapshotView.center = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+            snapshotView.transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
+            snapshotView.alpha = destinationIndex == nil ? 1 : 0.72
+        } completion: { [weak self] _ in
+            guard let self, tileReorderSourceIndex == sourceIndex else {
+                return
+            }
+            completeTileReorder(from: sourceIndex, to: destinationIndex)
+        }
+    }
+
+    private func completeTileReorder(from sourceIndex: Int, to destinationIndex: Int?) {
+        resetTileReorderState()
+        guard let destinationIndex,
+              sourceIndex != destinationIndex,
+              items.indices.contains(sourceIndex),
+              items.indices.contains(destinationIndex) else {
+            updateCropSelectionPath()
+            return
+        }
+
+        activeCropIndex = destinationIndex
+        onTileSwap?(sourceIndex, destinationIndex)
+        updateCropSelectionPath()
+        tileReorderImpactFeedback.impactOccurred(intensity: 0.82)
+    }
+
+    private func resetTileReorderState() {
+        tileReorderSnapshotView?.layer.removeAllAnimations()
+        tileReorderSnapshotView?.removeFromSuperview()
+        tileReorderSnapshotView = nil
+        tileContainerViews.forEach { $0.alpha = 1 }
+        tileReorderSourceIndex = nil
+        tileReorderTargetIndex = nil
+        tileReorderTouchOffset = .zero
+        tileReorderTargetLayer.path = nil
+        tileReorderTargetLayer.isHidden = true
+    }
+
+    private func updateTileReorderTargetPath(paths: [UIBezierPath]? = nil) {
+        guard !isEditingChromeHidden,
+              let tileReorderTargetIndex else {
+            tileReorderTargetLayer.path = nil
+            tileReorderTargetLayer.isHidden = true
+            return
+        }
+
+        let resolvedPaths = paths ?? tilePaths(in: bounds)
+        guard resolvedPaths.indices.contains(tileReorderTargetIndex) else {
+            tileReorderTargetLayer.path = nil
+            tileReorderTargetLayer.isHidden = true
+            return
+        }
+
+        tileReorderTargetLayer.frame = bounds
+        tileReorderTargetLayer.path = insetPathForSelection(
+            resolvedPaths[tileReorderTargetIndex]
+        ).cgPath
+        tileReorderTargetLayer.isHidden = false
+        bringDividerChromeToFront()
+    }
+
+    @objc private func handleTileReorderLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        let location = recognizer.location(in: self)
+        switch recognizer.state {
+        case .began:
+            beginTileReorder(at: location)
+        case .changed:
+            updateTileReorder(at: location)
+        case .ended:
+            finishTileReorder(cancelled: false)
+        case .cancelled, .failed:
+            finishTileReorder(cancelled: true)
+        default:
+            break
         }
     }
 
@@ -1246,9 +1759,15 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
         let proposedDivider: CGFloat
         switch layout.kind {
-        case .twoVertical, .threeVertical, .fourVertical:
+        case .twoVertical, .threeVertical, .fourVertical,
+             .fiveHeroLeft, .sevenHeroLeft, .nineHeroLeft:
             proposedDivider = (location.x - bounds.minX) / max(bounds.width, 1)
-        case .twoHorizontal, .threeHorizontal, .fourHorizontal:
+        case .twoHorizontal, .threeHorizontal, .fourHorizontal,
+             .fiveHeroTop, .fiveRows,
+             .sixPortraitGrid, .sixLandscapeGrid, .sixCascade,
+             .sevenHeroTop, .sevenBalanced,
+             .eightPortraitGrid, .eightLandscapeGrid, .eightBalanced,
+             .nineGrid, .nineHeroTop:
             proposedDivider = (location.y - bounds.minY) / max(bounds.height, 1)
         case .twoDiagonal, .threeDiagonal:
             proposedDivider = divider(forDiagonalConstant: diagonalValue(for: location, in: bounds))
@@ -1301,6 +1820,15 @@ final class RouteShareCollageView: UIView, UIGestureRecognizerDelegate {
 
         if gestureRecognizer === cropPanGesture {
             guard let activeCropIndex else {
+                return false
+            }
+            return dividerHandleIndex(at: location) == nil
+                && tileIndex(at: location) == activeCropIndex
+        }
+
+        if gestureRecognizer === tileReorderLongPressGesture {
+            guard tileReorderSourceIndex == nil,
+                  let activeCropIndex else {
                 return false
             }
             return dividerHandleIndex(at: location) == nil

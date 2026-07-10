@@ -57,6 +57,10 @@ final class WorkoutRouteReplayRulerView: UIControl {
         setProgress(progress, sendsAction: sendsAction, allowsPeakCrossing: false)
     }
 
+    func setIndicatorVisible(_ isVisible: Bool) {
+        indicatorView.isHidden = !isVisible
+    }
+
     private func setProgress(
         _ progress: CGFloat,
         sendsAction: Bool,

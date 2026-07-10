@@ -328,12 +328,10 @@ final class HealthWorkoutStore {
                 return
             }
 
+            self.markAuthorizationVerified()
             let workouts = ((samples as? [HKWorkout]) ?? [])
                 .filter { !excludedIDs.contains($0.uuid.uuidString) }
             print("PTrack HealthKit: found \(workouts.count) new cycling/hiking/walking/running workouts")
-            if !workouts.isEmpty {
-                self.markAuthorizationVerified()
-            }
             if !workouts.isEmpty {
                 onNewDataDetected?(workouts.count)
             }

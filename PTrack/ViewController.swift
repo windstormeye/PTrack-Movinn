@@ -15,13 +15,23 @@ import UIKit
 class ViewController: UIViewController {
     private enum DefaultsKey {
         static let healthHistoricalBackfillCompleted = "studio.pj.PTrack.health.historicalBackfillCompleted"
+        static let healthHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.health.historicalBackfillCacheCommitCompleted"
         static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
+        static let stravaHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.strava.historicalBackfillCacheCommitCompleted"
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
     private enum RouteBookPanelDetent {
         case minimum
         case medium
+    }
+
+    private struct RouteBookRouteMatch {
+        let progress: CGFloat
+        let coordinate: CLLocationCoordinate2D
+        let routeDistance: CLLocationDistance
+        let segmentIndex: Int
+        let segmentProjection: Double
     }
 
     private struct PendingStravaSyncRequest {
@@ -40,6 +50,7 @@ class ViewController: UIViewController {
     private var pendingWorkouts: [TrackedWorkout] = []
     private var pendingFlushWorkItem: DispatchWorkItem?
     private var pendingCacheSaveWorkItem: DispatchWorkItem?
+    private var cacheSaveCompletionHandlers: [() -> Void] = []
     private var dirtyCacheWorkoutIDs = Set<String>()
     private var deletedCacheWorkoutIDs = Set<String>()
     private var isCacheSaveInProgress = false
@@ -112,6 +123,9 @@ class ViewController: UIViewController {
     private let routeBookPanelMinimumPrimaryContentScale: CGFloat = 0.88
     private let routeBookLocateButtonPanelSpacing: CGFloat = 18
     private let routeBookMaximumElevationSampleCount = 120
+    private let routeBookBaseMatchDistance: CLLocationDistance = 100
+    private let routeBookMaximumLocationAccuracy: CLLocationAccuracy = 200
+    private let routeBookMaximumLocationAge: TimeInterval = 120
     private var hasPresentedRouteBookPanelSheet = false
     private var selectedRouteBookPanelDetent: RouteBookPanelDetent = .minimum
     private var routeBookPanelMetricsCenterYConstraint: Constraint?
@@ -120,6 +134,7 @@ class ViewController: UIViewController {
     private var isRouteBookModeActive = false
     private var routeBookWorkout: TrackedWorkout?
     private var routeBookPolyline: MKPolyline?
+    private var routeBookEndpointAnnotations: [RouteEndpointAnnotation] = []
     private var routeBookReplayAnnotation: RouteReplayAnnotation?
     private var routeBookReplayCoordinates: [CLLocationCoordinate2D] = []
     private var routeBookReplayDistances: [CLLocationDistance] = []
@@ -842,6 +857,7 @@ class ViewController: UIViewController {
         switch detent {
         case .minimum:
             routeBookReplayRulerView.setProgress(0)
+            routeBookReplayRulerView.setIndicatorVisible(false)
             removeRouteBookReplayAnnotation()
         case .medium:
             updateRouteBookReplayProgressForCurrentLocation()
@@ -1763,6 +1779,7 @@ class ViewController: UIViewController {
 
                 switch result {
                 case .success(.settingsRequired):
+                    self.store.markAuthorizationVerified()
                     self.loadAuthorizedHealthWorkouts(showsLoadingIndicator: showsLoadingIndicator)
                 case .success(.canRequest), .failure:
                     self.updateHeaderReadAuthorizationState()
@@ -1901,7 +1918,7 @@ class ViewController: UIViewController {
                     self.scheduleCacheSave(delay: 0)
                     print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
                 }
-                self.markStravaHistoricalBackfillCompletedIfNeeded(
+                self.markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
                     after: startDate,
                     didCompleteWithoutActivityFailures: importResult.didCompleteWithoutActivityFailures
                 )
@@ -1946,7 +1963,7 @@ class ViewController: UIViewController {
     }
 
     private func latestStravaStartDateForIncrementalSync() -> Date? {
-        guard UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) else {
+        guard !shouldRunStravaHistoricalBackfill() else {
             print("PTrack Strava: historical backfill not completed; requesting full activity history")
             return nil
         }
@@ -1959,18 +1976,34 @@ class ViewController: UIViewController {
         return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
     }
 
-    private func markStravaHistoricalBackfillCompletedIfNeeded(
+    private func shouldRunStravaHistoricalBackfill() -> Bool {
+        UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) == false
+            || UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) == false
+    }
+
+    private func markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
         after startDate: Date?,
         didCompleteWithoutActivityFailures: Bool
     ) {
         guard startDate == nil,
-              didCompleteWithoutActivityFailures,
-              !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) else {
+              didCompleteWithoutActivityFailures else {
+            return
+        }
+
+        runAfterPendingCacheSave { [weak self] in
+            self?.markStravaHistoricalBackfillCompleted()
+        }
+    }
+
+    private func markStravaHistoricalBackfillCompleted() {
+        guard !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
+                || !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) else {
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
-        print("PTrack Strava: historical backfill marked completed")
+        UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
+        print("PTrack Strava: historical backfill marked completed after cache save")
     }
 
     private static func debugDateString(_ date: Date?) -> String {
@@ -1985,7 +2018,7 @@ class ViewController: UIViewController {
         let cachedIDs = knownWorkoutIDs
         let staleWorkouts = workouts.filter(\.needsHealthDataRefresh)
         let staleWorkoutIDs = Set(staleWorkouts.map(\.id))
-        let shouldBackfillHistory = !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted)
+        let shouldBackfillHistory = shouldRunHealthHistoricalBackfill()
         let queryStartDate = shouldBackfillHistory
             ? nil
             : staleWorkouts.map(\.startDate).min() ?? workouts.map(\.startDate).max()
@@ -2018,6 +2051,11 @@ class ViewController: UIViewController {
                 }
             }
         )
+    }
+
+    private func shouldRunHealthHistoricalBackfill() -> Bool {
+        UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) == false
+            || UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted) == false
     }
 
     private func upsertTrackedWorkout(_ workout: TrackedWorkout) {
@@ -2298,6 +2336,7 @@ class ViewController: UIViewController {
         let dirtyWorkoutIDs = dirtyCacheWorkoutIDs
         let deletedWorkoutIDs = deletedCacheWorkoutIDs
         guard !dirtyWorkoutIDs.isEmpty || !deletedWorkoutIDs.isEmpty else {
+            runCacheSaveCompletionHandlersIfReady()
             return
         }
 
@@ -2335,9 +2374,34 @@ class ViewController: UIViewController {
 
                 if shouldScheduleNextSave {
                     self.scheduleCacheSave(delay: 0)
+                } else if didSave {
+                    self.runCacheSaveCompletionHandlersIfReady()
                 }
             }
         }
+    }
+
+    private func runAfterPendingCacheSave(_ handler: @escaping () -> Void) {
+        guard isCacheSaveInProgress || !dirtyCacheWorkoutIDs.isEmpty || !deletedCacheWorkoutIDs.isEmpty else {
+            handler()
+            return
+        }
+
+        cacheSaveCompletionHandlers.append(handler)
+        scheduleCacheSave(delay: 0)
+    }
+
+    private func runCacheSaveCompletionHandlersIfReady() {
+        guard !isCacheSaveInProgress,
+              dirtyCacheWorkoutIDs.isEmpty,
+              deletedCacheWorkoutIDs.isEmpty,
+              !cacheSaveCompletionHandlers.isEmpty else {
+            return
+        }
+
+        let handlers = cacheSaveCompletionHandlers
+        cacheSaveCompletionHandlers.removeAll()
+        handlers.forEach { $0() }
     }
 
     private func restoreUncommittedCacheChanges(
@@ -2383,7 +2447,7 @@ class ViewController: UIViewController {
             print(
                 "PTrack HealthKit: route query completed, loaded routes: \(loadResult.trackedWorkoutCount), route failures: \(loadResult.failedRouteLoadCount)"
             )
-            markHealthHistoricalBackfillCompletedIfNeeded(
+            markHealthHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
                 didRunHistoricalBackfill: didRunHistoricalBackfill,
                 didCompleteWithoutRouteFailures: loadResult.didCompleteWithoutRouteFailures
             )
@@ -2404,18 +2468,29 @@ class ViewController: UIViewController {
         runPendingStravaSyncAfterHealthIfNeeded()
     }
 
-    private func markHealthHistoricalBackfillCompletedIfNeeded(
+    private func markHealthHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
         didRunHistoricalBackfill: Bool,
         didCompleteWithoutRouteFailures: Bool
     ) {
         guard didRunHistoricalBackfill,
-              didCompleteWithoutRouteFailures,
-              !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) else {
+              didCompleteWithoutRouteFailures else {
+            return
+        }
+
+        runAfterPendingCacheSave { [weak self] in
+            self?.markHealthHistoricalBackfillCompleted()
+        }
+    }
+
+    private func markHealthHistoricalBackfillCompleted() {
+        guard !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted)
+                || !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted) else {
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.healthHistoricalBackfillCompleted)
-        print("PTrack HealthKit: historical backfill marked completed")
+        UserDefaults.standard.set(true, forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted)
+        print("PTrack HealthKit: historical backfill marked completed after cache save")
     }
 
     private func showHeatmap() {
@@ -2598,9 +2673,8 @@ class ViewController: UIViewController {
                 case .success(.canRequest):
                     self.requestHealthAuthorizationAndLoadWorkouts()
                 case .success(.settingsRequired):
-                    self.presentHealthAuthorizationSettingsAlert()
-                    self.updateHeaderReadAuthorizationState()
-                    self.updateEmptyDataSourceVisibility()
+                    self.store.markAuthorizationVerified()
+                    self.loadAuthorizedHealthWorkouts()
                 case .failure(let error):
                     self.presentHealthAuthorizationError(error)
                     self.updateHeaderReadAuthorizationState()
@@ -2771,7 +2845,7 @@ class ViewController: UIViewController {
         updateRouteBookPanelText()
         applyRouteBookInterfaceState()
 
-        drawRouteBookRoute(coordinates)
+        drawRouteBookRoute(coordinates, for: workout)
         requestRouteBookLocationAuthorizationIfNeeded()
         updateRouteBookLocateButtonState()
         updateHeaderReadAuthorizationState()
@@ -2790,6 +2864,7 @@ class ViewController: UIViewController {
                 elevationSamples: []
             )
             routeBookReplayRulerView.setProgress(0)
+            routeBookReplayRulerView.setIndicatorVisible(false)
             return
         }
 
@@ -2848,6 +2923,7 @@ class ViewController: UIViewController {
             elevationSamples: elevationSamples
         )
         routeBookReplayRulerView.setProgress(0)
+        routeBookReplayRulerView.setIndicatorVisible(false)
         routeBookReplayCoordinates = coordinates
         routeBookReplayDistances = replayDistances
         routeBookReplayAltitudes = routeCoordinates.map(\.altitudeMeters)
@@ -2925,19 +3001,36 @@ class ViewController: UIViewController {
     }
 
     private func updateRouteBookReplayProgressForCurrentLocation() {
-        guard let progress = routeBookReplayProgressForCurrentLocation() else {
+        guard let match = routeBookRouteMatchForCurrentLocation(),
+              let replayState = routeBookReplayState(for: match) else {
+            routeBookReplayRulerView.setIndicatorVisible(false)
+            removeRouteBookReplayAnnotation()
             return
         }
 
-        routeBookReplayRulerView.setProgress(progress)
+        routeBookReplayRulerView.setIndicatorVisible(true)
+        routeBookReplayRulerView.setProgress(match.progress)
+        updateRouteBookReplayAnnotation(with: replayState)
     }
 
-    private func routeBookReplayProgressForCurrentLocation() -> CGFloat? {
-        guard routeBookReplayCoordinates.count == routeBookReplayDistances.count,
+    private func routeBookRouteMatchForCurrentLocation() -> RouteBookRouteMatch? {
+        let isLocationAuthorized: Bool
+        switch routeBookLocationManager.authorizationStatus {
+        case .authorizedAlways, .authorizedWhenInUse:
+            isLocationAuthorized = true
+        case .notDetermined, .denied, .restricted:
+            isLocationAuthorized = false
+        @unknown default:
+            isLocationAuthorized = false
+        }
+
+        guard isLocationAuthorized,
+              routeBookReplayCoordinates.count == routeBookReplayDistances.count,
               routeBookReplayCoordinates.count > 1,
               let totalDistance = routeBookReplayDistances.last,
               totalDistance > 0,
-              let location = routeBookCurrentLocation() else {
+              let location = routeBookCurrentLocation(),
+              let maximumMatchDistance = routeBookMaximumMatchDistance(for: location) else {
             return nil
         }
 
@@ -2949,6 +3042,9 @@ class ViewController: UIViewController {
         let userPoint = MKMapPoint(displayCoordinate)
         var nearestDistanceSquared = Double.greatestFiniteMagnitude
         var nearestRouteDistance: CLLocationDistance = 0
+        var nearestProjectedPoint: MKMapPoint?
+        var nearestSegmentIndex = 0
+        var nearestSegmentProjection = 0.0
 
         for index in 0..<(routeBookReplayCoordinates.count - 1) {
             let startPoint = MKMapPoint(routeBookReplayCoordinates[index])
@@ -2975,11 +3071,39 @@ class ViewController: UIViewController {
             }
 
             nearestDistanceSquared = distanceSquared
+            nearestProjectedPoint = MKMapPoint(x: projectedX, y: projectedY)
+            nearestSegmentIndex = index
+            nearestSegmentProjection = projection
             let segmentRouteDistance = routeBookReplayDistances[index + 1] - routeBookReplayDistances[index]
             nearestRouteDistance = routeBookReplayDistances[index] + segmentRouteDistance * projection
         }
 
-        return CGFloat(min(max(nearestRouteDistance / totalDistance, 0), 1))
+        guard let nearestProjectedPoint else {
+            return nil
+        }
+        let distanceToRoute = userPoint.distance(to: nearestProjectedPoint)
+        guard distanceToRoute <= maximumMatchDistance else {
+            return nil
+        }
+
+        return RouteBookRouteMatch(
+            progress: CGFloat(min(max(nearestRouteDistance / totalDistance, 0), 1)),
+            coordinate: displayCoordinate,
+            routeDistance: nearestRouteDistance,
+            segmentIndex: nearestSegmentIndex,
+            segmentProjection: nearestSegmentProjection
+        )
+    }
+
+    private func routeBookMaximumMatchDistance(for location: CLLocation) -> CLLocationDistance? {
+        let locationAge = abs(location.timestamp.timeIntervalSinceNow)
+        guard location.horizontalAccuracy >= 0,
+              location.horizontalAccuracy <= routeBookMaximumLocationAccuracy,
+              locationAge <= routeBookMaximumLocationAge else {
+            return nil
+        }
+
+        return routeBookBaseMatchDistance + min(location.horizontalAccuracy, 50)
     }
 
     private func routeBookCurrentLocation() -> CLLocation? {
@@ -2999,6 +3123,11 @@ class ViewController: UIViewController {
             return
         }
 
+        sender.setIndicatorVisible(true)
+        updateRouteBookReplayAnnotation(with: replayState)
+    }
+
+    private func updateRouteBookReplayAnnotation(with replayState: ReplayState) {
         let statusText = routeBookReplayStatusText(for: replayState)
         if let routeBookReplayAnnotation {
             routeBookReplayAnnotation.coordinate = replayState.coordinate
@@ -3025,6 +3154,35 @@ class ViewController: UIViewController {
                 annotationView.superview?.bringSubviewToFront(annotationView)
             }
         }
+    }
+
+    private func routeBookReplayState(for match: RouteBookRouteMatch) -> ReplayState? {
+        let nextIndex = match.segmentIndex + 1
+        guard routeBookReplayCoordinates.indices.contains(match.segmentIndex),
+              routeBookReplayCoordinates.indices.contains(nextIndex) else {
+            return nil
+        }
+
+        let startCoordinate = routeBookReplayCoordinates[match.segmentIndex]
+        let endCoordinate = routeBookReplayCoordinates[nextIndex]
+        let altitude: Double?
+        let startAltitude = routeBookReplayAltitude(at: match.segmentIndex)
+        let endAltitude = routeBookReplayAltitude(at: nextIndex)
+        if let startAltitude, let endAltitude {
+            altitude = startAltitude + (endAltitude - startAltitude) * match.segmentProjection
+        } else {
+            altitude = match.segmentProjection < 0.5 ? startAltitude : endAltitude
+        }
+
+        return ReplayState(
+            coordinate: match.coordinate,
+            distanceMeters: match.routeDistance,
+            altitudeMeters: altitude,
+            heartRateBeatsPerMinute: nil,
+            powerWatts: nil,
+            temperatureCelsius: nil,
+            isFacingLeft: endCoordinate.longitude - startCoordinate.longitude < 0
+        )
     }
 
     private func routeBookReplayState(for progress: CGFloat) -> ReplayState? {
@@ -3126,14 +3284,29 @@ class ViewController: UIViewController {
         self.routeBookReplayAnnotation = nil
     }
 
-    private func drawRouteBookRoute(_ coordinates: [CLLocationCoordinate2D]) {
+    private func drawRouteBookRoute(
+        _ coordinates: [CLLocationCoordinate2D],
+        for workout: TrackedWorkout
+    ) {
         if let routeBookPolyline {
             routeBookMapView.removeOverlay(routeBookPolyline)
         }
+        removeRouteBookEndpointAnnotations()
 
         let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
         routeBookPolyline = polyline
         routeBookMapView.addOverlay(polyline, level: .aboveLabels)
+        let startCoordinate = routeBookDisplayEndpointCoordinate(
+            workout.routeCollectionMergeStartCoordinate
+        ) ?? coordinates[0]
+        let endCoordinate = routeBookDisplayEndpointCoordinate(
+            workout.routeCollectionMergeEndCoordinate
+        ) ?? coordinates[coordinates.count - 1]
+        routeBookEndpointAnnotations = [
+            RouteEndpointAnnotation(coordinate: startCoordinate, kind: .start),
+            RouteEndpointAnnotation(coordinate: endCoordinate, kind: .end)
+        ]
+        routeBookMapView.addAnnotations(routeBookEndpointAnnotations)
         resetRouteBookMapHeading(animated: false)
         routeBookMapView.setVisibleMapRect(
             polyline.boundingMapRect,
@@ -3145,6 +3318,23 @@ class ViewController: UIViewController {
             ),
             animated: false
         )
+    }
+
+    private func routeBookDisplayEndpointCoordinate(
+        _ coordinate: CLLocationCoordinate2D?
+    ) -> CLLocationCoordinate2D? {
+        guard let coordinate, CLLocationCoordinate2DIsValid(coordinate) else {
+            return nil
+        }
+        return CoordinateTransformer.displayCoordinate(for: coordinate)
+    }
+
+    private func removeRouteBookEndpointAnnotations() {
+        guard !routeBookEndpointAnnotations.isEmpty else {
+            return
+        }
+        routeBookMapView.removeAnnotations(routeBookEndpointAnnotations)
+        routeBookEndpointAnnotations.removeAll()
     }
 
     private func requestRouteBookLocationAuthorizationIfNeeded() {
@@ -3318,6 +3508,7 @@ class ViewController: UIViewController {
         routeBookLastHeadingDegrees = nil
         routeBookHeadingDisplayDegrees = nil
         removeRouteBookReplayAnnotation()
+        removeRouteBookEndpointAnnotations()
         stopRouteBookLocationAndHeadingUpdates()
         routeBookMapView.setUserTrackingMode(.none, animated: false)
         routeBookMapView.showsUserLocation = false
@@ -3444,6 +3635,19 @@ extension ViewController: MKMapViewDelegate {
                 isFacingLeft: replayAnnotation.isFacingLeft
             )
             annotationView.superview?.bringSubviewToFront(annotationView)
+            return annotationView
+        }
+
+        if let endpointAnnotation = annotation as? RouteEndpointAnnotation {
+            let identifier = RouteEndpointAnnotationView.reuseIdentifier
+            let annotationView = mapView.dequeueReusableAnnotationView(
+                withIdentifier: identifier
+            ) as? RouteEndpointAnnotationView ?? RouteEndpointAnnotationView(
+                annotation: endpointAnnotation,
+                reuseIdentifier: identifier
+            )
+            annotationView.annotation = endpointAnnotation
+            annotationView.configure(kind: endpointAnnotation.kind)
             return annotationView
         }
 
