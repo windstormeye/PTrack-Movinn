@@ -177,6 +177,8 @@ enum AppTextKey: String {
     case routeBookLocationPermissionRequiredMessage
     case routeBookLocationPermissionRequiredTitle
     case route
+    case routeSlope
+    case routeSlopeColorHint
     case routeCollection
     case routeCollectionMenuTitle
     case routeCollectionEmptyMessage
@@ -550,6 +552,8 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredMessage: "请在系统设置中允许 Movinn 使用位置，这样才能在作为路书时显示你的位置。",
             .routeBookLocationPermissionRequiredTitle: "需要位置权限",
             .route: "轨迹",
+            .routeSlope: "坡度",
+            .routeSlopeColorHint: "越红的地方坡度越陡",
             .routeCollection: "导入路线",
             .routeCollectionMenuTitle: "路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
@@ -801,6 +805,8 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredMessage: "ルートブックモードで現在地を表示するには、システム設定で Movinn の位置情報利用を許可してください。",
             .routeBookLocationPermissionRequiredTitle: "位置情報の許可が必要です",
             .route: "ルート",
+            .routeSlope: "勾配",
+            .routeSlopeColorHint: "赤い場所ほど勾配が急です",
             .routeCollection: "ルート読み込み",
             .routeCollectionMenuTitle: "ルート",
             .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
@@ -1052,6 +1058,8 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredMessage: "루트북 모드에서 현재 위치를 표시하려면 시스템 설정에서 Movinn의 위치 사용을 허용해 주세요.",
             .routeBookLocationPermissionRequiredTitle: "위치 권한 필요",
             .route: "경로",
+            .routeSlope: "경사도",
+            .routeSlopeColorHint: "붉을수록 경사가 가파릅니다",
             .routeCollection: "경로 가져오기",
             .routeCollectionMenuTitle: "경로",
             .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
@@ -1303,6 +1311,8 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredMessage: "Allow Movinn to use location in system Settings so your position can be shown in Route Book mode.",
             .routeBookLocationPermissionRequiredTitle: "Location Permission Required",
             .route: "Route",
+            .routeSlope: "Slope",
+            .routeSlopeColorHint: "Redder sections are steeper",
             .routeCollection: "Imported Routes",
             .routeCollectionMenuTitle: "Routes",
             .routeCollectionEmptyMessage: "No imported routes yet",

@@ -23,6 +23,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private struct PreparedRoute {
         let coordinates: [CLLocationCoordinate2D]
+        let slopeRenderingCoordinates: [CLLocationCoordinate2D]
+        let slopeRenderingLocations: [Double]
         let routeCoordinates: [RouteCoordinate]
         let startCoordinate: CLLocationCoordinate2D
         let endCoordinate: CLLocationCoordinate2D
@@ -32,6 +34,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         let replayPowers: [Double?]
         let replayTemperatures: [Double?]
         let elevationSamples: [RouteElevationSample]
+        let slopeGradient: RouteSlopeGradient?
         let totalDistanceMeters: CLLocationDistance
     }
 
@@ -44,6 +47,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let routePreparationQueue = DispatchQueue(label: "studio.pj.PTrack.route-detail-prepare", qos: .userInitiated)
+    private var routePreparationCancellationToken: RouteSlopePreparationCancellationToken?
     private let routeMergeSourceLoadQueue = DispatchQueue(label: "studio.pj.PTrack.route-merge-source-load", qos: .userInitiated)
     private let gpxExportQueue = DispatchQueue(label: "studio.pj.PTrack.gpx-export", qos: .userInitiated)
     private let routeLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
@@ -56,6 +60,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let panelSheetViewController = UIViewController()
     private let panelView = UIVisualEffectView(effect: WorkoutRouteDetailViewController.makePanelGlassEffect())
     private let handleTouchView = UIView()
+    private let mapControlStackView = UIStackView()
+    private let routeSlopeVisibilityButton = UIButton(type: .system)
+    private let routeSlopeVisibilityIconView = UIImageView()
     private let routeMediaVisibilityButton = UIButton(type: .system)
     private let routeMediaVisibilityIconView = UIImageView()
     private let iconView = UIImageView()
@@ -72,7 +79,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let replayRulerView = WorkoutRouteReplayRulerView()
     private let calorieRiceView = WorkoutRouteCalorieRiceView()
     private var primaryContentTopConstraint: Constraint?
-    private var routeMediaVisibilityButtonBottomConstraint: Constraint?
+    private var mapControlStackViewBottomConstraint: Constraint?
     private var selectedPanelDetent: PanelDetent = .minimum
     private var hasFittedRoute = false
     private var hasPresentedPanelSheet = false
@@ -86,6 +93,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayTemperatures: [Double?] = []
     private var replayAnnotation: RouteReplayAnnotation?
     private var routePolyline: MKPolyline?
+    private var routeSlopePolylines: [MKPolyline] = []
+    private var routeSlopeGradients: [ObjectIdentifier: RouteSlopeGradient] = [:]
+    private var routeSlopeDirectionPolyline: MKPolyline?
+    private var routeSlopeGradient: RouteSlopeGradient?
+    private var isRouteSlopeVisible = false
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
     private var resolvedNavigationTitle: String?
     private var lastObservedPhotoAuthorizationState: PhotoLibraryAuthorizationState?
@@ -102,13 +114,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let calorieRiceTopSpacing: CGFloat = 12
     private let mediumPanelBottomPadding: CGFloat = 18
     private let panelHandleTouchHeight: CGFloat = 32
-    private let routeMediaVisibilityButtonPanelSpacing: CGFloat = 14
+    private let mapControlPanelSpacing: CGFloat = 14
+    private let mapControlButtonSpacing: CGFloat = 10
     private let primaryContentSize: CGFloat = 28
     private let expandedPrimaryContentTop: CGFloat = 33
     private let minimumPrimaryContentScale: CGFloat = 0.88
     private let navigationBackgroundHeight: CGFloat = 124
     private let mapBottomExtension = AppMapContainerView.defaultBottomLogoAvoidanceOffset
     private let maximumElevationSampleCount = 120
+    private let maximumSlopeRenderingCoordinateCount = 1_200
+    private let slopeGeometrySimplificationToleranceMeters: CLLocationDistance = 4
+    private let preferredSlopeOverlayChunkDistance: CLLocationDistance = 5_000
+    private let maximumSlopeOverlayChunkCount = 24
+    private let slopeRouteLineWidth: CGFloat = 3
+    private static let routeSlopeColorHintShownDefaultsKey =
+        "studio.pj.PTrack.routeSlopeColorHint.hasShown.v1"
     private static let minimumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
         "routeDetailMinimum"
     )
@@ -164,7 +184,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         registerTraitChangeHandler()
         configureMapView()
         configureNavigationBackgroundView()
-        configureRouteMediaVisibilityButton()
+        configureMapControlButtons()
         configureRouteLoadingView()
         configurePanelView()
         configureGPXExportLoadingView()
@@ -227,6 +247,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         hasPreparedForPermanentDismissal = true
+        routePreparationCancellationToken?.cancel()
+        routePreparationCancellationToken = nil
         isExportingGPX = false
         routeLoadingView.layer.removeAllAnimations()
         gpxExportLoadingView.layer.removeAllAnimations()
@@ -249,6 +271,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         replayPowers.removeAll(keepingCapacity: false)
         replayTemperatures.removeAll(keepingCapacity: false)
         routePolyline = nil
+        routeSlopePolylines.removeAll(keepingCapacity: false)
+        routeSlopeGradients.removeAll(keepingCapacity: false)
+        routeSlopeDirectionPolyline = nil
+        routeSlopeGradient = nil
         replayAnnotation = nil
         mapView.layer.removeAllAnimations()
         mapContainerView.layer.removeAllAnimations()
@@ -294,6 +320,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 isEstimated: panelCaloriesIsEstimated
             )
         }
+        routeSlopeVisibilityButton.accessibilityLabel = AppLocalization.text(.routeSlope)
+        updateRouteSlopeVisibilityButtonAppearance()
         routeMediaVisibilityButton.accessibilityLabel = AppLocalization.text(.photoMatching)
         routeLoadingLabel.text = AppLocalization.text(.routeLoading)
         gpxExportLoadingLabel.text = AppLocalization.text(.gpxExporting)
@@ -752,7 +780,30 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
-    private func configureRouteMediaVisibilityButton() {
+    private func configureMapControlButtons() {
+        mapControlStackView.axis = .vertical
+        mapControlStackView.alignment = .fill
+        mapControlStackView.distribution = .fill
+        mapControlStackView.spacing = mapControlButtonSpacing
+
+        routeSlopeVisibilityButton.overrideUserInterfaceStyle = .light
+        routeSlopeVisibilityButton.accessibilityLabel = AppLocalization.text(.routeSlope)
+        routeSlopeVisibilityIconView.overrideUserInterfaceStyle = .light
+        routeSlopeVisibilityIconView.isUserInteractionEnabled = false
+        routeSlopeVisibilityIconView.contentMode = .scaleAspectFit
+        routeSlopeVisibilityIconView.image = UIImage(
+            systemName: "mountain.2.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        )?.withRenderingMode(.alwaysTemplate)
+        routeSlopeVisibilityIconView.layer.zPosition = 1
+        routeSlopeVisibilityButton.addTarget(
+            self,
+            action: #selector(handleRouteSlopeVisibilityButtonTap),
+            for: .touchUpInside
+        )
+        applyMapControlButtonShadow(to: routeSlopeVisibilityButton)
+        updateRouteSlopeVisibilityButtonAppearance()
+
         routeMediaVisibilityButton.isHidden = presentationMode != .workout || isDemoMode
         routeMediaVisibilityButton.overrideUserInterfaceStyle = .light
         routeMediaVisibilityButton.accessibilityLabel = AppLocalization.text(.photoMatching)
@@ -769,18 +820,34 @@ final class WorkoutRouteDetailViewController: UIViewController {
             action: #selector(handleRouteMediaVisibilityButtonTap),
             for: .touchUpInside
         )
-        applyRouteMediaVisibilityButtonShadow()
+        applyMapControlButtonShadow(to: routeMediaVisibilityButton)
         updateRouteMediaVisibilityButtonAppearance()
 
-        view.addSubview(routeMediaVisibilityButton)
+        view.addSubview(mapControlStackView)
+        mapControlStackView.addArrangedSubview(routeSlopeVisibilityButton)
+        mapControlStackView.addArrangedSubview(routeMediaVisibilityButton)
+        routeSlopeVisibilityButton.addSubview(routeSlopeVisibilityIconView)
         routeMediaVisibilityButton.addSubview(routeMediaVisibilityIconView)
 
-        routeMediaVisibilityButton.snp.makeConstraints { make in
+        mapControlStackView.snp.makeConstraints { make in
             make.trailing.equalTo(view.safeAreaLayoutGuide.snp.trailing).inset(18)
-            routeMediaVisibilityButtonBottomConstraint = make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
-                .inset(routeMediaVisibilityButtonBottomInset)
+            mapControlStackViewBottomConstraint = make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
+                .inset(mapControlStackViewBottomInset)
                 .constraint
-            make.size.equalTo(48)
+            make.width.equalTo(48)
+        }
+
+        routeSlopeVisibilityButton.snp.makeConstraints { make in
+            make.height.equalTo(48).priority(.high)
+        }
+
+        routeMediaVisibilityButton.snp.makeConstraints { make in
+            make.height.equalTo(48).priority(.high)
+        }
+
+        routeSlopeVisibilityIconView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.size.equalTo(22)
         }
 
         routeMediaVisibilityIconView.snp.makeConstraints { make in
@@ -789,17 +856,53 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
-    private func applyRouteMediaVisibilityButtonShadow() {
-        routeMediaVisibilityButton.layer.shadowColor = UIColor.black.cgColor
+    private func applyMapControlButtonShadow(to button: UIButton) {
+        button.layer.shadowColor = UIColor.black.cgColor
         if #available(iOS 26.0, *) {
-            routeMediaVisibilityButton.layer.shadowOpacity = 0
-            routeMediaVisibilityButton.layer.shadowRadius = 0
-            routeMediaVisibilityButton.layer.shadowOffset = .zero
+            button.layer.shadowOpacity = 0
+            button.layer.shadowRadius = 0
+            button.layer.shadowOffset = .zero
         } else {
-            routeMediaVisibilityButton.layer.shadowOpacity = 0.14
-            routeMediaVisibilityButton.layer.shadowRadius = 12
-            routeMediaVisibilityButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+            button.layer.shadowOpacity = 0.14
+            button.layer.shadowRadius = 12
+            button.layer.shadowOffset = CGSize(width: 0, height: 4)
         }
+    }
+
+    private func updateRouteSlopeVisibilityButtonAppearance() {
+        let isAvailable = routeSlopeGradient != nil
+        routeSlopeVisibilityButton.isEnabled = isAvailable
+        // Keep the glass/filled background neutral, matching the photo button.
+        routeSlopeVisibilityButton.isSelected = false
+        if isRouteSlopeVisible {
+            routeSlopeVisibilityButton.accessibilityTraits.insert(.selected)
+        } else {
+            routeSlopeVisibilityButton.accessibilityTraits.remove(.selected)
+        }
+        let foregroundColor: UIColor
+        if isRouteSlopeVisible {
+            foregroundColor = AppColors.movinnGreen
+        } else {
+            foregroundColor = UIColor.black.withAlphaComponent(isAvailable ? 0.42 : 0.22)
+        }
+        let resolvedForegroundColor = foregroundColor.resolvedColor(with: traitCollection)
+        var configuration: UIButton.Configuration
+        if #available(iOS 26.0, *) {
+            configuration = .glass()
+        } else {
+            configuration = .filled()
+            configuration.baseBackgroundColor = UIColor.white.withAlphaComponent(0.92)
+        }
+        configuration.image = nil
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = .zero
+        routeSlopeVisibilityButton.configuration = configuration
+        routeSlopeVisibilityButton.tintColor = resolvedForegroundColor
+        routeSlopeVisibilityIconView.tintColor = resolvedForegroundColor
+        routeSlopeVisibilityButton.accessibilityValue = nil
+        routeSlopeVisibilityButton.accessibilityHint = isAvailable
+            ? AppLocalization.text(isRouteSlopeVisible ? .disable : .enable)
+            : nil
     }
 
     private func updateRouteMediaVisibilityButtonAppearance() {
@@ -830,8 +933,42 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return UIColor.black.withAlphaComponent(0.42)
     }
 
-    private var routeMediaVisibilityButtonBottomInset: CGFloat {
-        panelHeight(for: selectedPanelDetent) + routeMediaVisibilityButtonPanelSpacing
+    private var mapControlStackViewBottomInset: CGFloat {
+        panelHeight(for: selectedPanelDetent) + mapControlPanelSpacing
+    }
+
+    @objc private func handleRouteSlopeVisibilityButtonTap() {
+        guard routeSlopeGradient != nil else {
+            return
+        }
+
+        isRouteSlopeVisible.toggle()
+        replaceRouteOverlaysForSlopeVisibility()
+        updateRouteSlopeVisibilityButtonAppearance()
+        if isRouteSlopeVisible {
+            showRouteSlopeColorHintIfNeeded()
+        }
+    }
+
+    private func showRouteSlopeColorHintIfNeeded() {
+        guard let window = view.window else {
+            return
+        }
+
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.routeSlopeColorHintShownDefaultsKey) else {
+            return
+        }
+
+        defaults.set(true, forKey: Self.routeSlopeColorHintShownDefaultsKey)
+        let message = AppLocalization.text(.routeSlopeColorHint)
+        Toast.show(
+            message,
+            in: window,
+            duration: 2.4,
+            bottomInset: mapControlStackViewBottomInset
+        )
+        UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     @objc private func handleRouteMediaVisibilityButtonTap() {
@@ -980,6 +1117,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             viewController.updateNavigationBackgroundColors()
             viewController.updateLoadingViewColors()
             viewController.updatePanelAppearanceColors()
+            viewController.updateRouteSlopeVisibilityButtonAppearance()
             viewController.updateRouteMediaVisibilityButtonAppearance()
             viewController.setNeedsStatusBarAppearanceUpdate()
         }
@@ -1418,17 +1556,30 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         let workout = workout
         let maximumElevationSampleCount = self.maximumElevationSampleCount
+        let maximumSlopeRenderingCoordinateCount = self.maximumSlopeRenderingCoordinateCount
+        let slopeSimplificationTolerance = slopeGeometrySimplificationToleranceMeters
+        let cancellationToken = RouteSlopePreparationCancellationToken()
+        routePreparationCancellationToken?.cancel()
+        routePreparationCancellationToken = cancellationToken
         routePreparationQueue.async { [weak self] in
             let preparedRoute = Self.prepareRoute(
                 for: workout,
-                maximumElevationSampleCount: maximumElevationSampleCount
+                maximumElevationSampleCount: maximumElevationSampleCount,
+                maximumSlopeRenderingCoordinateCount: maximumSlopeRenderingCoordinateCount,
+                slopeGeometrySimplificationToleranceMeters: slopeSimplificationTolerance,
+                cancellationToken: cancellationToken
             )
+            guard !cancellationToken.isCancelled else {
+                return
+            }
 
             DispatchQueue.main.async { [weak self] in
                 guard let self,
+                      self.routePreparationCancellationToken === cancellationToken,
                       !self.hasPreparedForPermanentDismissal else {
                     return
                 }
+                self.routePreparationCancellationToken = nil
 
                 guard let preparedRoute else {
                     self.setRouteLoadingVisible(false)
@@ -1442,29 +1593,109 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private static func prepareRoute(
         for workout: TrackedWorkout,
-        maximumElevationSampleCount: Int
+        maximumElevationSampleCount: Int,
+        maximumSlopeRenderingCoordinateCount: Int,
+        slopeGeometrySimplificationToleranceMeters: CLLocationDistance,
+        cancellationToken: RouteSlopePreparationCancellationToken
     ) -> PreparedRoute? {
-        let routeCoordinates = workout.routeDetailCoordinates
-        let coordinates = CoordinateTransformer.displayCoordinates(for: routeCoordinates.map(\.coordinate))
-        guard coordinates.count > 1 else {
+        guard !cancellationToken.isCancelled else {
             return nil
         }
 
-        let replayDistances = cumulativeDistances(for: coordinates)
-        let replayAltitudes = routeCoordinates.map(\.altitudeMeters)
-        let replayHeartRates = routeCoordinates.map(\.heartRateBeatsPerMinute)
-        let replayPowers = routeCoordinates.map(\.powerWatts)
-        let replayTemperatures = routeCoordinates.map(\.temperatureCelsius)
+        let routeCoordinates = workout.routeDetailCoordinates
+        guard routeCoordinates.count > 1 else {
+            return nil
+        }
+
+        var sourceCoordinates: [CLLocationCoordinate2D] = []
+        var replayAltitudes: [Double?] = []
+        var replayHeartRates: [Double?] = []
+        var replayPowers: [Double?] = []
+        var replayTemperatures: [Double?] = []
+        var slopeAltitudes: [Double?] = []
+        sourceCoordinates.reserveCapacity(routeCoordinates.count)
+        replayAltitudes.reserveCapacity(routeCoordinates.count)
+        replayHeartRates.reserveCapacity(routeCoordinates.count)
+        replayPowers.reserveCapacity(routeCoordinates.count)
+        replayTemperatures.reserveCapacity(routeCoordinates.count)
+        slopeAltitudes.reserveCapacity(routeCoordinates.count)
+        for (index, routeCoordinate) in routeCoordinates.enumerated() {
+            if index.isMultiple(of: 256), cancellationToken.isCancelled {
+                return nil
+            }
+
+            sourceCoordinates.append(routeCoordinate.coordinate)
+            replayAltitudes.append(routeCoordinate.altitudeMeters)
+            replayHeartRates.append(routeCoordinate.heartRateBeatsPerMinute)
+            replayPowers.append(routeCoordinate.powerWatts)
+            replayTemperatures.append(routeCoordinate.temperatureCelsius)
+            if let verticalAccuracy = routeCoordinate.verticalAccuracyMeters,
+               (!verticalAccuracy.isFinite
+                || verticalAccuracy < 0
+                || verticalAccuracy > 15) {
+                slopeAltitudes.append(nil)
+            } else {
+                slopeAltitudes.append(routeCoordinate.altitudeMeters)
+            }
+        }
+
+        guard let coordinates = CoordinateTransformer.displayCoordinates(
+            for: sourceCoordinates,
+            isCancelled: { cancellationToken.isCancelled }
+        ),
+        let replayDistances = cumulativeDistances(
+            for: coordinates,
+            cancellationToken: cancellationToken
+        ) else {
+            return nil
+        }
+
         let measuredDistance = replayDistances.last ?? workout.distanceMeters
         let totalDistanceMeters = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
-        let elevationSamples = routeElevationSamples(
+        guard let elevationSamples = routeElevationSamples(
             distances: replayDistances,
-            routeCoordinates: routeCoordinates,
-            maximumCount: maximumElevationSampleCount
+            altitudes: replayAltitudes,
+            heartRates: replayHeartRates,
+            powers: replayPowers,
+            temperatures: replayTemperatures,
+            maximumCount: maximumElevationSampleCount,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+
+        var slopeGradient = RouteSlopeGradient.make(
+            distances: replayDistances,
+            altitudes: slopeAltitudes,
+            isCancelled: { cancellationToken.isCancelled }
         )
+        guard !cancellationToken.isCancelled else {
+            return nil
+        }
+
+        var slopeRenderingCoordinates: [CLLocationCoordinate2D] = []
+        var slopeRenderingLocations: [Double] = []
+        if slopeGradient != nil {
+            if let slopeRenderingRoute = RouteSlopeGeometryPreparer.prepare(
+                coordinates: coordinates,
+                cumulativeDistances: replayDistances,
+                toleranceMeters: slopeGeometrySimplificationToleranceMeters,
+                maximumCount: maximumSlopeRenderingCoordinateCount,
+                cancellationToken: cancellationToken
+            ) {
+                slopeRenderingCoordinates = slopeRenderingRoute.coordinates
+                slopeRenderingLocations = slopeRenderingRoute.sourceLocations
+            } else if cancellationToken.isCancelled {
+                return nil
+            } else {
+                slopeGradient = nil
+            }
+        }
 
         return PreparedRoute(
             coordinates: coordinates,
+            slopeRenderingCoordinates: slopeRenderingCoordinates,
+            slopeRenderingLocations: slopeRenderingLocations,
             routeCoordinates: routeCoordinates,
             startCoordinate: displayEndpointCoordinate(workout.routeCollectionMergeStartCoordinate)
                 ?? coordinates[0],
@@ -1476,6 +1707,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             replayPowers: replayPowers,
             replayTemperatures: replayTemperatures,
             elevationSamples: elevationSamples,
+            slopeGradient: slopeGradient,
             totalDistanceMeters: totalDistanceMeters
         )
     }
@@ -1490,8 +1722,40 @@ final class WorkoutRouteDetailViewController: UIViewController {
         let coordinates = preparedRoute.coordinates
         let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
         routePolyline = polyline
+        routeSlopeGradient = preparedRoute.slopeGradient
+        routeSlopePolylines.removeAll(keepingCapacity: true)
+        routeSlopeGradients.removeAll(keepingCapacity: true)
+        if let routeSlopeGradient {
+            let slopeCoordinates = preparedRoute.slopeRenderingCoordinates
+            let chunks = RouteSlopeOverlayFactory.makeChunks(
+                coordinates: slopeCoordinates,
+                sourceLocations: preparedRoute.slopeRenderingLocations,
+                gradient: routeSlopeGradient,
+                totalDistance: preparedRoute.replayDistances.last
+                    ?? preparedRoute.totalDistanceMeters,
+                preferredChunkDistance: preferredSlopeOverlayChunkDistance,
+                maximumChunkCount: maximumSlopeOverlayChunkCount
+            )
+            for chunk in chunks {
+                routeSlopePolylines.append(chunk.polyline)
+                routeSlopeGradients[ObjectIdentifier(chunk.polyline)] = chunk.gradient
+            }
+            routeSlopeDirectionPolyline = MKPolyline(
+                coordinates: slopeCoordinates,
+                count: slopeCoordinates.count
+            )
+        } else {
+            routeSlopeDirectionPolyline = nil
+        }
+        if routeSlopePolylines.isEmpty {
+            routeSlopeGradient = nil
+            routeSlopeDirectionPolyline = nil
+        }
+        isRouteSlopeVisible = false
+        updateRouteSlopeVisibilityButtonAppearance()
         hasFittedRoute = false
         mapView.addOverlay(polyline, level: .aboveLabels)
+        addRouteSlopeDirectionOverlayIfNeeded()
 
         mapView.addAnnotations([
             RouteEndpointAnnotation(coordinate: preparedRoute.startCoordinate, kind: .start),
@@ -1538,25 +1802,94 @@ final class WorkoutRouteDetailViewController: UIViewController {
             && PhotoLibraryAuthorizationManager.authorizationState == .authorized
     }
 
-    var mapRouteStrokeColor: UIColor {
+    private var mapRouteStrokeColor: UIColor {
         selectedMapStyle == .dark ? .white : .black
     }
 
-    var mapRouteDirectionIndicatorColor: UIColor {
-        .black
+    func routeOverlayRenderer(for polyline: MKPolyline) -> MKOverlayRenderer {
+        if polyline === routeSlopeDirectionPolyline {
+            let renderer = makeRouteDirectionRenderer(for: polyline)
+            renderer.drawsRouteStroke = false
+            renderer.strokeColor = .clear
+            renderer.directionIndicatorColor = .black
+            renderer.directionIndicatorSpacing = 140
+            renderer.maximumIndicatorCount = 80
+            return renderer
+        }
+
+        if let routeSlopeGradient = routeSlopeGradients[ObjectIdentifier(polyline)] {
+            return AppMapStyle.makeSlopeRenderer(
+                for: polyline,
+                gradient: routeSlopeGradient,
+                lineWidth: slopeRouteLineWidth
+            )
+        }
+
+        let renderer = makeRouteDirectionRenderer(for: polyline)
+        renderer.strokeColor = mapRouteStrokeColor
+        renderer.directionIndicatorColor = .black
+        return renderer
     }
 
-    private func refreshRouteOverlayStrokeColor() {
-        guard let routePolyline,
-              let renderer = mapView.renderer(for: routePolyline) as? MKPolylineRenderer else {
+    private func makeRouteDirectionRenderer(
+        for polyline: MKPolyline
+    ) -> RouteDirectionPolylineRenderer {
+        let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
+        renderer.lineWidth = 1.5
+        renderer.directionIndicatorLength = 14.5
+        renderer.directionIndicatorWidth = 17
+        renderer.directionIndicatorStrokeWidth = 3.4
+        renderer.lineJoin = .round
+        renderer.lineCap = .round
+        return renderer
+    }
+
+    private func replaceRouteOverlaysForSlopeVisibility() {
+        guard let routePolyline else {
             return
         }
 
-        renderer.strokeColor = mapRouteStrokeColor
-        if let directionRenderer = renderer as? RouteDirectionPolylineRenderer {
-            directionRenderer.directionIndicatorColor = mapRouteDirectionIndicatorColor
+        if let routeSlopeDirectionPolyline {
+            if mapView.overlays.contains(where: { $0 === routeSlopeDirectionPolyline }) {
+                mapView.removeOverlay(routeSlopeDirectionPolyline)
+            }
         }
-        renderer.setNeedsDisplay()
+        if mapView.overlays.contains(where: { $0 === routePolyline }) {
+            mapView.removeOverlay(routePolyline)
+        }
+        let visibleSlopePolylines = routeSlopePolylines.filter { slopePolyline in
+            mapView.overlays.contains(where: { $0 === slopePolyline })
+        }
+        if !visibleSlopePolylines.isEmpty {
+            mapView.removeOverlays(visibleSlopePolylines)
+        }
+
+        if isRouteSlopeVisible,
+           !routeSlopePolylines.isEmpty {
+            mapView.addOverlays(routeSlopePolylines, level: .aboveLabels)
+            addRouteSlopeDirectionOverlayIfNeeded()
+        } else {
+            mapView.addOverlay(routePolyline, level: .aboveLabels)
+        }
+    }
+
+    private func addRouteSlopeDirectionOverlayIfNeeded() {
+        guard isRouteSlopeVisible,
+              let routeSlopeDirectionPolyline,
+              !mapView.overlays.contains(where: { $0 === routeSlopeDirectionPolyline }) else {
+            return
+        }
+
+        mapView.addOverlay(routeSlopeDirectionPolyline, level: .aboveLabels)
+    }
+
+    private func refreshRouteOverlayStrokeColor() {
+        if !isRouteSlopeVisible,
+           let routePolyline,
+           let renderer = mapView.renderer(for: routePolyline) as? MKPolylineRenderer {
+            renderer.strokeColor = mapRouteStrokeColor
+            renderer.setNeedsDisplay()
+        }
     }
 
     private func loadRouteMedia() {
@@ -1715,8 +2048,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
             self.detailStackView.alpha = 1
             self.updatePrimaryContentScale(for: height)
             self.panelSheetViewController.view.layoutIfNeeded()
-            self.routeMediaVisibilityButtonBottomConstraint?.update(
-                inset: height + self.routeMediaVisibilityButtonPanelSpacing
+            self.mapControlStackViewBottomConstraint?.update(
+                inset: height + self.mapControlPanelSpacing
             )
             self.view.layoutIfNeeded()
         }
@@ -1799,7 +2132,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         )
     }
 
-    private static func cumulativeDistances(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationDistance] {
+    private static func cumulativeDistances(
+        for coordinates: [CLLocationCoordinate2D],
+        cancellationToken: RouteSlopePreparationCancellationToken
+    ) -> [CLLocationDistance]? {
         guard let firstCoordinate = coordinates.first else {
             return []
         }
@@ -1810,13 +2146,19 @@ final class WorkoutRouteDetailViewController: UIViewController {
         var totalDistance: CLLocationDistance = 0
         var previousLocation = CLLocation(latitude: firstCoordinate.latitude, longitude: firstCoordinate.longitude)
 
-        for coordinate in coordinates.dropFirst() {
+        for (offset, coordinate) in coordinates.dropFirst().enumerated() {
+            if offset.isMultiple(of: 256), cancellationToken.isCancelled {
+                return nil
+            }
             let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
             totalDistance += location.distance(from: previousLocation)
             distances.append(totalDistance)
             previousLocation = location
         }
 
+        guard !cancellationToken.isCancelled else {
+            return nil
+        }
         return distances
     }
 
@@ -1995,6 +2337,104 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         return downsampleElevationSamples(samples, maximumCount: maximumCount)
+    }
+
+    private static func routeElevationSamples(
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        heartRates: [Double?],
+        powers: [Double?],
+        temperatures: [Double?],
+        maximumCount: Int,
+        isCancelled: @Sendable () -> Bool
+    ) -> [RouteElevationSample]? {
+        guard distances.count == altitudes.count,
+              !isCancelled() else {
+            return nil
+        }
+
+        let hasHeartRates = heartRates.count == distances.count
+        let hasPowers = powers.count == distances.count
+        let hasTemperatures = temperatures.count == distances.count
+        var samples: [RouteElevationSample] = []
+        samples.reserveCapacity(min(altitudes.count, maximumCount * 2))
+        for index in altitudes.indices {
+            if index.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            guard let altitude = altitudes[index] else {
+                continue
+            }
+            samples.append(RouteElevationSample(
+                distanceMeters: distances[index],
+                altitudeMeters: altitude,
+                heartRateBeatsPerMinute: hasHeartRates ? heartRates[index] : nil,
+                powerWatts: hasPowers ? powers[index] : nil,
+                temperatureCelsius: hasTemperatures ? temperatures[index] : nil
+            ))
+        }
+
+        guard !isCancelled() else {
+            return nil
+        }
+        guard samples.count > maximumCount, maximumCount > 2 else {
+            return samples
+        }
+
+        let step = Double(samples.count - 1) / Double(maximumCount - 1)
+        var selectedIndices = Set<Int>()
+        selectedIndices.reserveCapacity(maximumCount + 4)
+        for index in 0..<maximumCount {
+            selectedIndices.insert(Int(round(Double(index) * step)))
+        }
+
+        var altitudePeakIndex = 0
+        var heartRatePeak: (index: Int, value: Double)?
+        var powerPeak: (index: Int, value: Double)?
+        var temperaturePeak: (index: Int, value: Double)?
+        for index in samples.indices {
+            if index.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            let sample = samples[index]
+            if sample.altitudeMeters > samples[altitudePeakIndex].altitudeMeters {
+                altitudePeakIndex = index
+            }
+            if let value = sample.heartRateBeatsPerMinute,
+               value.isFinite,
+               value > 0,
+               heartRatePeak == nil
+                || value > (heartRatePeak?.value ?? -.greatestFiniteMagnitude) {
+                heartRatePeak = (index, value)
+            }
+            if let value = sample.powerWatts,
+               value.isFinite,
+               value > 0,
+               powerPeak == nil
+                || value > (powerPeak?.value ?? -.greatestFiniteMagnitude) {
+                powerPeak = (index, value)
+            }
+            if let value = sample.temperatureCelsius,
+               value.isFinite,
+               temperaturePeak == nil
+                || value > (temperaturePeak?.value ?? -.greatestFiniteMagnitude) {
+                temperaturePeak = (index, value)
+            }
+        }
+        selectedIndices.insert(altitudePeakIndex)
+        if let heartRatePeak {
+            selectedIndices.insert(heartRatePeak.index)
+        }
+        if let powerPeak {
+            selectedIndices.insert(powerPeak.index)
+        }
+        if let temperaturePeak {
+            selectedIndices.insert(temperaturePeak.index)
+        }
+        guard !isCancelled() else {
+            return nil
+        }
+        return selectedIndices.sorted().map { samples[$0] }
     }
 
     private static func downsampleElevationSamples(

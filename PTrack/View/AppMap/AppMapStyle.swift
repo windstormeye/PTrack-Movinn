@@ -5,10 +5,28 @@
 //  Created by Codex on 2026/6/14.
 //
 
+import Foundation
 import MapKit
 import UIKit
 
 enum AppMapStyle {
+    private struct SlopeColorStop {
+        let location: Double
+        let red: CGFloat
+        let green: CGFloat
+        let blue: CGFloat
+    }
+
+    private static let slopeColorStops: [SlopeColorStop] = [
+        SlopeColorStop(location: 0.00, red: 103 / 255, green: 141 / 255, blue: 60 / 255),
+        SlopeColorStop(location: 0.18, red: 128 / 255, green: 152 / 255, blue: 70 / 255),
+        SlopeColorStop(location: 0.36, red: 156 / 255, green: 158 / 255, blue: 75 / 255),
+        SlopeColorStop(location: 0.54, red: 180 / 255, green: 154 / 255, blue: 72 / 255),
+        SlopeColorStop(location: 0.70, red: 189 / 255, green: 123 / 255, blue: 70 / 255),
+        SlopeColorStop(location: 0.86, red: 182 / 255, green: 90 / 255, blue: 69 / 255),
+        SlopeColorStop(location: 1.00, red: 168 / 255, green: 61 / 255, blue: 67 / 255)
+    ]
+
     static let appDefaultToneOverlayColor = UIColor(red: 246 / 255, green: 249 / 255, blue: 248 / 255, alpha: 0.44)
 
     static func apply(_ style: AppMapDisplayStyle = .appDefault, to mapView: MKMapView) {
@@ -68,12 +86,67 @@ enum AppMapStyle {
         AppMapToneTileOverlay()
     }
 
+    static func makeSlopeRenderer(
+        for polyline: MKPolyline,
+        gradient: RouteSlopeGradient,
+        lineWidth: CGFloat
+    ) -> MKGradientPolylineRenderer {
+        let renderer = MKGradientPolylineRenderer(polyline: polyline)
+        var colors: [UIColor] = []
+        colors.reserveCapacity(gradient.normalizedSlopes.count)
+        for normalizedSlope in gradient.normalizedSlopes {
+            colors.append(slopeColor(for: normalizedSlope))
+        }
+        let locations = gradient.locations.map { CGFloat($0) }
+        renderer.setColors(colors, locations: locations)
+        renderer.lineWidth = lineWidth
+        renderer.lineJoin = .round
+        renderer.lineCap = .round
+        renderer.shouldRasterize = true
+        return renderer
+    }
+
     static func renderer(for overlay: MKOverlay) -> MKOverlayRenderer? {
         guard let tileOverlay = overlay as? AppMapToneTileOverlay else {
             return nil
         }
 
         return MKTileOverlayRenderer(tileOverlay: tileOverlay)
+    }
+
+    private static func slopeColor(for normalizedSlope: Double?) -> UIColor {
+        guard let normalizedSlope else {
+            return UIColor(white: 120 / 255, alpha: 1)
+        }
+
+        let value = pow(min(max(normalizedSlope, 0), 1), 1.15)
+        guard let firstStop = slopeColorStops.first,
+              let lastStop = slopeColorStops.last else {
+            return .systemGray
+        }
+        if value <= firstStop.location {
+            return UIColor(red: firstStop.red, green: firstStop.green, blue: firstStop.blue, alpha: 1)
+        }
+        if value >= lastStop.location {
+            return UIColor(red: lastStop.red, green: lastStop.green, blue: lastStop.blue, alpha: 1)
+        }
+
+        var upperStopIndex = 1
+        while upperStopIndex < slopeColorStops.count - 1,
+              slopeColorStops[upperStopIndex].location < value {
+            upperStopIndex += 1
+        }
+        let lowerStop = slopeColorStops[upperStopIndex - 1]
+        let upperStop = slopeColorStops[upperStopIndex]
+        let progress = CGFloat(
+            (value - lowerStop.location) / (upperStop.location - lowerStop.location)
+        )
+        return UIColor(
+            red: lowerStop.red + (upperStop.red - lowerStop.red) * progress,
+            green: lowerStop.green + (upperStop.green - lowerStop.green) * progress,
+            blue: lowerStop.blue + (upperStop.blue - lowerStop.blue) * progress,
+            alpha: 1
+        )
     }
 
     @available(iOS 16.0, *)
@@ -113,6 +186,7 @@ enum AppMapStyle {
 }
 
 final class RouteDirectionPolylineRenderer: MKPolylineRenderer {
+    var drawsRouteStroke = true
     var directionIndicatorColor: UIColor = .black
     var directionIndicatorSpacing: CGFloat = 118
     var directionIndicatorLength: CGFloat = 16
@@ -122,94 +196,450 @@ final class RouteDirectionPolylineRenderer: MKPolylineRenderer {
     var minimumRouteLengthForIndicators: CGFloat = 120
     var maximumIndicatorCount = 120
 
-    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
-        super.draw(mapRect, zoomScale: zoomScale, in: context)
-        drawDirectionIndicators(zoomScale: zoomScale, in: context)
+    private struct RouteGeometry {
+        let mapPoints: [MKMapPoint]
+        let cumulativeLengths: [Double]
+        let length: Double
+        let chunks: [RouteGeometryChunk]
     }
 
-    private func drawDirectionIndicators(zoomScale: MKZoomScale, in context: CGContext) {
+    private struct RouteGeometryChunk {
+        let segmentRange: Range<Int>
+        let minimumX: Double
+        let maximumX: Double
+        let minimumY: Double
+        let maximumY: Double
+
+        func intersects(_ mapRect: MKMapRect) -> Bool {
+            maximumX >= mapRect.minX
+                && minimumX <= mapRect.maxX
+                && maximumY >= mapRect.minY
+                && minimumY <= mapRect.maxY
+        }
+    }
+
+    private struct VisibleRouteRange {
+        let lowerBound: Double
+        var upperBound: Double
+
+        var length: Double {
+            max(upperBound - lowerBound, 0)
+        }
+    }
+
+    private struct IndicatorRun {
+        let firstDistance: Double
+        let count: Int
+    }
+
+    private let routeGeometryLock = NSLock()
+    private var cachedRouteGeometry: RouteGeometry?
+
+    override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
+        if drawsRouteStroke {
+            super.draw(mapRect, zoomScale: zoomScale, in: context)
+        }
+        drawDirectionIndicators(mapRect: mapRect, zoomScale: zoomScale, in: context)
+    }
+
+    private func drawDirectionIndicators(
+        mapRect: MKMapRect,
+        zoomScale: MKZoomScale,
+        in context: CGContext
+    ) {
         guard polyline.pointCount > 1,
               zoomScale >= minimumZoomScaleForIndicators,
-              zoomScale > 0 else {
+              zoomScale > 0,
+              maximumIndicatorCount > 0,
+              directionIndicatorSpacing.isFinite,
+              directionIndicatorSpacing > 0 else {
             return
         }
 
-        let points = routeDrawingPoints()
-        let routeLength = totalLength(for: points)
-        let screenRouteLength = routeLength * zoomScale
-        guard screenRouteLength >= minimumRouteLengthForIndicators else {
+        let geometry = routeGeometry()
+        guard geometry.mapPoints.count > 1,
+              geometry.length.isFinite,
+              geometry.length > 0 else {
             return
         }
 
-        let indicatorCount = min(
-            maximumIndicatorCount,
-            max(1, Int(screenRouteLength / directionIndicatorSpacing))
-        )
-        let interval = routeLength / CGFloat(indicatorCount + 1)
+        let indicatorScreenLength = max(directionIndicatorLength, lineWidth * 3.8)
+        let indicatorScreenWidth = max(directionIndicatorWidth, lineWidth * 4.8)
+        let indicatorScreenStrokeWidth = max(directionIndicatorStrokeWidth, lineWidth * 0.95)
+        let screenPadding = max(indicatorScreenLength, indicatorScreenWidth)
+            + indicatorScreenStrokeWidth
+        guard screenPadding.isFinite, screenPadding >= 0 else {
+            return
+        }
+        let mapPadding = Double(screenPadding / zoomScale)
+        guard mapPadding.isFinite, mapPadding >= 0 else {
+            return
+        }
+        let visibleMapRect = mapRect.insetBy(dx: -mapPadding, dy: -mapPadding)
+        let visibleRouteRanges = visibleRouteRanges(in: visibleMapRect, geometry: geometry)
+        guard !visibleRouteRanges.isEmpty else {
+            return
+        }
+
+        let visibleRouteLength = visibleRouteRanges.reduce(0) { $0 + $1.length }
+        let screenVisibleRouteLength = CGFloat(visibleRouteLength) * zoomScale
+        guard screenVisibleRouteLength.isFinite,
+              screenVisibleRouteLength >= minimumRouteLengthForIndicators else {
+            return
+        }
+
+        let interval = Double(directionIndicatorSpacing / zoomScale)
         guard interval.isFinite, interval > 0 else {
             return
         }
+        let indicatorRuns = indicatorRuns(for: visibleRouteRanges, interval: interval)
+        let indicatorCount = min(maximumIndicatorCount, indicatorRuns.totalCount)
 
         context.saveGState()
+        defer { context.restoreGState() }
         context.setAllowsAntialiasing(true)
         context.setShouldAntialias(true)
 
-        var nextDistance = interval
-        var traversedDistance: CGFloat = 0
-        var drawnCount = 0
+        var drawnIndicatorCount = 0
+        if indicatorCount > 0 {
+            var runIndex = 0
+            var runStartOrdinal = 0
+            for indicatorIndex in 0..<indicatorCount {
+                let candidateOrdinal: Int
+                if indicatorRuns.totalCount <= indicatorCount {
+                    candidateOrdinal = indicatorIndex
+                } else {
+                    let bucketMidpoint = (Double(indicatorIndex) + 0.5)
+                        * Double(indicatorRuns.totalCount)
+                        / Double(indicatorCount)
+                    candidateOrdinal = min(
+                        max(Int(bucketMidpoint), 0),
+                        indicatorRuns.totalCount - 1
+                    )
+                }
 
-        for index in 0..<(points.count - 1) {
-            let startPoint = points[index]
-            let endPoint = points[index + 1]
-            let deltaX = endPoint.x - startPoint.x
-            let deltaY = endPoint.y - startPoint.y
-            let segmentLength = hypot(deltaX, deltaY)
-            guard segmentLength.isFinite, segmentLength > 0 else {
+                while runIndex < indicatorRuns.runs.count,
+                      candidateOrdinal - runStartOrdinal >= indicatorRuns.runs[runIndex].count {
+                    runStartOrdinal += indicatorRuns.runs[runIndex].count
+                    runIndex += 1
+                }
+                guard runIndex < indicatorRuns.runs.count else {
+                    break
+                }
+
+                let run = indicatorRuns.runs[runIndex]
+                let targetDistance = run.firstDistance
+                    + Double(candidateOrdinal - runStartOrdinal) * interval
+                if drawDirectionIndicator(
+                    atRouteDistance: targetDistance,
+                    visibleMapRect: visibleMapRect,
+                    geometry: geometry,
+                    zoomScale: zoomScale,
+                    in: context
+                ) {
+                    drawnIndicatorCount += 1
+                }
+            }
+        }
+
+        if drawnIndicatorCount == 0,
+           let longestVisibleRange = visibleRouteRanges.max(by: { $0.length < $1.length }) {
+            let targetDistance = (longestVisibleRange.lowerBound + longestVisibleRange.upperBound) / 2
+            _ = drawDirectionIndicator(
+                atRouteDistance: targetDistance,
+                visibleMapRect: visibleMapRect,
+                geometry: geometry,
+                zoomScale: zoomScale,
+                in: context
+            )
+        }
+    }
+
+    private func visibleRouteRanges(
+        in visibleMapRect: MKMapRect,
+        geometry: RouteGeometry
+    ) -> [VisibleRouteRange] {
+        guard visibleMapRect.origin.x.isFinite,
+              visibleMapRect.origin.y.isFinite,
+              visibleMapRect.size.width.isFinite,
+              visibleMapRect.size.height.isFinite,
+              visibleMapRect.size.width >= 0,
+              visibleMapRect.size.height >= 0 else {
+            return []
+        }
+
+        let mergeTolerance = max(geometry.length, 1) * 1e-12
+        var ranges: [VisibleRouteRange] = []
+        for chunk in geometry.chunks where chunk.intersects(visibleMapRect) {
+            for segmentIndex in chunk.segmentRange {
+                let segmentStartDistance = geometry.cumulativeLengths[segmentIndex]
+                let segmentEndDistance = geometry.cumulativeLengths[segmentIndex + 1]
+                let segmentLength = segmentEndDistance - segmentStartDistance
+                guard segmentLength.isFinite, segmentLength > 0,
+                      let progressRange = clippedProgressRange(
+                        from: geometry.mapPoints[segmentIndex],
+                        to: geometry.mapPoints[segmentIndex + 1],
+                        inside: visibleMapRect
+                      ) else {
+                    continue
+                }
+
+                let lowerBound = segmentStartDistance + segmentLength * progressRange.lowerBound
+                let upperBound = segmentStartDistance + segmentLength * progressRange.upperBound
+                guard lowerBound.isFinite,
+                      upperBound.isFinite,
+                      upperBound > lowerBound else {
+                    continue
+                }
+
+                if let lastIndex = ranges.indices.last,
+                   lowerBound <= ranges[lastIndex].upperBound + mergeTolerance {
+                    ranges[lastIndex].upperBound = max(ranges[lastIndex].upperBound, upperBound)
+                } else {
+                    ranges.append(VisibleRouteRange(lowerBound: lowerBound, upperBound: upperBound))
+                }
+            }
+        }
+        return ranges
+    }
+
+    private func clippedProgressRange(
+        from startPoint: MKMapPoint,
+        to endPoint: MKMapPoint,
+        inside mapRect: MKMapRect
+    ) -> ClosedRange<Double>? {
+        guard startPoint.x.isFinite,
+              startPoint.y.isFinite,
+              endPoint.x.isFinite,
+              endPoint.y.isFinite else {
+            return nil
+        }
+
+        let deltaX = endPoint.x - startPoint.x
+        let deltaY = endPoint.y - startPoint.y
+        let boundaries = [
+            (-deltaX, startPoint.x - mapRect.minX),
+            (deltaX, mapRect.maxX - startPoint.x),
+            (-deltaY, startPoint.y - mapRect.minY),
+            (deltaY, mapRect.maxY - startPoint.y)
+        ]
+        var lowerBound = 0.0
+        var upperBound = 1.0
+
+        for (direction, distance) in boundaries {
+            if direction == 0 {
+                guard distance >= 0 else {
+                    return nil
+                }
                 continue
             }
 
-            while nextDistance <= traversedDistance + segmentLength, drawnCount < indicatorCount {
-                let distanceInSegment = nextDistance - traversedDistance
-                let progress = distanceInSegment / segmentLength
-                let tip = CGPoint(
-                    x: startPoint.x + deltaX * progress,
-                    y: startPoint.y + deltaY * progress
-                )
-                let unit = CGVector(dx: deltaX / segmentLength, dy: deltaY / segmentLength)
-                drawIndicator(
-                    at: tip,
-                    direction: unit,
-                    zoomScale: zoomScale,
-                    in: context
-                )
+            let progress = distance / direction
+            if direction < 0 {
+                guard progress <= upperBound else {
+                    return nil
+                }
+                lowerBound = max(lowerBound, progress)
+            } else {
+                guard progress >= lowerBound else {
+                    return nil
+                }
+                upperBound = min(upperBound, progress)
+            }
+        }
 
-                drawnCount += 1
-                nextDistance += interval
+        guard lowerBound <= upperBound else {
+            return nil
+        }
+        return min(max(lowerBound, 0), 1)...min(max(upperBound, 0), 1)
+    }
+
+    private func indicatorRuns(
+        for visibleRouteRanges: [VisibleRouteRange],
+        interval: Double
+    ) -> (runs: [IndicatorRun], totalCount: Int) {
+        let phase = interval / 2
+        let rangeTolerance = interval * 1e-9
+        var runs: [IndicatorRun] = []
+        runs.reserveCapacity(visibleRouteRanges.count)
+        var totalCount = 0
+
+        for range in visibleRouteRanges {
+            let firstStep = max(ceil((range.lowerBound - phase) / interval), 0)
+            let firstDistance = phase + firstStep * interval
+            guard firstDistance.isFinite,
+                  firstDistance <= range.upperBound + rangeTolerance else {
+                continue
             }
 
-            traversedDistance += segmentLength
+            let rawCount = floor(
+                max(range.upperBound - firstDistance, 0) / interval
+            ) + 1
+            let count: Int
+            if !rawCount.isFinite || rawCount >= Double(Int.max) {
+                count = Int.max
+            } else {
+                count = max(Int(rawCount), 1)
+            }
+            runs.append(IndicatorRun(firstDistance: firstDistance, count: count))
+            let (sum, overflow) = totalCount.addingReportingOverflow(count)
+            totalCount = overflow ? Int.max : sum
         }
 
-        context.restoreGState()
+        return (runs, totalCount)
     }
 
-    private func routeDrawingPoints() -> [CGPoint] {
-        let mapPoints = polyline.points()
-        return (0..<polyline.pointCount).map { index in
-            point(for: mapPoints[index])
+    @discardableResult
+    private func drawDirectionIndicator(
+        atRouteDistance targetDistance: Double,
+        visibleMapRect: MKMapRect,
+        geometry: RouteGeometry,
+        zoomScale: MKZoomScale,
+        in context: CGContext
+    ) -> Bool {
+        guard let segmentIndex = routeSegmentIndex(
+            containing: targetDistance,
+            geometry: geometry
+        ) else {
+            return false
         }
+        let segmentStartDistance = geometry.cumulativeLengths[segmentIndex]
+        let segmentEndDistance = geometry.cumulativeLengths[segmentIndex + 1]
+        let segmentLength = segmentEndDistance - segmentStartDistance
+        guard segmentLength.isFinite, segmentLength > 0 else {
+            return false
+        }
+
+        let progress = min(
+            max((targetDistance - segmentStartDistance) / segmentLength, 0),
+            1
+        )
+        let startMapPoint = geometry.mapPoints[segmentIndex]
+        let endMapPoint = geometry.mapPoints[segmentIndex + 1]
+        let tipMapPoint = MKMapPoint(
+            x: startMapPoint.x + (endMapPoint.x - startMapPoint.x) * progress,
+            y: startMapPoint.y + (endMapPoint.y - startMapPoint.y) * progress
+        )
+        guard visibleMapRect.contains(tipMapPoint) else {
+            return false
+        }
+
+        let startPoint = point(for: startMapPoint)
+        let endPoint = point(for: endMapPoint)
+        let deltaX = endPoint.x - startPoint.x
+        let deltaY = endPoint.y - startPoint.y
+        let drawingSegmentLength = hypot(deltaX, deltaY)
+        guard drawingSegmentLength.isFinite, drawingSegmentLength > 0 else {
+            return false
+        }
+
+        drawIndicator(
+            at: point(for: tipMapPoint),
+            direction: CGVector(
+                dx: deltaX / drawingSegmentLength,
+                dy: deltaY / drawingSegmentLength
+            ),
+            zoomScale: zoomScale,
+            in: context
+        )
+        return true
     }
 
-    private func totalLength(for points: [CGPoint]) -> CGFloat {
-        guard points.count > 1 else {
-            return 0
+    private func routeGeometry() -> RouteGeometry {
+        routeGeometryLock.lock()
+        defer { routeGeometryLock.unlock() }
+        if let cachedRouteGeometry {
+            return cachedRouteGeometry
         }
 
-        return (0..<(points.count - 1)).reduce(CGFloat(0)) { length, index in
-            let startPoint = points[index]
-            let endPoint = points[index + 1]
-            return length + hypot(endPoint.x - startPoint.x, endPoint.y - startPoint.y)
+        let sourcePoints = polyline.points()
+        var mapPoints: [MKMapPoint] = []
+        mapPoints.reserveCapacity(polyline.pointCount)
+        for index in 0..<polyline.pointCount {
+            mapPoints.append(sourcePoints[index])
         }
+
+        var cumulativeLengths = Array(repeating: 0.0, count: mapPoints.count)
+        if mapPoints.count > 1 {
+            for index in 1..<mapPoints.count {
+                let previousPoint = mapPoints[index - 1]
+                let currentPoint = mapPoints[index]
+                cumulativeLengths[index] = cumulativeLengths[index - 1] + hypot(
+                    currentPoint.x - previousPoint.x,
+                    currentPoint.y - previousPoint.y
+                )
+            }
+        }
+
+        let geometry = RouteGeometry(
+            mapPoints: mapPoints,
+            cumulativeLengths: cumulativeLengths,
+            length: cumulativeLengths.last ?? 0,
+            chunks: routeGeometryChunks(for: mapPoints)
+        )
+        cachedRouteGeometry = geometry
+        return geometry
+    }
+
+    private func routeGeometryChunks(for mapPoints: [MKMapPoint]) -> [RouteGeometryChunk] {
+        let segmentCount = max(mapPoints.count - 1, 0)
+        guard segmentCount > 0 else {
+            return []
+        }
+
+        let preferredSegmentCount = 64
+        var chunks: [RouteGeometryChunk] = []
+        chunks.reserveCapacity((segmentCount + preferredSegmentCount - 1) / preferredSegmentCount)
+        var firstSegmentIndex = 0
+        while firstSegmentIndex < segmentCount {
+            let endSegmentIndex = min(firstSegmentIndex + preferredSegmentCount, segmentCount)
+            var minimumX = Double.greatestFiniteMagnitude
+            var maximumX = -Double.greatestFiniteMagnitude
+            var minimumY = Double.greatestFiniteMagnitude
+            var maximumY = -Double.greatestFiniteMagnitude
+            for pointIndex in firstSegmentIndex...endSegmentIndex {
+                let mapPoint = mapPoints[pointIndex]
+                minimumX = min(minimumX, mapPoint.x)
+                maximumX = max(maximumX, mapPoint.x)
+                minimumY = min(minimumY, mapPoint.y)
+                maximumY = max(maximumY, mapPoint.y)
+            }
+            chunks.append(
+                RouteGeometryChunk(
+                    segmentRange: firstSegmentIndex..<endSegmentIndex,
+                    minimumX: minimumX,
+                    maximumX: maximumX,
+                    minimumY: minimumY,
+                    maximumY: maximumY
+                )
+            )
+            firstSegmentIndex = endSegmentIndex
+        }
+        return chunks
+    }
+
+    private func routeSegmentIndex(
+        containing distance: Double,
+        geometry: RouteGeometry
+    ) -> Int? {
+        guard geometry.cumulativeLengths.count > 1,
+              distance.isFinite,
+              distance >= 0,
+              distance <= geometry.length else {
+            return nil
+        }
+
+        var lowerBound = 1
+        var upperBound = geometry.cumulativeLengths.count - 1
+        while lowerBound < upperBound {
+            let middleIndex = (lowerBound + upperBound) / 2
+            if geometry.cumulativeLengths[middleIndex] < distance {
+                lowerBound = middleIndex + 1
+            } else {
+                upperBound = middleIndex
+            }
+        }
+        return min(max(lowerBound - 1, 0), geometry.mapPoints.count - 2)
     }
 
     private func drawIndicator(

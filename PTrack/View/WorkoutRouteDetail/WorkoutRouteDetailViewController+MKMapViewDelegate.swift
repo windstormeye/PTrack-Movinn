@@ -18,16 +18,7 @@ extension WorkoutRouteDetailViewController: MKMapViewDelegate {
             return MKOverlayRenderer(overlay: overlay)
         }
 
-        let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
-        renderer.strokeColor = mapRouteStrokeColor
-        renderer.directionIndicatorColor = mapRouteDirectionIndicatorColor
-        renderer.lineWidth = 1.5
-        renderer.directionIndicatorLength = 14.5
-        renderer.directionIndicatorWidth = 17
-        renderer.directionIndicatorStrokeWidth = 3.4
-        renderer.lineJoin = .round
-        renderer.lineCap = .round
-        return renderer
+        return routeOverlayRenderer(for: polyline)
     }
 
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
