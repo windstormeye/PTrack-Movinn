@@ -21,6 +21,17 @@ private struct RouteCollectionSection {
     let routes: [TrackedWorkout]
 }
 
+private struct RouteCollectionICloudSyncFooterConfiguration {
+    enum State {
+        case syncing
+        case complete
+        case error
+    }
+
+    let text: String
+    let state: State
+}
+
 final class RouteCollectionViewController: UIViewController {
     private let navigationBackgroundView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let navigationBackgroundHeight: CGFloat = 124
@@ -30,10 +41,15 @@ final class RouteCollectionViewController: UIViewController {
     private let navigationSubtitleLabel = UILabel()
     private let emptyLabel = UILabel()
     private let routeGridView = WorkoutRouteGridView()
+    private let iCloudSyncFooterView = RouteCollectionICloudSyncFooterView()
     private var collectionView: UICollectionView!
     private var routes: [TrackedWorkout] = []
     private var routeSections: [RouteCollectionSection] = []
     private var loadingIDs: [UUID] = []
+    private var iCloudSyncFooterHeightConstraint: Constraint?
+    private var isICloudSyncFooterVisible = false
+
+    private let iCloudSyncFooterContentHeight: CGFloat = 48
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -61,6 +77,11 @@ final class RouteCollectionViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         collectionView.collectionViewLayout.invalidateLayout()
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        updateICloudSyncFooterHeight()
     }
 
     private func configureNavigationItem() {
@@ -164,10 +185,20 @@ final class RouteCollectionViewController: UIViewController {
         )
         collectionView.scrollIndicatorInsets = collectionView.contentInset
 
+        iCloudSyncFooterView.backgroundColor = .systemBackground
+        iCloudSyncFooterView.configure(with: nil)
+
         view.addSubview(routeGridView)
+        view.addSubview(iCloudSyncFooterView)
 
         routeGridView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
+            make.top.leading.trailing.equalToSuperview()
+            make.bottom.equalTo(iCloudSyncFooterView.snp.top)
+        }
+
+        iCloudSyncFooterView.snp.makeConstraints { make in
+            make.leading.trailing.bottom.equalToSuperview()
+            iCloudSyncFooterHeightConstraint = make.height.equalTo(0).constraint
         }
     }
 
@@ -279,23 +310,66 @@ final class RouteCollectionViewController: UIViewController {
         guard progress.isEnabled else {
             navigationSubtitleLabel.text = nil
             navigationSubtitleLabel.isHidden = true
+            setICloudSyncFooter(configuration: nil)
             navigationTitleStackView.sizeToFit()
             return
         }
 
         navigationSubtitleLabel.isHidden = false
-        if progress.isSynchronizing || !progress.isComplete {
-            navigationSubtitleLabel.text = String(
-                format: AppLocalization.text(.routeCollectionICloudSyncProgressFormat),
-                progress.completedCount,
-                progress.totalCount
+        navigationSubtitleLabel.text = AppLocalization.text(.iCloudRouteSyncAlreadyEnabled)
+        navigationSubtitleLabel.textColor = AppColors.movinnGreen
+
+        let remainingCount = max(progress.totalCount - progress.completedCount, 0)
+        let footerConfiguration: RouteCollectionICloudSyncFooterConfiguration
+        if progress.errorDescription != nil {
+            footerConfiguration = RouteCollectionICloudSyncFooterConfiguration(
+                text: String(
+                    format: AppLocalization.text(.routeCollectionICloudSyncFooterErrorFormat),
+                    remainingCount,
+                    progress.totalCount
+                ),
+                state: .error
             )
-            navigationSubtitleLabel.textColor = .secondaryLabel
+        } else if progress.isSynchronizing || remainingCount > 0 {
+            let footerText: String
+            if progress.totalCount == 0 {
+                footerText = AppLocalization.text(.routeCollectionICloudSyncFooterPreparing)
+            } else {
+                footerText = String(
+                    format: AppLocalization.text(.routeCollectionICloudSyncFooterPendingFormat),
+                    remainingCount,
+                    progress.totalCount
+                )
+            }
+            footerConfiguration = RouteCollectionICloudSyncFooterConfiguration(
+                text: footerText,
+                state: .syncing
+            )
         } else {
-            navigationSubtitleLabel.text = AppLocalization.text(.routeCollectionICloudSyncComplete)
-            navigationSubtitleLabel.textColor = AppColors.movinnGreen
+            footerConfiguration = RouteCollectionICloudSyncFooterConfiguration(
+                text: String(
+                    format: AppLocalization.text(.routeCollectionICloudSyncFooterCompleteFormat),
+                    progress.totalCount
+                ),
+                state: .complete
+            )
         }
+
+        setICloudSyncFooter(configuration: footerConfiguration)
         navigationTitleStackView.sizeToFit()
+    }
+
+    private func setICloudSyncFooter(configuration: RouteCollectionICloudSyncFooterConfiguration?) {
+        isICloudSyncFooterVisible = configuration != nil
+        iCloudSyncFooterView.configure(with: configuration)
+        updateICloudSyncFooterHeight()
+    }
+
+    private func updateICloudSyncFooterHeight() {
+        let height = isICloudSyncFooterVisible
+            ? iCloudSyncFooterContentHeight + view.safeAreaInsets.bottom
+            : 0
+        iCloudSyncFooterHeightConstraint?.update(offset: height)
     }
 
     private func reloadRoutes(importsPendingSharedRoutes: Bool) {
@@ -581,5 +655,86 @@ final class RouteCollectionViewController: UIViewController {
 extension RouteCollectionViewController: UIDocumentPickerDelegate {
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         importGPXFiles(at: urls.filter { $0.pathExtension.lowercased() == "gpx" })
+    }
+}
+
+private final class RouteCollectionICloudSyncFooterView: UIView {
+    private let stackView = UIStackView()
+    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private let imageView = UIImageView()
+    private let titleLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    func configure(with configuration: RouteCollectionICloudSyncFooterConfiguration?) {
+        guard let configuration else {
+            isHidden = true
+            activityIndicator.stopAnimating()
+            imageView.image = nil
+            titleLabel.text = nil
+            return
+        }
+
+        isHidden = false
+        titleLabel.text = configuration.text
+
+        switch configuration.state {
+        case .syncing:
+            imageView.isHidden = true
+            activityIndicator.isHidden = false
+            activityIndicator.startAnimating()
+        case .complete:
+            activityIndicator.stopAnimating()
+            activityIndicator.isHidden = true
+            imageView.isHidden = false
+            imageView.image = UIImage(systemName: "checkmark.icloud")
+            imageView.tintColor = AppColors.movinnGreen
+        case .error:
+            activityIndicator.stopAnimating()
+            activityIndicator.isHidden = true
+            imageView.isHidden = false
+            imageView.image = UIImage(systemName: "exclamationmark.icloud")
+            imageView.tintColor = .systemOrange
+        }
+    }
+
+    private func configureViews() {
+        stackView.axis = .horizontal
+        stackView.alignment = .center
+        stackView.spacing = 7
+
+        imageView.contentMode = .scaleAspectFit
+        imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        imageView.setContentHuggingPriority(.required, for: .horizontal)
+        imageView.isHidden = true
+
+        activityIndicator.hidesWhenStopped = true
+        activityIndicator.transform = CGAffineTransform(scaleX: 0.76, y: 0.76)
+        activityIndicator.setContentHuggingPriority(.required, for: .horizontal)
+
+        titleLabel.textColor = .secondaryLabel
+        titleLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 2
+
+        stackView.addArrangedSubview(activityIndicator)
+        stackView.addArrangedSubview(imageView)
+        stackView.addArrangedSubview(titleLabel)
+
+        addSubview(stackView)
+        stackView.snp.makeConstraints { make in
+            make.centerX.equalToSuperview()
+            make.bottom.equalTo(safeAreaLayoutGuide.snp.bottom).inset(8)
+            make.leading.greaterThanOrEqualToSuperview().offset(24)
+            make.trailing.lessThanOrEqualToSuperview().inset(24)
+        }
     }
 }

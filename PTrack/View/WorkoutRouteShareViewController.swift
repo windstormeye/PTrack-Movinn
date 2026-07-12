@@ -102,6 +102,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var hasShownInitialBackgroundAdjustmentToast = false
     private var isExportChromeHidden = false
     private var hasPreparedForPermanentDismissal = false
+    private var hasRecordedReviewTrigger = false
 
     private var photoItems: [SharePhotoItem]
     private var selectedPhotoIndex: Int?
@@ -300,6 +301,10 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        if !hasRecordedReviewTrigger {
+            hasRecordedReviewTrigger = true
+            AppReviewPromptManager.shared.record(.routeShareVisited)
+        }
         disableInteractivePopGesture()
         DispatchQueue.main.async { [weak self] in
             self?.disableInteractivePopGesture()

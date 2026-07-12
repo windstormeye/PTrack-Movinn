@@ -87,12 +87,13 @@ return TrackedWorkout(
 
 ### 本地存储与 iCloud 同步
 
-导入路线会被保存为 `TrackedWorkout` JSON：
+导入路线会在本地缓存为 `TrackedWorkout` JSON，并在用户开启同步后导出为 iCloud Documents 中的 GPX：
 
 - `RouteCollectionStore.save(_:)`
-- `RouteCollectionCloudSyncStore.upsert(routes:)`
+- `GPXRouteExporter.iCloudDocumentData(for:)`
+- `RouteCollectionICloudDocumentsStore.upsert(routes:)`
 
-这点很关键：只要自定义标签点成为 `TrackedWorkout` 的可选 `Codable` 字段，本地缓存和 iCloud route collection 同步都可以顺带保留它。
+因此自定义标签点除了进入本地 `TrackedWorkout` 模型，还需要按本文设计写入 GPX 的 `<wpt>` / `<extensions>`，才能通过 iCloud Documents 跨设备保留；不能只依赖新增 `Codable` 字段。
 
 Swift `Codable` 对新增可选字段比较友好，因此可以做成向后兼容的迁移。
 
@@ -415,7 +416,7 @@ struct GPXParsedRoute {
 - 旧 GPX 仍能导入。
 - 旧本地 route collection JSON 仍能 decode。
 - Apple Health 和 Strava 来源的 `TrackedWorkout` 不受影响。
-- iCloud route collection 同步可以保留标签点。
+- iCloud Documents 中的 GPX 往返后仍可保留标签点。
 
 ## 暂不实现时的记录
 

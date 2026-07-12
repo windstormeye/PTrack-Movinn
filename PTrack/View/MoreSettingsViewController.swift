@@ -43,6 +43,7 @@ final class MoreSettingsViewController: UIViewController {
                 items.append(.developerTools)
                 #endif
                 items.append(.demoMode)
+                items.append(.checkForUpdates)
                 items.append(.developerWebsite)
                 return items
             }
@@ -59,6 +60,7 @@ final class MoreSettingsViewController: UIViewController {
         case strava
         case systemPhotos
         case demoMode
+        case checkForUpdates
         #if DEBUG
         case developerTools
         #endif
@@ -84,6 +86,8 @@ final class MoreSettingsViewController: UIViewController {
                 return .systemPhotos
             case .demoMode:
                 return .demoModeEntry
+            case .checkForUpdates:
+                return .checkForUpdates
             #if DEBUG
             case .developerTools:
                 return .developerTools
@@ -113,6 +117,8 @@ final class MoreSettingsViewController: UIViewController {
                 return "photo.on.rectangle"
             case .demoMode:
                 return "play.circle"
+            case .checkForUpdates:
+                return "arrow.triangle.2.circlepath"
             #if DEBUG
             case .developerTools:
                 return "hammer.fill"
@@ -339,8 +345,10 @@ final class MoreSettingsViewController: UIViewController {
                 return nil
             }
         case .iCloudRouteSync:
-            return RouteCollectionCloudSyncSettings.isEnabled ? .connected : nil
-        case .proStatus, .appLanguage, .appearanceSettings, .widgets, .demoMode, .developerWebsite:
+            return RouteCollectionCloudSyncSettings.isEnabled
+                && ProSubscriptionManager.shared.isProUser ? .connected : nil
+        case .proStatus, .appLanguage, .appearanceSettings, .widgets, .demoMode,
+             .checkForUpdates, .developerWebsite:
             return nil
         #if DEBUG
         case .developerTools:
@@ -549,6 +557,34 @@ final class MoreSettingsViewController: UIViewController {
     }
 
     private func handleRouteCollectionCloudSyncSelection() {
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.refreshAccess()
+            guard ProSubscriptionManager.shared.isProUser else {
+                presentProPaywall { [weak self] in
+                    self?.resumeRouteCollectionCloudSyncAfterUnlock()
+                }
+                return
+            }
+
+            handleUnlockedRouteCollectionCloudSyncSelection()
+        }
+    }
+
+    private func resumeRouteCollectionCloudSyncAfterUnlock() {
+        guard RouteCollectionCloudSyncSettings.isEnabled else {
+            handleUnlockedRouteCollectionCloudSyncSelection()
+            return
+        }
+
+        RouteCollectionCloudSyncCoordinator.shared.startIfEnabled()
+        collectionView.reloadData()
+    }
+
+    private func handleUnlockedRouteCollectionCloudSyncSelection() {
         guard RouteCollectionCloudSyncSettings.isEnabled else {
             presentEnableRouteCollectionCloudSyncAlert()
             return
@@ -613,7 +649,7 @@ final class MoreSettingsViewController: UIViewController {
     }
 
     private func disableRouteCollectionCloudSync() {
-        RouteCollectionCloudSyncSettings.setEnabled(false)
+        RouteCollectionCloudSyncCoordinator.shared.disableSync()
         collectionView.reloadData()
         Toast.show(AppLocalization.text(.iCloudRouteSyncDisabled), in: view)
     }
@@ -805,7 +841,8 @@ extension MoreSettingsViewController: UICollectionViewDataSource {
                 title: AppLocalization.text(item.titleKey),
                 indicatorColor: indicatorColor
             )
-        case .appLanguage, .appearanceSettings, .widgets, .demoMode, .developerWebsite:
+        case .appLanguage, .appearanceSettings, .widgets, .demoMode, .checkForUpdates,
+             .developerWebsite:
             cell.configureSystemIcon(
                 iconName: item.iconName,
                 title: AppLocalization.text(item.titleKey),
@@ -868,6 +905,8 @@ extension MoreSettingsViewController: UICollectionViewDelegate {
             handlePhotoLibrarySelection()
         case .demoMode:
             DemoModeCoordinator.activate(from: self)
+        case .checkForUpdates:
+            AppUpdateManager.shared.checkManually(from: self)
         #if DEBUG
         case .developerTools:
             presentDeveloperTools()

@@ -23,6 +23,7 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>strava</string>
+		<string>fitnessapp</string>
 	</array>
 	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
 	<dict>
@@ -35,6 +36,18 @@
 	<string>Movinn 需要保存你生成的轨迹分享图片和 Live Photo。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Movinn 需要读取你在轨迹附近拍摄的照片，用于生成分享图片。</string>
+	<key>NSUbiquitousContainers</key>
+	<dict>
+		<key>iCloud.studio.pj.app.PTrack</key>
+		<dict>
+			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
+			<true/>
+			<key>NSUbiquitousContainerName</key>
+			<string>Movinn</string>
+			<key>NSUbiquitousContainerSupportedFolderLevels</key>
+			<string>Any</string>
+		</dict>
+	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

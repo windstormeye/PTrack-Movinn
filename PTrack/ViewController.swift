@@ -21,6 +21,11 @@ class ViewController: UIViewController {
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
+    private enum AppleFitnessDestination {
+        static let applicationURLString = "fitnessapp://"
+        static let appStoreURLString = "https://apps.apple.com/app/apple-fitness/id1208224953"
+    }
+
     private enum RouteBookPanelDetent {
         case minimum
         case medium
@@ -244,6 +249,9 @@ class ViewController: UIViewController {
         navigationController?.setNavigationBarHidden(true, animated: animated)
         clearRouteImportIndicatorsIfNeededOnHomeAppear()
         applyRouteBookInterfaceState()
+        #if DEBUG
+        updateTotalDistanceText()
+        #endif
         updateDemoModeEntryVisibility()
         updateFullScreenInsets(force: true)
     }
@@ -254,9 +262,13 @@ class ViewController: UIViewController {
         presentRouteBookPanelSheetIfNeeded()
         openRouteCollectionIfRequested()
         DispatchQueue.main.async { [weak self] in
-            self?.updateFullScreenInsets(force: true)
-            self?.presentRouteBookPanelSheetIfNeeded()
-            self?.openRouteCollectionIfRequested()
+            guard let self else {
+                return
+            }
+            updateFullScreenInsets(force: true)
+            presentRouteBookPanelSheetIfNeeded()
+            openRouteCollectionIfRequested()
+            AppReviewPromptManager.shared.requestIfNeeded(from: self)
         }
     }
 
@@ -1035,6 +1047,9 @@ class ViewController: UIViewController {
         emptyDataSourceView.onStravaTap = { [weak self] in
             self?.handleEmptyStravaSelection()
         }
+        emptyDataSourceView.onAppleFitnessTap = { [weak self] in
+            self?.openAppleFitness()
+        }
         emptyDataSourceView.isHidden = true
 
         view.addSubview(emptyDataSourceView)
@@ -1135,7 +1150,17 @@ class ViewController: UIViewController {
     }
 
     private var hasReadableDataSourceAuthorization: Bool {
-        store.authorizationState == .authorized || StravaManager.shared.hasStoredAuthorization
+        isSimulatingHomeEmptyData
+            || store.authorizationState == .authorized
+            || StravaManager.shared.hasStoredAuthorization
+    }
+
+    private var isSimulatingHomeEmptyData: Bool {
+        #if DEBUG
+        HomeEmptyDataDebugStore.isEnabled
+        #else
+        false
+        #endif
     }
 
     private var hasUserSelectedPrimaryDataSource: Bool {
@@ -1145,7 +1170,9 @@ class ViewController: UIViewController {
     }
 
     private var shouldShowHomeDemoModeEntry: Bool {
-        !isRouteBookModeActive && !hasUserSelectedPrimaryDataSource
+        !isRouteBookModeActive
+            && !isSimulatingHomeEmptyData
+            && !hasUserSelectedPrimaryDataSource
     }
 
     private func updateDemoModeEntryVisibility() {
@@ -1163,6 +1190,7 @@ class ViewController: UIViewController {
         let shouldShowLoadingIndicator = (activeLoadingOperationCount > 0 || isNewDataSyncInProgress)
             && hasReadableDataSourceAuthorization
             && !isRouteBookModeActive
+            && !isSimulatingHomeEmptyData
 
         if shouldShowLoadingIndicator {
             totalDistanceTrailingToMoreConstraint?.activate()
@@ -1421,15 +1449,19 @@ class ViewController: UIViewController {
     }
 
     private func updateTotalDistanceText() {
-        if isNewDataSyncInProgress {
+        if isNewDataSyncInProgress, !isSimulatingHomeEmptyData {
             totalDistanceLabel.text = AppLocalization.text(.newDataSyncing)
             updateHeaderReadAuthorizationState()
             updateEmptyDataSourceVisibility()
             return
         }
 
-        let displayedTotalDistanceMeters = cachedWorkoutSummary?.totalDistanceMeters ?? totalDistanceMeters
-        let displayedWorkoutCount = cachedWorkoutSummary?.workoutCount ?? workouts.count
+        let displayedTotalDistanceMeters = isSimulatingHomeEmptyData
+            ? 0
+            : (cachedWorkoutSummary?.totalDistanceMeters ?? totalDistanceMeters)
+        let displayedWorkoutCount = isSimulatingHomeEmptyData
+            ? 0
+            : (cachedWorkoutSummary?.workoutCount ?? workouts.count)
         let totalKilometers = displayedTotalDistanceMeters / 1000
         let distanceText = AppLocalization.format(.totalDistanceFormat, Int(totalKilometers.rounded()))
         let activityCountText = AppLocalization.format(.totalActivityCountFormat, displayedWorkoutCount)
@@ -1439,14 +1471,20 @@ class ViewController: UIViewController {
     }
 
     private func updateEmptyDataSourceVisibility() {
-        emptyDataSourceView.updateAuthorizationState(appleHealth: store.authorizationState)
+        let displayedAppleHealthAuthorizationState: HealthWorkoutStore.AuthorizationState = isSimulatingHomeEmptyData
+            ? .authorized
+            : store.authorizationState
+        emptyDataSourceView.updateAuthorizationState(appleHealth: displayedAppleHealthAuthorizationState)
 
-        guard !isRouteBookModeActive, workouts.isEmpty else {
+        guard !isRouteBookModeActive,
+              isSimulatingHomeEmptyData || workouts.isEmpty else {
             emptyDataSourceView.isHidden = true
             return
         }
 
-        if isDataSourceSyncInProgress {
+        if isSimulatingHomeEmptyData {
+            emptyDataSourceView.setMode(.noData)
+        } else if isDataSourceSyncInProgress {
             emptyDataSourceView.setMode(.loading)
         } else if hasReadableDataSourceAuthorization {
             emptyDataSourceView.setMode(.noData)
@@ -2722,6 +2760,19 @@ class ViewController: UIViewController {
         }
     }
 
+    private func openAppleFitness() {
+        guard let applicationURL = URL(string: AppleFitnessDestination.applicationURLString),
+              let appStoreURL = URL(string: AppleFitnessDestination.appStoreURLString) else {
+            return
+        }
+
+        if UIApplication.shared.canOpenURL(applicationURL) {
+            UIApplication.shared.open(applicationURL)
+        } else {
+            UIApplication.shared.open(appStoreURL)
+        }
+    }
+
     private func presentSimpleAlert(title: String, message: String?) {
         let alertController = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alertController.addAction(UIAlertAction(title: AppLocalization.text(.ok), style: .default))
@@ -3534,8 +3585,9 @@ class ViewController: UIViewController {
         routeBookLocateButton.isHidden = !isRouteBookModeActive
         routeBookMapStyleButton.isHidden = !isRouteBookModeActive
         setRouteBookScaleViewVisible(isRouteBookModeActive)
-        routeGridView.isHidden = isRouteBookModeActive
-        collectionView.isHidden = isRouteBookModeActive
+        let hidesRouteGrid = isRouteBookModeActive || isSimulatingHomeEmptyData
+        routeGridView.isHidden = hidesRouteGrid
+        collectionView.isHidden = hidesRouteGrid
         updateDemoModeEntryVisibility()
         headerView.backgroundColor = isRouteBookModeActive ? .clear : AppColors.solidBackground
         headerBlurView.isHidden = true
@@ -3987,10 +4039,15 @@ private enum HomeDataSourceEmptyMode {
 private final class HomeDataSourceEmptyView: UIView {
     var onAppleHealthTap: (() -> Void)?
     var onStravaTap: (() -> Void)?
+    var onAppleFitnessTap: (() -> Void)?
 
     private var mode: HomeDataSourceEmptyMode = .authorization
+    private var isAppleHealthAuthorized = false
     private let stackView = UIStackView()
+    private let noDataStackView = UIStackView()
     private let messageLabel = UILabel()
+    private let appleFitnessButtonContainer = UIView()
+    private let appleFitnessButton = HomeAppleFitnessButton()
     private let appleHealthCard = HomeDataSourceCardView(style: .appleHealth)
     private let stravaCard = HomeDataSourceCardView(style: .strava)
     private let privacyLabel = UILabel()
@@ -4016,6 +4073,7 @@ private final class HomeDataSourceEmptyView: UIView {
             title: AppLocalization.text(.strava),
             subtitle: AppLocalization.text(.stravaDataSourceSubtitle)
         )
+        appleFitnessButton.configure(title: AppLocalization.text(.appleFitnessDownloadCTA))
         privacyLabel.attributedText = privacyStatementAttributedText(
             AppLocalization.text(.movinnLocalDataPrivacyStatement)
         )
@@ -4032,12 +4090,14 @@ private final class HomeDataSourceEmptyView: UIView {
     }
 
     func updateAuthorizationState(appleHealth state: HealthWorkoutStore.AuthorizationState) {
+        isAppleHealthAuthorized = state == .authorized
         switch state {
         case .authorized:
             appleHealthCard.setStatusIndicatorColor(AppColors.movinnGreen)
         case .notDetermined, .needsAttention:
             appleHealthCard.setStatusIndicatorColor(nil)
         }
+        updateAppleFitnessButtonVisibility()
     }
 
     private func updateMessageText() {
@@ -4053,9 +4113,15 @@ private final class HomeDataSourceEmptyView: UIView {
 
     private func applyMode() {
         stackView.isHidden = mode != .authorization
-        messageLabel.isHidden = mode == .authorization
-        isUserInteractionEnabled = mode == .authorization
+        noDataStackView.isHidden = mode == .authorization
+        updateAppleFitnessButtonVisibility()
         updateMessageText()
+    }
+
+    private func updateAppleFitnessButtonVisibility() {
+        let shouldShowButton = mode == .noData && isAppleHealthAuthorized
+        appleFitnessButtonContainer.isHidden = !shouldShowButton
+        isUserInteractionEnabled = mode == .authorization || shouldShowButton
     }
 
     private func privacyStatementAttributedText(_ text: String) -> NSAttributedString {
@@ -4082,6 +4148,11 @@ private final class HomeDataSourceEmptyView: UIView {
         stackView.alignment = .fill
         stackView.spacing = 12
 
+        noDataStackView.axis = .vertical
+        noDataStackView.alignment = .fill
+        noDataStackView.spacing = 16
+        noDataStackView.isHidden = true
+
         privacyLabel.textColor = .secondaryLabel
         privacyLabel.font = .systemFont(ofSize: 12, weight: .medium)
         privacyLabel.numberOfLines = 0
@@ -4091,7 +4162,6 @@ private final class HomeDataSourceEmptyView: UIView {
         messageLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         messageLabel.numberOfLines = 0
         messageLabel.textAlignment = .center
-        messageLabel.isHidden = true
 
         appleHealthCard.addAction(UIAction { [weak self] _ in
             self?.onAppleHealthTap?()
@@ -4099,22 +4169,40 @@ private final class HomeDataSourceEmptyView: UIView {
         stravaCard.addAction(UIAction { [weak self] _ in
             self?.onStravaTap?()
         }, for: .touchUpInside)
+        appleFitnessButton.addAction(UIAction { [weak self] _ in
+            self?.onAppleFitnessTap?()
+        }, for: .touchUpInside)
 
         addSubview(stackView)
-        addSubview(messageLabel)
+        addSubview(noDataStackView)
+        appleFitnessButtonContainer.addSubview(appleFitnessButton)
         stackView.addArrangedSubview(appleHealthCard)
         stackView.addArrangedSubview(stravaCard)
         stackView.setCustomSpacing(16, after: stravaCard)
         stackView.addArrangedSubview(privacyLabel)
+        noDataStackView.addArrangedSubview(messageLabel)
+        noDataStackView.addArrangedSubview(appleFitnessButtonContainer)
 
         stackView.snp.makeConstraints { make in
             make.top.bottom.equalToSuperview()
             make.leading.trailing.equalToSuperview()
         }
 
-        messageLabel.snp.makeConstraints { make in
+        noDataStackView.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
             make.centerY.equalToSuperview()
+        }
+
+        appleFitnessButtonContainer.snp.makeConstraints { make in
+            make.height.greaterThanOrEqualTo(44)
+        }
+
+        appleFitnessButton.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.top.greaterThanOrEqualToSuperview()
+            make.bottom.lessThanOrEqualToSuperview()
+            make.leading.greaterThanOrEqualToSuperview().offset(12)
+            make.trailing.lessThanOrEqualToSuperview().inset(12)
         }
 
         appleHealthCard.snp.makeConstraints { make in
@@ -4122,6 +4210,103 @@ private final class HomeDataSourceEmptyView: UIView {
         }
         stravaCard.snp.makeConstraints { make in
             make.height.equalTo(76)
+        }
+    }
+}
+
+private final class HomeAppleFitnessButton: UIControl {
+    private let capsuleBackgroundView = UIView()
+    private let contentStackView = UIStackView()
+    private let iconBackgroundView = UIView()
+    private let iconView = UIImageView()
+    private let titleLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        configureViews()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureViews()
+    }
+
+    override var isHighlighted: Bool {
+        didSet {
+            UIView.animate(withDuration: 0.14) {
+                self.alpha = self.isHighlighted ? 0.7 : 1
+                self.transform = self.isHighlighted
+                    ? CGAffineTransform(scaleX: 0.985, y: 0.985)
+                    : .identity
+            }
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        capsuleBackgroundView.layer.cornerRadius = capsuleBackgroundView.bounds.height / 2
+    }
+
+    func configure(title: String) {
+        titleLabel.text = title
+        accessibilityLabel = title
+    }
+
+    private func configureViews() {
+        backgroundColor = .clear
+
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+
+        capsuleBackgroundView.backgroundColor = AppColors.cardBackground
+        capsuleBackgroundView.layer.cornerCurve = .continuous
+        capsuleBackgroundView.layer.masksToBounds = true
+        capsuleBackgroundView.isUserInteractionEnabled = false
+
+        contentStackView.axis = .horizontal
+        contentStackView.alignment = .center
+        contentStackView.spacing = 8
+        contentStackView.isUserInteractionEnabled = false
+
+        iconBackgroundView.backgroundColor = UIColor(white: 0.08, alpha: 1)
+        iconBackgroundView.layer.cornerRadius = 6
+        iconBackgroundView.layer.cornerCurve = .continuous
+        iconBackgroundView.layer.masksToBounds = true
+
+        iconView.image = UIImage(named: "apple_fitness")?.withRenderingMode(.alwaysOriginal)
+        iconView.contentMode = .scaleAspectFit
+
+        titleLabel.textColor = .label
+        titleLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
+            for: .systemFont(ofSize: 13, weight: .semibold)
+        )
+        titleLabel.numberOfLines = 2
+        titleLabel.textAlignment = .left
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        addSubview(capsuleBackgroundView)
+        capsuleBackgroundView.addSubview(contentStackView)
+        iconBackgroundView.addSubview(iconView)
+        contentStackView.addArrangedSubview(iconBackgroundView)
+        contentStackView.addArrangedSubview(titleLabel)
+
+        capsuleBackgroundView.snp.makeConstraints { make in
+            make.top.bottom.equalToSuperview().inset(3)
+            make.leading.trailing.equalToSuperview()
+            make.height.greaterThanOrEqualTo(38)
+        }
+        contentStackView.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(12)
+            make.trailing.equalToSuperview().inset(13)
+            make.top.bottom.equalToSuperview().inset(7)
+        }
+        iconBackgroundView.snp.makeConstraints { make in
+            make.size.equalTo(24)
+        }
+        iconView.snp.makeConstraints { make in
+            make.edges.equalToSuperview().inset(2.5)
         }
     }
 }

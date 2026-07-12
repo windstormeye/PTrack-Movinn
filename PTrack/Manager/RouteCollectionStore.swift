@@ -9,8 +9,21 @@ import CoreLocation
 import Foundation
 import HealthKit
 
-final class RouteCollectionStore {
+nonisolated final class RouteCollectionStore {
     static let didChangeNotification = Notification.Name("studio.pj.PTrack.routeCollectionDidChange")
+
+    private struct RouteFileFingerprint: Equatable {
+        let modificationDate: Date?
+        let fileSize: Int64?
+    }
+
+    private struct CachedRouteFile {
+        let fingerprint: RouteFileFingerprint
+        let route: TrackedWorkout
+    }
+
+    private static let ioLock = NSRecursiveLock()
+    private static var decodedRouteCacheByPath: [String: CachedRouteFile] = [:]
 
     private let directoryURL: URL
     private let manifestFileURL: URL
@@ -27,6 +40,9 @@ final class RouteCollectionStore {
     }
 
     func load() -> [TrackedWorkout] {
+        Self.ioLock.lock()
+        defer { Self.ioLock.unlock() }
+
         if let splitRoutes = loadSplitCache() {
             return splitRoutes
         }
@@ -35,6 +51,9 @@ final class RouteCollectionStore {
     }
 
     func loadRoute(id: String) -> TrackedWorkout? {
+        Self.ioLock.lock()
+        defer { Self.ioLock.unlock() }
+
         let fileURL = routeFileURL(for: id)
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
@@ -50,26 +69,46 @@ final class RouteCollectionStore {
     }
 
     @discardableResult
+    @MainActor
     func append(_ workout: TrackedWorkout) -> [TrackedWorkout] {
         append([workout])
     }
 
     @discardableResult
+    @MainActor
     func append(_ workouts: [TrackedWorkout]) -> [TrackedWorkout] {
+        Self.ioLock.lock()
+        defer { Self.ioLock.unlock() }
+
         guard !workouts.isEmpty else {
             return load()
         }
 
+        var incomingRoutesByID: [String: TrackedWorkout] = [:]
+        var incomingRouteIDOrder: [String] = []
+        for workout in workouts {
+            if incomingRoutesByID[workout.id] == nil {
+                incomingRouteIDOrder.append(workout.id)
+            }
+            incomingRoutesByID[workout.id] = workout
+        }
+        let incomingRoutes = incomingRouteIDOrder.compactMap { incomingRoutesByID[$0] }
+
         var routes = load()
-        routes.append(contentsOf: workouts)
+        let incomingRouteIDs = Set(incomingRoutes.map(\.id))
+        routes.removeAll { incomingRouteIDs.contains($0.id) }
+        routes.append(contentsOf: incomingRoutes)
         routes = deduplicated(sorted(routes))
         save(routes)
         NotificationCenter.default.post(name: Self.didChangeNotification, object: routes)
-        RouteCollectionCloudSyncCoordinator.shared.handleRoutesAppended(workouts)
+        RouteCollectionCloudSyncCoordinator.shared.handleRoutesAppended(incomingRoutes)
         return routes
     }
 
     func save(_ routes: [TrackedWorkout]) {
+        Self.ioLock.lock()
+        defer { Self.ioLock.unlock() }
+
         do {
             try FileManager.default.createDirectory(at: routesDirectoryURL, withIntermediateDirectories: true)
 
@@ -86,6 +125,7 @@ final class RouteCollectionStore {
                     try data.write(to: fileURL, options: [.atomic])
                     writtenRouteFileCount += 1
                 }
+                cache(route: route, at: fileURL)
             }
 
             let removedRouteFileCount = removeStaleRouteFiles(currentFileNames: currentFileNames)
@@ -106,6 +146,9 @@ final class RouteCollectionStore {
 
     @discardableResult
     func replace(with routes: [TrackedWorkout]) -> [TrackedWorkout] {
+        Self.ioLock.lock()
+        defer { Self.ioLock.unlock() }
+
         let normalizedRoutes = deduplicated(sorted(routes))
         guard !routesAreEquivalent(load(), normalizedRoutes) else {
             return normalizedRoutes
@@ -117,7 +160,22 @@ final class RouteCollectionStore {
     }
 
     @discardableResult
+    func replaceAfterExternalComparison(with routes: [TrackedWorkout]) -> [TrackedWorkout] {
+        Self.ioLock.lock()
+        defer { Self.ioLock.unlock() }
+
+        let normalizedRoutes = deduplicated(sorted(routes))
+        save(normalizedRoutes)
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: normalizedRoutes)
+        return normalizedRoutes
+    }
+
+    @discardableResult
+    @MainActor
     func delete(_ workout: TrackedWorkout) -> [TrackedWorkout] {
+        Self.ioLock.lock()
+        defer { Self.ioLock.unlock() }
+
         var routes = load()
         let originalCount = routes.count
         routes.removeAll { $0.id == workout.id }
@@ -164,6 +222,8 @@ final class RouteCollectionStore {
 
         var routes: [TrackedWorkout] = []
         routes.reserveCapacity(fileURLs.count)
+        var totalByteCount: Int64 = 0
+        var existingPaths = Set<String>()
 
         for fileURL in fileURLs {
             guard FileManager.default.fileExists(atPath: fileURL.path) else {
@@ -171,18 +231,36 @@ final class RouteCollectionStore {
                 continue
             }
 
+            let path = fileURL.standardizedFileURL.path
+            existingPaths.insert(path)
+            let fingerprint = routeFileFingerprint(at: fileURL)
+            totalByteCount += fingerprint.fileSize ?? 0
+            if let cachedFile = Self.decodedRouteCacheByPath[path],
+               cachedFile.fingerprint == fingerprint {
+                routes.append(cachedFile.route)
+                continue
+            }
+
             do {
                 let data = try Data(contentsOf: fileURL)
                 let route = try JSONDecoder().decode(TrackedWorkout.self, from: data)
                 routes.append(route)
+                Self.decodedRouteCacheByPath[path] = CachedRouteFile(
+                    fingerprint: fingerprint,
+                    route: route
+                )
             } catch {
                 print("PTrack Route Collection: failed to decode route cache file \(fileURL.lastPathComponent): \(error)")
             }
         }
 
+        Self.decodedRouteCacheByPath = Self.decodedRouteCacheByPath.filter {
+            existingPaths.contains($0.key)
+        }
+
         let sortedRoutes = sorted(routes)
         print(
-            "PTrack Route Collection: loaded \(sortedRoutes.count) routes, files: \(fileURLs.count), size: \(Self.formattedByteCount(totalSplitCacheByteCount())), path: \(routesDirectoryURL.path)"
+            "PTrack Route Collection: loaded \(sortedRoutes.count) routes, files: \(fileURLs.count), size: \(Self.formattedByteCount(totalByteCount)), path: \(routesDirectoryURL.path)"
         )
         return sortedRoutes
     }
@@ -203,7 +281,7 @@ final class RouteCollectionStore {
     private func existingRouteFileURLs() -> [URL] {
         guard let fileURLs = try? FileManager.default.contentsOfDirectory(
             at: routesDirectoryURL,
-            includingPropertiesForKeys: [.fileSizeKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else {
             return []
@@ -223,6 +301,7 @@ final class RouteCollectionStore {
         for fileURL in existingRouteFileURLs() where !currentFileNames.contains(fileURL.lastPathComponent) {
             do {
                 try FileManager.default.removeItem(at: fileURL)
+                Self.decodedRouteCacheByPath.removeValue(forKey: fileURL.standardizedFileURL.path)
                 removedFileCount += 1
             } catch {
                 print("PTrack Route Collection: failed to remove stale route file \(fileURL.lastPathComponent): \(error)")
@@ -232,11 +311,19 @@ final class RouteCollectionStore {
         return removedFileCount
     }
 
-    private func totalSplitCacheByteCount() -> Int64 {
-        existingRouteFileURLs().reduce(Int64(0)) { total, fileURL in
-            let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
-            return total + Int64(values?.fileSize ?? 0)
-        }
+    private func cache(route: TrackedWorkout, at fileURL: URL) {
+        Self.decodedRouteCacheByPath[fileURL.standardizedFileURL.path] = CachedRouteFile(
+            fingerprint: routeFileFingerprint(at: fileURL),
+            route: route
+        )
+    }
+
+    private func routeFileFingerprint(at fileURL: URL) -> RouteFileFingerprint {
+        let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        return RouteFileFingerprint(
+            modificationDate: values?.contentModificationDate,
+            fileSize: values?.fileSize.map(Int64.init)
+        )
     }
 
     private static func routeFileName(for routeID: String) -> String {
@@ -259,7 +346,7 @@ final class RouteCollectionStore {
     }
 }
 
-private struct RouteCollectionCacheManifest: Codable {
+private nonisolated struct RouteCollectionCacheManifest: Codable {
     let version: Int
     let routeIDs: [String]
 }
@@ -394,13 +481,22 @@ enum SharedRouteImportInbox {
         let data = try Data(contentsOf: fileURL)
         let parsedRoute = try GPXRouteParser.parse(data: data, fallbackDate: importedAt)
         let fallbackTitle = fileURL.deletingPathExtension().lastPathComponent
+        let appMetadata = parsedRoute.appMetadata
         return TrackedWorkout(
-            routeCollectionID: UUID().uuidString,
-            title: parsedRoute.title?.nilIfBlank ?? fallbackTitle,
-            sourceName: TrackedWorkout.routeCollectionImportSourceName,
+            routeCollectionID: GPXRouteIdentity.routeCollectionID(
+                embeddedID: appMetadata?.routeCollectionID,
+                documentData: data
+            ),
+            title: appMetadata?.title?.nilIfBlank ?? parsedRoute.title?.nilIfBlank ?? fallbackTitle,
+            sourceName: appMetadata?.sourceName?.nilIfBlank ?? TrackedWorkout.routeCollectionImportSourceName,
             sourceURL: fileURL,
-            importedAt: importedAt,
-            coordinates: parsedRoute.coordinates
+            importedAt: appMetadata?.importedAt ?? importedAt,
+            coordinates: parsedRoute.coordinates,
+            distanceMeters: appMetadata?.distanceMeters,
+            durationSeconds: appMetadata?.durationSeconds,
+            startDate: appMetadata?.startDate,
+            activityTypeRawValue: appMetadata?.activityTypeRawValue,
+            additionalMetadata: appMetadata?.additionalMetadata ?? [:]
         )
     }
 
@@ -434,6 +530,13 @@ enum SharedRouteImportInbox {
 extension TrackedWorkout {
     nonisolated static let routeCollectionImportSourceName = "GPX"
     nonisolated static let routeCollectionMergeSourceName = "Route Merge"
+    nonisolated static let routeCollectionCanonicalMetadataKeys: Set<String> = [
+        "routeCollection.id",
+        "routeCollection.title",
+        "routeCollection.sourceName",
+        "routeCollection.sourceURL",
+        "routeCollection.importedAt"
+    ]
 
     nonisolated init(
         routeCollectionID: String,
@@ -462,7 +565,9 @@ extension TrackedWorkout {
             sourceURL: sourceURL,
             importedAt: importedAt
         )
-        metadata.merge(additionalMetadata) { _, newValue in newValue }
+        metadata.merge(
+            additionalMetadata.filter { !Self.routeCollectionCanonicalMetadataKeys.contains($0.key) }
+        ) { _, newValue in newValue }
 
         id = "route-collection-\(routeCollectionID)"
         healthDataVersion = Self.currentHealthDataVersion
@@ -499,15 +604,27 @@ extension TrackedWorkout {
         routeCollectionSourceName == Self.routeCollectionMergeSourceName
     }
 
-    var routeCollectionSourceName: String? {
+    nonisolated var routeCollectionSourceName: String? {
         metadata?["routeCollection.sourceName"]?.stringValue ?? sourceRevision?.productType
     }
 
-    var routeCollectionTitle: String? {
+    nonisolated var routeCollectionIdentifier: String? {
+        if let identifier = metadata?["routeCollection.id"]?.stringValue?.nilIfBlank {
+            return identifier
+        }
+
+        let prefix = "route-collection-"
+        guard id.hasPrefix(prefix) else {
+            return nil
+        }
+        return String(id.dropFirst(prefix.count)).nilIfBlank
+    }
+
+    nonisolated var routeCollectionTitle: String? {
         metadata?["routeCollection.title"]?.stringValue?.nilIfBlank
     }
 
-    var routeCollectionImportedAt: Date? {
+    nonisolated var routeCollectionImportedAt: Date? {
         metadata?["routeCollection.importedAt"]?.dateValue
     }
 
@@ -663,7 +780,7 @@ extension TrackedRouteSummary {
 }
 
 private extension String {
-    var nilIfBlank: String? {
+    nonisolated var nilIfBlank: String? {
         let trimmedValue = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedValue.isEmpty ? nil : trimmedValue
     }

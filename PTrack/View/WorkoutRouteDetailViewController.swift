@@ -2200,6 +2200,9 @@ extension WorkoutRouteDetailViewController: UISheetPresentationControllerDelegat
         let detent: PanelDetent = sheetPresentationController.selectedDetentIdentifier == Self.mediumPanelDetentIdentifier
             ? .medium
             : .minimum
+        if detent == .medium, presentationMode == .workout, !isDemoMode {
+            AppReviewPromptManager.shared.record(.detailPanelExpanded)
+        }
         applyPanelSheetDetent(detent, animated: true)
     }
 }

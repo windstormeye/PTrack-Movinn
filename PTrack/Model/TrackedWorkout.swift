@@ -68,7 +68,7 @@ enum TrackedWorkoutSportKind: String, CaseIterable, Codable, Hashable {
     }
 }
 
-struct TrackedWorkout: Codable {
+struct TrackedWorkout: nonisolated Codable {
     nonisolated static let currentHealthDataVersion = 2
 
     let id: String
@@ -417,7 +417,7 @@ struct TrackedWorkout: Codable {
         CoordinateTransformer.displayCoordinates(for: coordinates.map(\.coordinate))
     }
 
-    var routeDetailCoordinates: [RouteCoordinate] {
+    nonisolated var routeDetailCoordinates: [RouteCoordinate] {
         guard let fullCoordinates, !fullCoordinates.isEmpty else {
             return coordinates
         }

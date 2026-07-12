@@ -30,9 +30,17 @@ enum AppLanguage: String, CaseIterable {
 enum AppTextKey: String {
     case all
     case applyToAll
+    case appleFitnessDownloadCTA
     case appearanceSettings
     case appearanceSystem
     case appLanguage
+    case appIsUpToDate
+    case checkForUpdates
+    case checkingForUpdates
+    case updateAvailableTitle
+    case updateCheckFailed
+    case updateDismiss
+    case updateNow
     case aspectRatio
     case appleHealth
     case appDefault
@@ -62,6 +70,8 @@ enum AppTextKey: String {
     case debugProAccessMockEnabled
     case debugProAccessSimulation
     case debugProAccessUnlocked
+    case debugHomeDataSimulation
+    case debugSimulateHomeEmptyData
     case demoModeEntry
     case demoModeExit
     case demoModeExitMessage
@@ -95,6 +105,8 @@ enum AppTextKey: String {
     case followPhoto
     case hiking
     case iCloudRouteSync
+    case iCloudRouteSyncAccountChangedMessage
+    case iCloudRouteSyncAccountUnavailableMessage
     case iCloudRouteSyncAlreadyEnabled
     case iCloudRouteSyncConfirmMessage
     case iCloudRouteSyncConfirmTitle
@@ -102,9 +114,13 @@ enum AppTextKey: String {
     case iCloudRouteSyncDisableConfirmMessage
     case iCloudRouteSyncDisableConfirmTitle
     case iCloudRouteSyncEnabled
+    case iCloudRouteSyncDocumentUnavailableMessage
+    case iCloudRouteSyncDriveUnavailableMessage
     case iCloudRouteSyncFailed
-    case routeCollectionICloudSyncComplete
-    case routeCollectionICloudSyncProgressFormat
+    case routeCollectionICloudSyncFooterCompleteFormat
+    case routeCollectionICloudSyncFooterErrorFormat
+    case routeCollectionICloudSyncFooterPendingFormat
+    case routeCollectionICloudSyncFooterPreparing
     case mapBackgroundAdjustmentHint
     case mapStyle
     case livePhotoSaved
@@ -135,6 +151,7 @@ enum AppTextKey: String {
     case promotionBadge
     case proCodeRedemption
     case proFeatureHeatmap
+    case proFeatureICloudRouteSync
     case proFeatureMultiLivePhotoExport
     case proFeatureMoreComing
     case proFeatureRouteMerge
@@ -386,9 +403,17 @@ enum AppLocalization {
         .chinese: [
             .all: "全部",
             .applyToAll: "应用到全部",
+            .appleFitnessDownloadCTA: "下载 apple 健身去运动！",
             .appearanceSettings: "外观设置",
             .appearanceSystem: "跟随系统",
             .appLanguage: "App 语言",
+            .appIsUpToDate: "已是最新版本",
+            .checkForUpdates: "检查更新",
+            .checkingForUpdates: "正在检查更新…",
+            .updateAvailableTitle: "版本更新",
+            .updateCheckFailed: "暂时无法检查更新，请稍后再试",
+            .updateDismiss: "好的",
+            .updateNow: "去更新",
             .aspectRatio: "比例",
             .appleHealth: "苹果健康",
             .appDefault: "默认",
@@ -418,6 +443,8 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "启用 Pro 模拟",
             .debugProAccessSimulation: "模拟 Pro 功能解锁",
             .debugProAccessUnlocked: "已解锁",
+            .debugHomeDataSimulation: "首页数据模拟",
+            .debugSimulateHomeEmptyData: "模拟首页空数据",
             .demoModeEntry: "查看演示模式",
             .demoModeExit: "退出演示模式",
             .demoModeExitMessage: "退出后将回到真实数据模式。",
@@ -451,6 +478,8 @@ enum AppLocalization {
             .followPhoto: "跟随",
             .hiking: "徒步",
             .iCloudRouteSync: "iCloud 同步",
+            .iCloudRouteSyncAccountChangedMessage: "iCloud 账号已变化，请重新开启路线同步。",
+            .iCloudRouteSyncAccountUnavailableMessage: "请先在系统设置中登录 iCloud，并开启 iCloud Drive。",
             .iCloudRouteSyncAlreadyEnabled: "iCloud 同步已开启",
             .iCloudRouteSyncConfirmMessage: "确认后会同步导入路线数据，并在之后导入或删除路线时自动同步 iCloud。",
             .iCloudRouteSyncConfirmTitle: "确认同步导入路线数据？",
@@ -458,16 +487,20 @@ enum AppLocalization {
             .iCloudRouteSyncDisableConfirmMessage: "关闭后将停止同步导入路线数据，之后导入或删除路线不会自动同步 iCloud。已同步到 iCloud 的数据会保留。",
             .iCloudRouteSyncDisableConfirmTitle: "关闭 iCloud 同步？",
             .iCloudRouteSyncEnabled: "已开启 iCloud 同步",
+            .iCloudRouteSyncDocumentUnavailableMessage: "暂时无法读取 iCloud 中的路线文件。",
+            .iCloudRouteSyncDriveUnavailableMessage: "暂时无法访问 iCloud Drive，请稍后再试。",
             .iCloudRouteSyncFailed: "iCloud 同步开启失败",
-            .routeCollectionICloudSyncComplete: "iCloud 同步完成",
-            .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 同步中",
+            .routeCollectionICloudSyncFooterCompleteFormat: "已与 iCloud 同步 · 共 %d 个文件",
+            .routeCollectionICloudSyncFooterErrorFormat: "iCloud 同步暂不可用 · 还有 %d/%d 个文件未同步",
+            .routeCollectionICloudSyncFooterPendingFormat: "还有 %d/%d 个文件未同步",
+            .routeCollectionICloudSyncFooterPreparing: "正在检查 iCloud 同步状态…",
             .mapBackgroundAdjustmentHint: "双击地图调整",
             .mapStyle: "地图样式",
             .livePhotoSaved: "已保存到相册",
             .livePhotoSaving: "正在生成 Live Photo",
             .light: "亮色",
             .more: "更多",
-            .movinnLocalDataPrivacyStatement: "- Movinn 只读取你的数据做可视化，绝不上传数据，所有功能均在本地完成。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
+            .movinnLocalDataPrivacyStatement: "- Movinn 默认只在本地读取和处理你的数据。仅当你主动开启 iCloud 同步时，导入路线的 GPX 文件会保存到你的 iCloud Drive。\n- 内置了全球国家和部分城市数据库，所有查询均不联网。",
             .movinnPro: "Movinn Pro",
             .newActivity: "新活动！",
             .newRoute: "新路线！",
@@ -491,7 +524,8 @@ enum AppLocalization {
             .promotionBadge: "促销",
             .proCodeRedemption: "代码兑换",
             .proFeatureHeatmap: "查看运动路线热图",
-            .proFeatureMultiLivePhotoExport: "多张 Live Photo 导出",
+            .proFeatureICloudRouteSync: "iCloud 同步导入路线",
+            .proFeatureMultiLivePhotoExport: "支持轨迹多动图\n分享",
             .proFeatureMoreComing: "未来更多功能",
             .proFeatureRouteMerge: "合并多段运动轨迹",
             .proPaywallSubtitle: "Movinn 持续提供高级功能，让你的运动更加从容！",
@@ -620,9 +654,17 @@ enum AppLocalization {
         .japanese: [
             .all: "すべて",
             .applyToAll: "すべてに適用",
+            .appleFitnessDownloadCTA: "Apple Fitness をダウンロードして運動しよう！",
             .appearanceSettings: "外観設定",
             .appearanceSystem: "システムに合わせる",
             .appLanguage: "アプリの言語",
+            .appIsUpToDate: "最新バージョンです",
+            .checkForUpdates: "アップデートを確認",
+            .checkingForUpdates: "アップデートを確認中…",
+            .updateAvailableTitle: "バージョンアップデート",
+            .updateCheckFailed: "アップデートを確認できません。しばらくしてからもう一度お試しください",
+            .updateDismiss: "OK",
+            .updateNow: "アップデート",
             .aspectRatio: "比率",
             .appleHealth: "Appleヘルスケア",
             .appDefault: "デフォルト",
@@ -652,6 +694,8 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "Pro 模擬を有効化",
             .debugProAccessSimulation: "Pro 状態をシミュレート",
             .debugProAccessUnlocked: "解放済み",
+            .debugHomeDataSimulation: "ホームデータのシミュレーション",
+            .debugSimulateHomeEmptyData: "ホームの空データをシミュレート",
             .demoModeEntry: "デモモードを見る",
             .demoModeExit: "デモモードを終了",
             .demoModeExitMessage: "終了すると実データのモードに戻ります。",
@@ -685,6 +729,8 @@ enum AppLocalization {
             .followPhoto: "追従",
             .hiking: "ハイキング",
             .iCloudRouteSync: "iCloud同期",
+            .iCloudRouteSyncAccountChangedMessage: "iCloudアカウントが変更されました。ルート同期をもう一度オンにしてください。",
+            .iCloudRouteSyncAccountUnavailableMessage: "設定でiCloudにサインインし、iCloud Driveをオンにしてください。",
             .iCloudRouteSyncAlreadyEnabled: "iCloud同期はオンです",
             .iCloudRouteSyncConfirmMessage: "読み込んだルートのデータを同期し、今後ルートを読み込むか削除したときに iCloud へ自動同期します。",
             .iCloudRouteSyncConfirmTitle: "読み込んだルートを同期しますか？",
@@ -692,16 +738,20 @@ enum AppLocalization {
             .iCloudRouteSyncDisableConfirmMessage: "オフにすると読み込んだルートの同期を停止し、今後ルートを読み込むか削除したときに iCloud へ自動同期しません。すでに iCloud に同期されたデータは保持されます。",
             .iCloudRouteSyncDisableConfirmTitle: "iCloud同期をオフにしますか？",
             .iCloudRouteSyncEnabled: "iCloud同期をオンにしました",
+            .iCloudRouteSyncDocumentUnavailableMessage: "iCloud上のルートファイルを一時的に読み込めません。",
+            .iCloudRouteSyncDriveUnavailableMessage: "iCloud Driveに一時的にアクセスできません。後でもう一度お試しください。",
             .iCloudRouteSyncFailed: "iCloud同期をオンにできませんでした",
-            .routeCollectionICloudSyncComplete: "iCloud同期完了",
-            .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud同期中",
+            .routeCollectionICloudSyncFooterCompleteFormat: "iCloudと同期済み · 全%dファイル",
+            .routeCollectionICloudSyncFooterErrorFormat: "iCloud同期を一時利用できません · 未同期：%d/%d件",
+            .routeCollectionICloudSyncFooterPendingFormat: "未同期のファイル：%d/%d件",
+            .routeCollectionICloudSyncFooterPreparing: "iCloud同期の状態を確認中…",
             .mapBackgroundAdjustmentHint: "地図をダブルタップして調整",
             .mapStyle: "地図スタイル",
             .livePhotoSaved: "写真に保存しました",
             .livePhotoSaving: "Live Photoを生成中",
             .light: "ライト",
             .more: "その他",
-            .movinnLocalDataPrivacyStatement: "- Movinn は可視化のためだけにあなたのデータを読み取り、データをアップロードせず、すべての機能をローカルで完了します。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
+            .movinnLocalDataPrivacyStatement: "- Movinnはデフォルトでデータを端末内だけで読み取り、処理します。iCloud同期を自分でオンにした場合のみ、読み込んだルートのGPXファイルがiCloud Driveに保存されます。\n- 世界の国と一部都市のデータベースを内蔵しており、すべての検索はネットワークを使いません。",
             .movinnPro: "Movinn Pro",
             .newActivity: "新規",
             .newRoute: "新規ルート",
@@ -725,7 +775,8 @@ enum AppLocalization {
             .promotionBadge: "セール",
             .proCodeRedemption: "コードを使う",
             .proFeatureHeatmap: "ルートヒートマップ",
-            .proFeatureMultiLivePhotoExport: "複数の Live Photo 書き出し",
+            .proFeatureICloudRouteSync: "読み込んだルートを iCloud で同期",
+            .proFeatureMultiLivePhotoExport: "複数の軌跡アニメーション共有に対応",
             .proFeatureMoreComing: "今後の機能",
             .proFeatureRouteMerge: "複数区間のルート結合",
             .proPaywallSubtitle: "Movinn は高度な機能で運動をもっと快適にします。",
@@ -854,9 +905,17 @@ enum AppLocalization {
         .korean: [
             .all: "전체",
             .applyToAll: "전체에 적용",
+            .appleFitnessDownloadCTA: "Apple 피트니스를 다운로드하고 운동해 보세요!",
             .appearanceSettings: "화면 모드",
             .appearanceSystem: "시스템 설정 따르기",
             .appLanguage: "앱 언어",
+            .appIsUpToDate: "최신 버전입니다",
+            .checkForUpdates: "업데이트 확인",
+            .checkingForUpdates: "업데이트 확인 중…",
+            .updateAvailableTitle: "버전 업데이트",
+            .updateCheckFailed: "업데이트를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요",
+            .updateDismiss: "확인",
+            .updateNow: "업데이트",
             .aspectRatio: "비율",
             .appleHealth: "Apple 건강",
             .appDefault: "기본",
@@ -886,6 +945,8 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "Pro 시뮬레이션 켜기",
             .debugProAccessSimulation: "Pro 상태 시뮬레이션",
             .debugProAccessUnlocked: "잠금 해제됨",
+            .debugHomeDataSimulation: "홈 데이터 시뮬레이션",
+            .debugSimulateHomeEmptyData: "빈 홈 데이터 시뮬레이션",
             .demoModeEntry: "데모 모드 보기",
             .demoModeExit: "데모 모드 종료",
             .demoModeExitMessage: "종료하면 실제 데이터 모드로 돌아갑니다.",
@@ -919,6 +980,8 @@ enum AppLocalization {
             .followPhoto: "따라가기",
             .hiking: "하이킹",
             .iCloudRouteSync: "iCloud 동기화",
+            .iCloudRouteSyncAccountChangedMessage: "iCloud 계정이 변경되었습니다. 경로 동기화를 다시 켜 주세요.",
+            .iCloudRouteSyncAccountUnavailableMessage: "설정에서 iCloud에 로그인하고 iCloud Drive를 켜 주세요.",
             .iCloudRouteSyncAlreadyEnabled: "iCloud 동기화가 켜져 있습니다",
             .iCloudRouteSyncConfirmMessage: "가져온 경로 데이터를 동기화하고 이후 경로를 가져오거나 삭제할 때 iCloud에 자동으로 동기화합니다.",
             .iCloudRouteSyncConfirmTitle: "가져온 경로를 동기화할까요?",
@@ -926,16 +989,20 @@ enum AppLocalization {
             .iCloudRouteSyncDisableConfirmMessage: "끄면 가져온 경로 데이터 동기화를 중지하고 이후 경로를 가져오거나 삭제할 때 iCloud에 자동으로 동기화하지 않습니다. 이미 iCloud에 동기화된 데이터는 유지됩니다.",
             .iCloudRouteSyncDisableConfirmTitle: "iCloud 동기화를 끌까요?",
             .iCloudRouteSyncEnabled: "iCloud 동기화가 켜졌습니다",
+            .iCloudRouteSyncDocumentUnavailableMessage: "iCloud의 경로 파일을 일시적으로 읽을 수 없습니다.",
+            .iCloudRouteSyncDriveUnavailableMessage: "iCloud Drive에 일시적으로 접근할 수 없습니다. 잠시 후 다시 시도해 주세요.",
             .iCloudRouteSyncFailed: "iCloud 동기화를 켜지 못했습니다",
-            .routeCollectionICloudSyncComplete: "iCloud 동기화 완료",
-            .routeCollectionICloudSyncProgressFormat: "%d/%d iCloud 동기화 중",
+            .routeCollectionICloudSyncFooterCompleteFormat: "iCloud 동기화 완료 · 총 %d개 파일",
+            .routeCollectionICloudSyncFooterErrorFormat: "iCloud 동기화를 일시적으로 사용할 수 없음 · 미동기화 %d/%d개",
+            .routeCollectionICloudSyncFooterPendingFormat: "동기화되지 않은 파일 %d/%d개",
+            .routeCollectionICloudSyncFooterPreparing: "iCloud 동기화 상태 확인 중…",
             .mapBackgroundAdjustmentHint: "지도를 두 번 탭해 조정",
             .mapStyle: "지도 스타일",
             .livePhotoSaved: "사진 앱에 저장되었습니다",
             .livePhotoSaving: "Live Photo 생성 중",
             .light: "밝은",
             .more: "더보기",
-            .movinnLocalDataPrivacyStatement: "- Movinn은 시각화를 위해서만 데이터를 읽으며 데이터를 업로드하지 않고, 모든 기능은 로컬에서 완료됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
+            .movinnLocalDataPrivacyStatement: "- Movinn은 기본적으로 기기 안에서만 데이터를 읽고 처리합니다. 사용자가 iCloud 동기화를 직접 켠 경우에만 가져온 경로 GPX 파일이 iCloud Drive에 저장됩니다.\n- 전 세계 국가와 일부 도시 데이터베이스를 내장하고 있어 모든 조회는 네트워크를 사용하지 않습니다.",
             .movinnPro: "Movinn Pro",
             .newActivity: "새 활동!",
             .newRoute: "새 경로!",
@@ -959,7 +1026,8 @@ enum AppLocalization {
             .promotionBadge: "할인",
             .proCodeRedemption: "코드 등록",
             .proFeatureHeatmap: "경로 히트맵 보기",
-            .proFeatureMultiLivePhotoExport: "여러 Live Photo 내보내기",
+            .proFeatureICloudRouteSync: "가져온 경로를 iCloud로 동기화",
+            .proFeatureMultiLivePhotoExport: "여러 경로 애니메이션 공유 지원",
             .proFeatureMoreComing: "더 많은 기능 예정",
             .proFeatureRouteMerge: "여러 구간 경로 병합",
             .proPaywallSubtitle: "Movinn은 고급 기능으로 운동을 더 편하게 합니다.",
@@ -1088,9 +1156,17 @@ enum AppLocalization {
         .english: [
             .all: "All",
             .applyToAll: "Apply to All",
+            .appleFitnessDownloadCTA: "Download Apple Fitness and get moving!",
             .appearanceSettings: "Appearance",
             .appearanceSystem: "Follow System",
             .appLanguage: "App Language",
+            .appIsUpToDate: "You're using the latest version",
+            .checkForUpdates: "Check for Updates",
+            .checkingForUpdates: "Checking for updates…",
+            .updateAvailableTitle: "Version Update",
+            .updateCheckFailed: "Unable to check for updates. Please try again later.",
+            .updateDismiss: "OK",
+            .updateNow: "Update",
             .aspectRatio: "Ratio",
             .appleHealth: "Apple Health",
             .appDefault: "Default",
@@ -1120,6 +1196,8 @@ enum AppLocalization {
             .debugProAccessMockEnabled: "Enable Pro Mock",
             .debugProAccessSimulation: "Simulate Pro Access",
             .debugProAccessUnlocked: "Unlocked",
+            .debugHomeDataSimulation: "Home Data Simulation",
+            .debugSimulateHomeEmptyData: "Simulate Empty Home Data",
             .demoModeEntry: "View Demo Mode",
             .demoModeExit: "Exit Demo Mode",
             .demoModeExitMessage: "After exiting, the app will return to real data mode.",
@@ -1153,6 +1231,8 @@ enum AppLocalization {
             .followPhoto: "Follow",
             .hiking: "Hiking",
             .iCloudRouteSync: "iCloud Sync",
+            .iCloudRouteSyncAccountChangedMessage: "Your iCloud account changed. Turn route sync on again for the new account.",
+            .iCloudRouteSyncAccountUnavailableMessage: "Sign in to iCloud and turn on iCloud Drive in Settings first.",
             .iCloudRouteSyncAlreadyEnabled: "iCloud sync is already enabled",
             .iCloudRouteSyncConfirmMessage: "This will sync imported route data and automatically update iCloud whenever routes are imported or deleted.",
             .iCloudRouteSyncConfirmTitle: "Sync Imported Routes?",
@@ -1160,16 +1240,20 @@ enum AppLocalization {
             .iCloudRouteSyncDisableConfirmMessage: "Disabling will stop syncing imported route data. Future route imports or deletions will not update iCloud automatically. Data already synced to iCloud will be kept.",
             .iCloudRouteSyncDisableConfirmTitle: "Disable iCloud Sync?",
             .iCloudRouteSyncEnabled: "iCloud sync enabled",
+            .iCloudRouteSyncDocumentUnavailableMessage: "A route file in iCloud is temporarily unavailable.",
+            .iCloudRouteSyncDriveUnavailableMessage: "iCloud Drive is temporarily unavailable. Please try again later.",
             .iCloudRouteSyncFailed: "iCloud sync could not be enabled",
-            .routeCollectionICloudSyncComplete: "iCloud sync complete",
-            .routeCollectionICloudSyncProgressFormat: "%d/%d syncing with iCloud",
+            .routeCollectionICloudSyncFooterCompleteFormat: "Synced with iCloud · %d files total",
+            .routeCollectionICloudSyncFooterErrorFormat: "iCloud sync unavailable · %d of %d files remaining",
+            .routeCollectionICloudSyncFooterPendingFormat: "%d of %d files remaining",
+            .routeCollectionICloudSyncFooterPreparing: "Checking iCloud sync status…",
             .mapBackgroundAdjustmentHint: "Double-tap map to adjust",
             .mapStyle: "Map Style",
             .livePhotoSaved: "Saved to Photos",
             .livePhotoSaving: "Creating Live Photo",
             .light: "Light",
             .more: "More",
-            .movinnLocalDataPrivacyStatement: "- Movinn only reads your data for visualization, never uploads data, and completes every feature locally.\n- Built-in global country and partial city databases power all lookups without network access.",
+            .movinnLocalDataPrivacyStatement: "- Movinn reads and processes your data on device by default. Imported GPX routes are saved to your iCloud Drive only when you explicitly enable iCloud sync.\n- Built-in global country and partial city databases power all lookups without network access.",
             .movinnPro: "Movinn Pro",
             .newActivity: "New!",
             .newRoute: "New Route!",
@@ -1193,7 +1277,8 @@ enum AppLocalization {
             .promotionBadge: "SALE",
             .proCodeRedemption: "Redeem Code",
             .proFeatureHeatmap: "View route heatmaps",
-            .proFeatureMultiLivePhotoExport: "Export multiple Live Photos",
+            .proFeatureICloudRouteSync: "Sync imported routes with iCloud",
+            .proFeatureMultiLivePhotoExport: "Share multiple animated routes",
             .proFeatureMoreComing: "More features soon",
             .proFeatureRouteMerge: "Merge route segments",
             .proPaywallSubtitle: "Movinn keeps advanced tools ready for easier workouts.",
