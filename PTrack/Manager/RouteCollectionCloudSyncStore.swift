@@ -638,6 +638,7 @@ final class RouteCollectionICloudDocumentsStore {
             sourceURL: entry.fileURL,
             importedAt: appMetadata?.importedAt ?? fallbackDate,
             coordinates: parsedRoute.coordinates,
+            segmentCoordinateCounts: parsedRoute.segmentCoordinateCounts,
             distanceMeters: appMetadata?.distanceMeters,
             durationSeconds: appMetadata?.durationSeconds,
             startDate: appMetadata?.startDate,

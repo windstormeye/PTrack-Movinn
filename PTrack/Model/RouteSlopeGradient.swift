@@ -402,7 +402,10 @@ struct RouteSlopeGradient: Sendable {
             guard slope.isFinite else {
                 continue
             }
-            slopes[index] = min(abs(slope), 1)
+            // The map's green-to-red palette represents climbing difficulty.
+            // Descents must stay at the baseline instead of being treated as
+            // equally steep climbs through an absolute value.
+            slopes[index] = min(max(slope, 0), 1)
         }
         return slopes
     }
@@ -421,7 +424,6 @@ struct RouteSlopeGradient: Sendable {
                 validSlopes.append(slope)
             }
         }
-        validSlopes.sort()
         guard !isCancelled() else {
             return nil
         }
@@ -430,7 +432,7 @@ struct RouteSlopeGradient: Sendable {
             return nil
         }
 
-        guard let maximumSlope = validSlopes.last,
+        guard let maximumSlope = validSlopes.max(),
               maximumSlope >= 0.02 else {
             var normalizedSlopes: [Double?] = []
             normalizedSlopes.reserveCapacity(slopes.count)
@@ -443,8 +445,11 @@ struct RouteSlopeGradient: Sendable {
             return normalizedSlopes
         }
 
-        let steepSlope = max(percentile(0.95, in: validSlopes), 0.02)
         let gentleSlope = 0.01
+        // Use one physical grade scale for every route segment. Adaptive
+        // per-segment percentiles made identical climbs change color at an
+        // HKWorkoutRoute/GPX boundary.
+        let steepSlope = 0.12
         let spread = steepSlope - gentleSlope
 
         var normalizedSlopes: [Double?] = []
@@ -458,22 +463,6 @@ struct RouteSlopeGradient: Sendable {
             )
         }
         return normalizedSlopes
-    }
-
-    private nonisolated static func percentile(_ percentile: Double, in values: [Double]) -> Double {
-        guard values.count > 1 else {
-            return values.first ?? 0
-        }
-
-        let position = min(max(percentile, 0), 1) * Double(values.count - 1)
-        let lowerIndex = Int(floor(position))
-        let upperIndex = Int(ceil(position))
-        guard lowerIndex != upperIndex else {
-            return values[lowerIndex]
-        }
-
-        let progress = position - Double(lowerIndex)
-        return values[lowerIndex] + (values[upperIndex] - values[lowerIndex]) * progress
     }
 
     private nonisolated static func median(of values: [Double]) -> Double {

@@ -5,9 +5,91 @@
 //  Created by Codex on 2026/6/14.
 //
 
+import CoreLocation
 import UIKit
 
 final class ElevationProfileView: UIView {
+    nonisolated struct PeakSamples: Sendable {
+        let altitude: RouteElevationSample?
+        let heartRate: RouteElevationSample?
+        let power: RouteElevationSample?
+        let temperature: RouteElevationSample?
+
+        init(
+            altitude: RouteElevationSample?,
+            heartRate: RouteElevationSample?,
+            power: RouteElevationSample?,
+            temperature: RouteElevationSample?
+        ) {
+            self.altitude = altitude
+            self.heartRate = heartRate
+            self.power = power
+            self.temperature = temperature
+        }
+
+        init(samples: [RouteElevationSample]) {
+            altitude = samples.max {
+                $0.altitudeMeters < $1.altitudeMeters
+            }
+            heartRate = Self.metricPeak(
+                in: samples,
+                requiresPositiveValue: true,
+                value: \.heartRateBeatsPerMinute
+            )
+            power = Self.metricPeak(
+                in: samples,
+                requiresPositiveValue: true,
+                value: \.powerWatts
+            )
+            temperature = Self.metricPeak(
+                in: samples,
+                requiresPositiveValue: false,
+                value: \.temperatureCelsius
+            )
+        }
+
+        private static func metricPeak(
+            in samples: [RouteElevationSample],
+            requiresPositiveValue: Bool,
+            value: KeyPath<RouteElevationSample, Double?>
+        ) -> RouteElevationSample? {
+            samples.compactMap { sample -> (sample: RouteElevationSample, value: Double)? in
+                guard let sampleValue = sample[keyPath: value],
+                      sampleValue.isFinite,
+                      !requiresPositiveValue || sampleValue > 0 else {
+                    return nil
+                }
+                return (sample, sampleValue)
+            }
+            .max { $0.value < $1.value }?
+            .sample
+        }
+    }
+
+    private struct PlotGeometry {
+        let size: CGSize
+        let distanceRange: ClosedRange<CLLocationDistance>
+        let minimumAltitude: Double
+        let altitudeRange: Double
+        let horizontalPadding: CGFloat
+        let bottomPadding: CGFloat
+        let drawableWidth: CGFloat
+        let usableHeight: CGFloat
+
+        func point(for sample: RouteElevationSample) -> CGPoint {
+            let visibleDistance = max(distanceRange.upperBound - distanceRange.lowerBound, 1)
+            let distanceProgress = min(
+                max((sample.distanceMeters - distanceRange.lowerBound) / visibleDistance, 0),
+                1
+            )
+            let normalizedAltitude = (sample.altitudeMeters - minimumAltitude) / altitudeRange
+            return CGPoint(
+                x: horizontalPadding + CGFloat(distanceProgress) * drawableWidth,
+                y: size.height - bottomPadding - CGFloat(normalizedAltitude) * usableHeight
+            )
+        }
+    }
+
     private let fillGradientLayer = CAGradientLayer()
     private let fillLayer = CAShapeLayer()
     private let curveLayer = CAShapeLayer()
@@ -16,6 +98,8 @@ final class ElevationProfileView: UIView {
     private let powerPeakLabel = UILabel()
     private let temperaturePeakLabel = UILabel()
     private var samples: [RouteElevationSample] = []
+    private var peakSamples = PeakSamples(samples: [])
+    private var distanceRange: ClosedRange<CLLocationDistance> = 0...0
     private var renderedSize = CGSize.zero
     private let horizontalPadding: CGFloat = 2
 
@@ -34,8 +118,14 @@ final class ElevationProfileView: UIView {
         updatePathIfNeeded()
     }
 
-    func configure(samples: [RouteElevationSample]) {
+    func configure(
+        samples: [RouteElevationSample],
+        distanceRange: ClosedRange<CLLocationDistance>,
+        peakSamples: PeakSamples
+    ) {
         self.samples = samples
+        self.distanceRange = distanceRange
+        self.peakSamples = peakSamples
         renderedSize = .zero
         updatePathIfNeeded()
     }
@@ -148,11 +238,19 @@ final class ElevationProfileView: UIView {
         }
 
         let points = normalizedPoints(for: samples, in: bounds.size)
-        let curvePath = smoothedPath(for: points)
-        let fillPath = curvePath.mutableCopy() ?? CGMutablePath()
-        fillPath.addLine(to: CGPoint(x: bounds.width - horizontalPadding, y: bounds.height))
-        fillPath.addLine(to: CGPoint(x: horizontalPadding, y: bounds.height))
-        fillPath.closeSubpath()
+        let curvePath = CGMutablePath()
+        let fillPath = CGMutablePath()
+        for pointGroup in continuousPointGroups(points: points) where pointGroup.count > 1 {
+            let groupCurvePath = smoothedPath(for: pointGroup)
+            curvePath.addPath(groupCurvePath)
+            fillPath.addPath(groupCurvePath)
+            if let firstPoint = pointGroup.first,
+               let lastPoint = pointGroup.last {
+                fillPath.addLine(to: CGPoint(x: lastPoint.x, y: bounds.height))
+                fillPath.addLine(to: CGPoint(x: firstPoint.x, y: bounds.height))
+                fillPath.closeSubpath()
+            }
+        }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -163,29 +261,60 @@ final class ElevationProfileView: UIView {
         curveLayer.path = curvePath
         CATransaction.commit()
 
-        updatePeakLabels(with: points)
+        updatePeakLabels()
+    }
+
+    private func continuousPointGroups(points: [CGPoint]) -> [[CGPoint]] {
+        guard points.count == samples.count,
+              let firstPoint = points.first,
+              let firstSample = samples.first else {
+            return []
+        }
+
+        var groups: [[CGPoint]] = [[firstPoint]]
+        var currentSeriesIdentifier = firstSample.seriesIdentifier
+        for index in 1..<points.count {
+            let seriesIdentifier = samples[index].seriesIdentifier
+            if seriesIdentifier != currentSeriesIdentifier {
+                groups.append([])
+                currentSeriesIdentifier = seriesIdentifier
+            }
+            groups[groups.count - 1].append(points[index])
+        }
+        return groups
     }
 
     private func normalizedPoints(
         for samples: [RouteElevationSample],
         in size: CGSize
     ) -> [CGPoint] {
+        let geometry = plotGeometry(for: samples, in: size)
+        return samples.map(geometry.point)
+    }
+
+    private func plotGeometry(
+        for samples: [RouteElevationSample],
+        in size: CGSize
+    ) -> PlotGeometry {
         let topPadding: CGFloat = 30
         let bottomPadding: CGFloat = 9
         let drawableWidth = max(size.width - horizontalPadding * 2, 1)
         let usableHeight = max(size.height - topPadding - bottomPadding, 1)
-        let totalDistance = max(samples.last?.distanceMeters ?? 0, 1)
         let altitudeValues = samples.map(\.altitudeMeters)
         let minimumAltitude = altitudeValues.min() ?? 0
         let maximumAltitude = altitudeValues.max() ?? minimumAltitude
         let altitudeRange = max(maximumAltitude - minimumAltitude, 1)
 
-        return samples.map { sample in
-            let x = horizontalPadding + CGFloat(sample.distanceMeters / totalDistance) * drawableWidth
-            let normalizedAltitude = (sample.altitudeMeters - minimumAltitude) / altitudeRange
-            let y = size.height - bottomPadding - CGFloat(normalizedAltitude) * usableHeight
-            return CGPoint(x: x, y: y)
-        }
+        return PlotGeometry(
+            size: size,
+            distanceRange: distanceRange,
+            minimumAltitude: minimumAltitude,
+            altitudeRange: altitudeRange,
+            horizontalPadding: horizontalPadding,
+            bottomPadding: bottomPadding,
+            drawableWidth: drawableWidth,
+            usableHeight: usableHeight
+        )
     }
 
     private func smoothedPath(for points: [CGPoint]) -> CGPath {
@@ -217,59 +346,73 @@ final class ElevationProfileView: UIView {
         return path
     }
 
-    private func updatePeakLabels(with points: [CGPoint]) {
-        guard points.count == samples.count,
-              let peakIndex = samples.indices.max(by: { samples[$0].altitudeMeters < samples[$1].altitudeMeters }) else {
-            hideMarkerLabels()
-            return
-        }
-
+    private func updatePeakLabels() {
+        let geometry = plotGeometry(for: samples, in: bounds.size)
         var occupiedFrames: [CGRect] = []
-        placeMarkerLabel(peakLabel, at: points[peakIndex], occupiedFrames: &occupiedFrames)
-
-        placeMetricMarkerLabel(
+        placePeakMarkerLabel(
+            peakLabel,
+            sample: peakSamples.altitude,
+            geometry: geometry,
+            occupiedFrames: &occupiedFrames
+        )
+        placePeakMarkerLabel(
             heartRatePeakLabel,
-            points: points,
-            occupiedFrames: &occupiedFrames,
-            requiresPositiveValue: true,
-            value: \.heartRateBeatsPerMinute
+            sample: peakSamples.heartRate,
+            geometry: geometry,
+            verticalGap: 13,
+            maximumCenterY: bounds.height * 0.48,
+            allowsDownwardFallback: false,
+            occupiedFrames: &occupiedFrames
         )
-        placeMetricMarkerLabel(
+        placePeakMarkerLabel(
             powerPeakLabel,
-            points: points,
-            occupiedFrames: &occupiedFrames,
-            requiresPositiveValue: true,
-            value: \.powerWatts
+            sample: peakSamples.power,
+            geometry: geometry,
+            verticalGap: 13,
+            maximumCenterY: bounds.height * 0.48,
+            allowsDownwardFallback: false,
+            occupiedFrames: &occupiedFrames
         )
-        placeMetricMarkerLabel(
+        placePeakMarkerLabel(
             temperaturePeakLabel,
-            points: points,
-            occupiedFrames: &occupiedFrames,
-            requiresPositiveValue: false,
-            value: \.temperatureCelsius
+            sample: peakSamples.temperature,
+            geometry: geometry,
+            verticalGap: 13,
+            maximumCenterY: bounds.height * 0.48,
+            allowsDownwardFallback: false,
+            occupiedFrames: &occupiedFrames
         )
     }
 
-    private func placeMetricMarkerLabel(
+    private func placePeakMarkerLabel(
         _ label: UILabel,
-        points: [CGPoint],
-        occupiedFrames: inout [CGRect],
-        requiresPositiveValue: Bool,
-        value: KeyPath<RouteElevationSample, Double?>
+        sample: RouteElevationSample?,
+        geometry: PlotGeometry,
+        verticalGap: CGFloat = 6,
+        maximumCenterY: CGFloat? = nil,
+        allowsDownwardFallback: Bool = true,
+        occupiedFrames: inout [CGRect]
     ) {
-        guard let peakIndex = metricPeakIndex(requiresPositiveValue: requiresPositiveValue, value: value) else {
+        guard let sample,
+              isVisible(distance: sample.distanceMeters) else {
             label.isHidden = true
             return
         }
 
         placeMarkerLabel(
             label,
-            at: points[peakIndex],
-            verticalGap: 13,
-            maximumCenterY: bounds.height * 0.48,
-            allowsDownwardFallback: false,
+            at: geometry.point(for: sample),
+            verticalGap: verticalGap,
+            maximumCenterY: maximumCenterY,
+            allowsDownwardFallback: allowsDownwardFallback,
             occupiedFrames: &occupiedFrames
         )
+    }
+
+    private func isVisible(distance: CLLocationDistance) -> Bool {
+        let tolerance = max(distanceRange.upperBound - distanceRange.lowerBound, 1) * 1e-9
+        return distance >= distanceRange.lowerBound - tolerance
+            && distance <= distanceRange.upperBound + tolerance
     }
 
     private func placeMarkerLabel(
@@ -347,22 +490,6 @@ final class ElevationProfileView: UIView {
         }
 
         return min(max(preferredCenterY, minimumCenterY), resolvedMaximumCenterY)
-    }
-
-    private func metricPeakIndex(
-        requiresPositiveValue: Bool,
-        value: KeyPath<RouteElevationSample, Double?>
-    ) -> Int? {
-        samples.indices
-            .compactMap { index -> (index: Int, value: Double)? in
-                guard let sampleValue = samples[index][keyPath: value],
-                      sampleValue.isFinite,
-                      !requiresPositiveValue || sampleValue > 0 else {
-                    return nil
-                }
-                return (index, sampleValue)
-            }
-            .max { lhs, rhs in lhs.value < rhs.value }?.index
     }
 
     private func hideMarkerLabels() {

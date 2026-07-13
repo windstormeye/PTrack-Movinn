@@ -9,16 +9,20 @@ import MapKit
 import UIKit
 
 extension WorkoutRouteDetailViewController: MKMapViewDelegate {
+    func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
+        handleMapRegionWillChangeForReplayRuler()
+    }
+
+    func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+        handleMapRegionChangeForReplayRuler()
+    }
+
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         if let renderer = AppMapStyle.renderer(for: overlay) {
             return renderer
         }
 
-        guard let polyline = overlay as? MKPolyline else {
-            return MKOverlayRenderer(overlay: overlay)
-        }
-
-        return routeOverlayRenderer(for: polyline)
+        return routeOverlayRenderer(for: overlay)
     }
 
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {

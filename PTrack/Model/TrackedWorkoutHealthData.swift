@@ -200,10 +200,19 @@ struct TrackedRouteSummary: Codable {
     let averageSpeedMetersPerSecond: Double?
     let maximumSpeedMetersPerSecond: Double?
 
-    nonisolated init(locations: [CLLocation], sampledCoordinateCount: Int) {
+    nonisolated init(
+        locations: [CLLocation],
+        routeSegments: [TrackedWorkoutRouteSegment] = [],
+        sampledCoordinateCount: Int
+    ) {
         rawLocationCount = locations.count
         self.sampledCoordinateCount = sampledCoordinateCount
-        measuredDistanceMeters = Self.measuredDistance(for: locations)
+
+        let locationSegments = Self.locationSegments(
+            locations: locations,
+            routeSegments: routeSegments
+        )
+        measuredDistanceMeters = Self.measuredDistance(for: locationSegments)
 
         let altitudeValues = locations
             .filter { $0.verticalAccuracy >= 0 }
@@ -212,7 +221,12 @@ struct TrackedRouteSummary: Codable {
         minimumAltitudeMeters = altitudeValues.min()
         maximumAltitudeMeters = altitudeValues.max()
 
-        let elevationChange = Self.elevationChange(for: altitudeValues)
+        let altitudeSegments = locationSegments.map { segment in
+            segment
+                .filter { $0.verticalAccuracy >= 0 }
+                .map(\.altitude)
+        }
+        let elevationChange = Self.elevationChange(for: altitudeSegments)
         elevationGainMeters = elevationChange.gain
         elevationLossMeters = elevationChange.loss
 
@@ -229,39 +243,85 @@ struct TrackedRouteSummary: Codable {
         }
     }
 
-    nonisolated private static func measuredDistance(for locations: [CLLocation]) -> Double? {
-        guard locations.count > 1 else {
-            return nil
+    /// Returns location slices only when every count describes the flattened
+    /// array exactly. Falling back to one continuous slice keeps malformed or
+    /// legacy data usable without risking out-of-bounds segment boundaries.
+    nonisolated private static func locationSegments(
+        locations: [CLLocation],
+        routeSegments: [TrackedWorkoutRouteSegment]
+    ) -> [ArraySlice<CLLocation>] {
+        guard !routeSegments.isEmpty,
+              routeSegments.allSatisfy({ $0.locationCount >= 0 }) else {
+            return [locations[...]]
         }
 
-        var totalDistance: CLLocationDistance = 0
-        var previousLocation = locations[0]
+        var locationCount = 0
+        for segment in routeSegments {
+            let (updatedCount, overflow) = locationCount.addingReportingOverflow(segment.locationCount)
+            guard !overflow else {
+                return [locations[...]]
+            }
+            locationCount = updatedCount
+        }
+        guard locationCount == locations.count else {
+            return [locations[...]]
+        }
 
-        for location in locations.dropFirst() {
-            totalDistance += location.distance(from: previousLocation)
-            previousLocation = location
+        var lowerBound = locations.startIndex
+        return routeSegments.map { segment in
+            let upperBound = lowerBound + segment.locationCount
+            defer { lowerBound = upperBound }
+            return locations[lowerBound..<upperBound]
+        }
+    }
+
+    nonisolated private static func measuredDistance(
+        for locationSegments: [ArraySlice<CLLocation>]
+    ) -> Double? {
+        var totalDistance: CLLocationDistance = 0
+        var hasMeasurableSegment = false
+
+        for locations in locationSegments where locations.count > 1 {
+            hasMeasurableSegment = true
+            var previousLocation = locations[locations.startIndex]
+
+            for location in locations.dropFirst() {
+                totalDistance += location.distance(from: previousLocation)
+                previousLocation = location
+            }
+        }
+
+        guard hasMeasurableSegment else {
+            return nil
         }
 
         return totalDistance
     }
 
-    nonisolated private static func elevationChange(for altitudes: [Double]) -> (gain: Double?, loss: Double?) {
-        guard altitudes.count > 1 else {
-            return (nil, nil)
-        }
-
+    nonisolated private static func elevationChange(
+        for altitudeSegments: [[Double]]
+    ) -> (gain: Double?, loss: Double?) {
         var gain: Double = 0
         var loss: Double = 0
-        var previousAltitude = altitudes[0]
+        var hasMeasurableSegment = false
 
-        for altitude in altitudes.dropFirst() {
-            let delta = altitude - previousAltitude
-            if delta > 0 {
-                gain += delta
-            } else {
-                loss += abs(delta)
+        for altitudes in altitudeSegments where altitudes.count > 1 {
+            hasMeasurableSegment = true
+            var previousAltitude = altitudes[0]
+
+            for altitude in altitudes.dropFirst() {
+                let delta = altitude - previousAltitude
+                if delta > 0 {
+                    gain += delta
+                } else {
+                    loss += abs(delta)
+                }
+                previousAltitude = altitude
             }
-            previousAltitude = altitude
+        }
+
+        guard hasMeasurableSegment else {
+            return (nil, nil)
         }
 
         return (gain, loss)

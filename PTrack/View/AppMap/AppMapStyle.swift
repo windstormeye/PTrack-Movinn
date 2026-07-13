@@ -102,7 +102,6 @@ enum AppMapStyle {
         renderer.lineWidth = lineWidth
         renderer.lineJoin = .round
         renderer.lineCap = .round
-        renderer.shouldRasterize = true
         return renderer
     }
 

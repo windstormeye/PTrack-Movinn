@@ -23,14 +23,14 @@ enum GPXRouteExporter {
     nonisolated static func data(
         routeName: String,
         coordinates routeCoordinates: [RouteCoordinate],
+        segmentStartIndices: Set<Int> = [],
         appMetadata: GPXRouteAppMetadata? = nil
     ) throws -> Data {
-        let coordinates = routeCoordinates.filter { coordinate in
-            coordinate.latitude.isFinite
-                && coordinate.longitude.isFinite
-                && CLLocationCoordinate2DIsValid(coordinate.coordinate)
-        }
-        guard coordinates.count > 1 else {
+        let segments = validSegments(
+            from: routeCoordinates,
+            segmentStartIndices: segmentStartIndices
+        )
+        guard segments.reduce(0, { $0 + $1.count }) > 1 else {
             throw GPXRouteExporterError.noRoutePoints
         }
 
@@ -62,27 +62,29 @@ enum GPXRouteExporter {
           </metadata>
           <trk>
             <name>\(routeName)</name>
-            <trkseg>
 
         """
 
-        for coordinate in coordinates {
-            xml += """
-              <trkpt lat="\(coordinateValueString(coordinate.latitude))" lon="\(coordinateValueString(coordinate.longitude))">
+        for segment in segments {
+            xml += "    <trkseg>\n"
+            for coordinate in segment {
+                xml += """
+                  <trkpt lat="\(coordinateValueString(coordinate.latitude))" lon="\(coordinateValueString(coordinate.longitude))">
 
-            """
-            if let altitude = coordinate.altitudeMeters, altitude.isFinite {
-                xml += "        <ele>\(measurementString(altitude))</ele>\n"
+                """
+                if let altitude = coordinate.altitudeMeters, altitude.isFinite {
+                    xml += "        <ele>\(measurementString(altitude))</ele>\n"
+                }
+                xml += """
+                        <time>\(timestampFormatter.string(from: coordinate.timestamp))</time>
+                      </trkpt>
+
+                """
             }
-            xml += """
-                    <time>\(timestampFormatter.string(from: coordinate.timestamp))</time>
-                  </trkpt>
-
-            """
+            xml += "    </trkseg>\n"
         }
 
         xml += """
-            </trkseg>
           </trk>
         </gpx>
 
@@ -94,7 +96,8 @@ enum GPXRouteExporter {
     static func data(for workout: TrackedWorkout) throws -> Data {
         try data(
             routeName: AppLocalization.text(.gpxExportRouteName),
-            coordinates: workout.routeDetailCoordinates
+            coordinates: workout.routeDetailCoordinates,
+            segmentStartIndices: workout.routeDetailSegmentStartIndices
         )
     }
 
@@ -115,6 +118,7 @@ enum GPXRouteExporter {
         return try data(
             routeName: routeName,
             coordinates: workout.routeDetailCoordinates,
+            segmentStartIndices: workout.routeDetailSegmentStartIndices,
             appMetadata: metadata
         )
     }
@@ -140,6 +144,25 @@ enum GPXRouteExporter {
             .replacingOccurrences(of: "'", with: "&apos;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    nonisolated private static func validSegments(
+        from coordinates: [RouteCoordinate],
+        segmentStartIndices: Set<Int>
+    ) -> [[RouteCoordinate]] {
+        let starts = segmentStartIndices
+            .filter { $0 > 0 && $0 < coordinates.count }
+            .sorted()
+        let boundaries = [0] + starts + [coordinates.count]
+
+        return zip(boundaries, boundaries.dropFirst()).compactMap { startIndex, endIndex in
+            let segment = coordinates[startIndex..<endIndex].filter { coordinate in
+                coordinate.latitude.isFinite
+                    && coordinate.longitude.isFinite
+                    && CLLocationCoordinate2DIsValid(coordinate.coordinate)
+            }
+            return segment.isEmpty ? nil : segment
+        }
     }
 
     nonisolated private static func isValidXMLScalar(_ scalar: UnicodeScalar) -> Bool {
