@@ -2107,7 +2107,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
            multiPolyline === routeSlopeUncoveredMultiPolyline {
             let renderer = MKMultiPolylineRenderer(multiPolyline: multiPolyline)
             renderer.strokeColor = UIColor.systemGray.withAlphaComponent(0.58)
-            renderer.lineWidth = 2
+            renderer.lineWidth = slopeRouteLineWidth
             renderer.lineJoin = .round
             renderer.lineCap = .round
             return renderer
