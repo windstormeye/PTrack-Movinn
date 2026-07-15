@@ -31,7 +31,7 @@ final class WorkoutRouteReplayRulerView: UIControl {
     }
 
     private var indicatorCenterXConstraint: Constraint?
-    private let horizontalPadding: CGFloat = 2
+    private let horizontalPadding = WorkoutRouteReplayRulerLayout.horizontalPadding
     private let maximumRenderedSampleCount = 600
     private var elevationSamples: [RouteElevationSample] = []
     private var peakSamples = ElevationProfileView.PeakSamples(samples: [])
@@ -691,6 +691,13 @@ final class WorkoutRouteReplayRulerView: UIControl {
            ) {
             points.append(SnapPoint(progress: progress, markerKind: .altitude))
         }
+        if let sample = peakSamples.slope,
+           let progress = peakProgress(
+               for: sample,
+               totalDistanceMeters: totalDistanceMeters
+           ) {
+            points.append(SnapPoint(progress: progress, markerKind: .slope))
+        }
         if let sample = peakSamples.heartRate,
            let progress = peakProgress(
                for: sample,
@@ -704,6 +711,13 @@ final class WorkoutRouteReplayRulerView: UIControl {
                totalDistanceMeters: totalDistanceMeters
            ) {
             points.append(SnapPoint(progress: progress, markerKind: .power))
+        }
+        if let sample = peakSamples.temperature,
+           let progress = peakProgress(
+               for: sample,
+               totalDistanceMeters: totalDistanceMeters
+           ) {
+            points.append(SnapPoint(progress: progress, markerKind: .temperature))
         }
 
         return mergedSnapPoints(points)
@@ -743,10 +757,16 @@ final class WorkoutRouteReplayRulerView: UIControl {
         if existingKind == .altitude || newKind == .altitude {
             return .altitude
         }
+        if existingKind == .slope || newKind == .slope {
+            return .slope
+        }
         if existingKind == .heartRate || newKind == .heartRate {
             return .heartRate
         }
-        return .power
+        if existingKind == .power || newKind == .power {
+            return .power
+        }
+        return .temperature
     }
 }
 
@@ -754,7 +774,7 @@ private final class RouteDistanceScaleView: UIView {
     private var visibleRange: ClosedRange<CLLocationDistance> = 0...0
     private var totalDistanceMeters: CLLocationDistance = 0
     private var totalDistanceText = "0km"
-    private let horizontalPadding: CGFloat = 2
+    private let horizontalPadding = WorkoutRouteReplayRulerLayout.horizontalPadding
 
     override init(frame: CGRect) {
         super.init(frame: frame)

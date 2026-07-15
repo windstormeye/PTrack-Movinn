@@ -18,6 +18,8 @@ class ViewController: UIViewController {
         static let healthHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.health.historicalBackfillCacheCommitCompleted"
         static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
         static let stravaHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.strava.historicalBackfillCacheCommitCompleted"
+        static let stravaStreamDataMigrationVersion = "studio.pj.PTrack.strava.streamDataMigrationVersion"
+        static let stravaTerminalStreamMigrationState = "studio.pj.PTrack.strava.terminalStreamMigrationState"
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
@@ -83,6 +85,11 @@ class ViewController: UIViewController {
 
     private struct PendingStravaSyncRequest {
         let showsLoadingIndicator: Bool
+    }
+
+    private struct StravaTerminalStreamMigrationState: Codable {
+        let schemaVersion: Int
+        let activityIDs: [Int64]
     }
 
     private let store = HealthWorkoutStore()
@@ -1974,6 +1981,27 @@ class ViewController: UIViewController {
             return
         }
 
+        // Every Strava entry point eventually reaches this method. During a stream
+        // schema migration, force a complete summary listing and allow only stale
+        // cached activities through the stream loader. This prevents settings and
+        // empty-state authorization flows from accidentally excluding every cache ID.
+        let allStaleStreamActivityIDs = staleStravaStreamActivityIDs()
+        let terminalStreamActivityIDs = terminalStravaStreamMigrationActivityIDs().intersection(
+            allStaleStreamActivityIDs
+        )
+        let unresolvedStaleStreamActivityIDs = allStaleStreamActivityIDs.subtracting(
+            terminalStreamActivityIDs
+        )
+        let shouldRunHistoricalBackfill = shouldRunStravaHistoricalBackfill(
+            unresolvedStaleActivityIDs: unresolvedStaleStreamActivityIDs
+        )
+        let effectiveStartDate = shouldRunHistoricalBackfill ? nil : startDate
+        let effectiveExcludedActivityIDs = shouldRunHistoricalBackfill
+            ? excludingStravaActivityIDs
+                .union(terminalStreamActivityIDs)
+                .subtracting(unresolvedStaleStreamActivityIDs)
+            : excludingStravaActivityIDs
+
         isStravaSyncInProgress = true
         setStravaNewDataSyncInProgress(false)
         isStravaSyncShowingLoadingIndicator = showsLoadingIndicator
@@ -1984,14 +2012,14 @@ class ViewController: UIViewController {
             updateEmptyDataSourceVisibility()
         }
         print(
-            "PTrack Strava: starting import, after: \(Self.debugDateString(startDate)), excluding cached activities: \(excludingStravaActivityIDs.count)"
+            "PTrack Strava: starting import, after: \(Self.debugDateString(effectiveStartDate)), excluding cached activities: \(effectiveExcludedActivityIDs.count), unresolved stale stream activities: \(unresolvedStaleStreamActivityIDs.count), terminal stale activities: \(terminalStreamActivityIDs.count), historical backfill: \(shouldRunHistoricalBackfill)"
         )
 
         Task { [weak self] in
             do {
                 let importResult = try await StravaManager.shared.loadTrackedWorkoutResult(
-                    after: startDate,
-                    excludingStravaActivityIDs: excludingStravaActivityIDs,
+                    after: effectiveStartDate,
+                    excludingStravaActivityIDs: effectiveExcludedActivityIDs,
                     onNewDataDetected: { [weak self] _ in
                         await MainActor.run {
                             self?.setStravaNewDataSyncInProgress(true)
@@ -2021,8 +2049,15 @@ class ViewController: UIViewController {
                     self.scheduleCacheSave(delay: 0)
                     print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
                 }
+                if shouldRunHistoricalBackfill {
+                    self.recordTerminalStravaStreamMigrationAttempts(
+                        staleActivityIDs: unresolvedStaleStreamActivityIDs,
+                        summaryActivityIDs: importResult.summaryActivityIDs,
+                        routeCandidateActivityIDs: importResult.routeCandidateActivityIDs
+                    )
+                }
                 self.markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
-                    after: startDate,
+                    didRunHistoricalBackfill: shouldRunHistoricalBackfill,
                     didCompleteWithoutActivityFailures: importResult.didCompleteWithoutActivityFailures
                 )
 
@@ -2066,7 +2101,10 @@ class ViewController: UIViewController {
     }
 
     private func latestStravaStartDateForIncrementalSync() -> Date? {
-        guard !shouldRunStravaHistoricalBackfill() else {
+        let unresolvedStaleActivityIDs = unresolvedStaleStravaStreamActivityIDs()
+        guard !shouldRunStravaHistoricalBackfill(
+            unresolvedStaleActivityIDs: unresolvedStaleActivityIDs
+        ) else {
             print("PTrack Strava: historical backfill not completed; requesting full activity history")
             return nil
         }
@@ -2079,16 +2117,74 @@ class ViewController: UIViewController {
         return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
     }
 
-    private func shouldRunStravaHistoricalBackfill() -> Bool {
+    private func shouldRunStravaHistoricalBackfill(
+        unresolvedStaleActivityIDs: Set<Int64>
+    ) -> Bool {
         UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) == false
             || UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) == false
+            || UserDefaults.standard.integer(forKey: DefaultsKey.stravaStreamDataMigrationVersion)
+                < TrackedWorkout.currentStravaStreamDataVersion
+            || !unresolvedStaleActivityIDs.isEmpty
+    }
+
+    private func staleStravaStreamActivityIDs() -> Set<Int64> {
+        Set(
+            (workouts + pendingWorkouts)
+                .filter(\.needsStravaStreamDataRefresh)
+                .compactMap(\.stravaActivityID)
+        )
+    }
+
+    private func unresolvedStaleStravaStreamActivityIDs() -> Set<Int64> {
+        staleStravaStreamActivityIDs().subtracting(terminalStravaStreamMigrationActivityIDs())
+    }
+
+    private func terminalStravaStreamMigrationActivityIDs() -> Set<Int64> {
+        guard let data = UserDefaults.standard.data(forKey: DefaultsKey.stravaTerminalStreamMigrationState),
+              let state = try? JSONDecoder().decode(StravaTerminalStreamMigrationState.self, from: data),
+              state.schemaVersion == TrackedWorkout.currentStravaStreamDataVersion else {
+            return []
+        }
+        return Set(state.activityIDs)
+    }
+
+    private func recordTerminalStravaStreamMigrationAttempts(
+        staleActivityIDs: Set<Int64>,
+        summaryActivityIDs: Set<Int64>,
+        routeCandidateActivityIDs: Set<Int64>
+    ) {
+        guard !staleActivityIDs.isEmpty else {
+            return
+        }
+
+        let missingFromAuthoritativeSummary = staleActivityIDs.subtracting(summaryActivityIDs)
+        let presentButNotMigratable = staleActivityIDs
+            .intersection(summaryActivityIDs)
+            .subtracting(routeCandidateActivityIDs)
+        let terminalActivityIDs = missingFromAuthoritativeSummary.union(presentButNotMigratable)
+        guard !terminalActivityIDs.isEmpty else {
+            return
+        }
+
+        let accumulatedActivityIDs = terminalStravaStreamMigrationActivityIDs().union(terminalActivityIDs)
+        let state = StravaTerminalStreamMigrationState(
+            schemaVersion: TrackedWorkout.currentStravaStreamDataVersion,
+            activityIDs: accumulatedActivityIDs.sorted()
+        )
+        guard let data = try? JSONEncoder().encode(state) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: DefaultsKey.stravaTerminalStreamMigrationState)
+        print(
+            "PTrack Strava: marked \(terminalActivityIDs.count) stale activities terminal for stream migration v\(TrackedWorkout.currentStravaStreamDataVersion) (missing: \(missingFromAuthoritativeSummary.count), unsupported/no route: \(presentButNotMigratable.count))"
+        )
     }
 
     private func markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
-        after startDate: Date?,
+        didRunHistoricalBackfill: Bool,
         didCompleteWithoutActivityFailures: Bool
     ) {
-        guard startDate == nil,
+        guard didRunHistoricalBackfill,
               didCompleteWithoutActivityFailures else {
             return
         }
@@ -2099,14 +2195,30 @@ class ViewController: UIViewController {
     }
 
     private func markStravaHistoricalBackfillCompleted() {
+        let unresolvedStaleActivityIDs = unresolvedStaleStravaStreamActivityIDs()
+        guard unresolvedStaleActivityIDs.isEmpty else {
+            print(
+                "PTrack Strava: stream data migration remains pending because \(unresolvedStaleActivityIDs.count) retryable stale activities remain"
+            )
+            return
+        }
+
         guard !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
-                || !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) else {
+                || !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
+                || UserDefaults.standard.integer(forKey: DefaultsKey.stravaStreamDataMigrationVersion)
+                    < TrackedWorkout.currentStravaStreamDataVersion else {
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
-        print("PTrack Strava: historical backfill marked completed after cache save")
+        UserDefaults.standard.set(
+            TrackedWorkout.currentStravaStreamDataVersion,
+            forKey: DefaultsKey.stravaStreamDataMigrationVersion
+        )
+        print(
+            "PTrack Strava: historical backfill and stream data migration v\(TrackedWorkout.currentStravaStreamDataVersion) marked completed after cache save"
+        )
     }
 
     private static func debugDateString(_ date: Date?) -> String {

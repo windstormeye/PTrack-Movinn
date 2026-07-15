@@ -55,6 +55,32 @@ nonisolated struct GPXParsedRoute {
     let appMetadata: GPXRouteAppMetadata?
 }
 
+/// Movinn-owned point extensions. Keeping validation here gives imports and
+/// exports the same contract while leaving ordinary third-party GPX untouched.
+nonisolated enum GPXRoutePointExtensions {
+    static let sourceDistanceElementName = "sourcedistancemeters"
+    static let gradeRatioElementName = "graderatio"
+    private static let maximumSourceDistanceMeters = 100_000_000.0
+
+    static func validatedSourceDistanceMeters(_ value: Double?) -> Double? {
+        guard let value,
+              value.isFinite,
+              (0...maximumSourceDistanceMeters).contains(value) else {
+            return nil
+        }
+        return value
+    }
+
+    static func validatedGradeRatio(_ value: Double?) -> Double? {
+        guard let value,
+              value.isFinite,
+              (-1.0...1.0).contains(value) else {
+            return nil
+        }
+        return value
+    }
+}
+
 enum GPXRouteIdentity {
     nonisolated static func routeCollectionID(embeddedID: String?, documentData: Data) -> String {
         validatedEmbeddedID(embeddedID) ?? "gpx-\(sha256Hex(documentData).prefix(32))"
@@ -128,6 +154,8 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
         let longitude: Double
         var timestamp: Date?
         var altitude: Double?
+        var sourceDistanceMeters: Double?
+        var gradeRatio: Double?
     }
 
     private let fallbackDate: Date
@@ -195,7 +223,9 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
             latitude: latitude,
             longitude: longitude,
             timestamp: nil,
-            altitude: nil
+            altitude: nil,
+            sourceDistanceMeters: nil,
+            gradeRatio: nil
         )
     }
 
@@ -229,6 +259,18 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
             if let date = date(from: value) {
                 currentPoint?.timestamp = date
             }
+        case GPXRoutePointExtensions.sourceDistanceElementName:
+            guard isMovinnPointExtension(namespaceURI: namespaceURI) else {
+                break
+            }
+            currentPoint?.sourceDistanceMeters = GPXRoutePointExtensions.validatedSourceDistanceMeters(
+                Double(value)
+            )
+        case GPXRoutePointExtensions.gradeRatioElementName:
+            guard isMovinnPointExtension(namespaceURI: namespaceURI) else {
+                break
+            }
+            currentPoint?.gradeRatio = GPXRoutePointExtensions.validatedGradeRatio(Double(value))
         case "routedata":
             let ancestors = elementStack.dropLast()
             let isMetadataExtension = ancestors.count >= 2
@@ -277,7 +319,9 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
                 latitude: point.latitude,
                 longitude: point.longitude,
                 timestamp: point.timestamp ?? fallbackDate.addingTimeInterval(TimeInterval(index)),
-                altitudeMeters: point.altitude
+                sourceDistanceMeters: point.sourceDistanceMeters,
+                altitudeMeters: point.altitude,
+                gradeRatio: point.gradeRatio
             )
         }
     }
@@ -332,6 +376,20 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
 
     private func normalizedElementName(_ name: String) -> String {
         (name.split(separator: ":").last.map(String.init) ?? name).lowercased()
+    }
+
+    private func isMovinnPointExtension(namespaceURI: String?) -> Bool {
+        guard namespaceURI == GPXRouteAppMetadata.namespaceURI else {
+            return false
+        }
+
+        let ancestors = elementStack.dropLast()
+        guard ancestors.count >= 2,
+              ancestors.last == "extensions" else {
+            return false
+        }
+        let pointElement = ancestors[ancestors.index(ancestors.endIndex, offsetBy: -2)]
+        return pointElement == "trkpt" || pointElement == "rtept"
     }
 
     private func date(from string: String) -> Date? {

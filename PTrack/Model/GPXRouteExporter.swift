@@ -75,11 +75,23 @@ enum GPXRouteExporter {
                 if let altitude = coordinate.altitudeMeters, altitude.isFinite {
                     xml += "        <ele>\(measurementString(altitude))</ele>\n"
                 }
-                xml += """
-                        <time>\(timestampFormatter.string(from: coordinate.timestamp))</time>
-                      </trkpt>
+                xml += "        <time>\(timestampFormatter.string(from: coordinate.timestamp))</time>\n"
 
-                """
+                let sourceDistanceMeters = GPXRoutePointExtensions.validatedSourceDistanceMeters(
+                    coordinate.sourceDistanceMeters
+                )
+                let gradeRatio = GPXRoutePointExtensions.validatedGradeRatio(coordinate.gradeRatio)
+                if sourceDistanceMeters != nil || gradeRatio != nil {
+                    xml += "        <extensions>\n"
+                    if let sourceDistanceMeters {
+                        xml += "          <movinn:sourceDistanceMeters>\(pointExtensionValueString(sourceDistanceMeters))</movinn:sourceDistanceMeters>\n"
+                    }
+                    if let gradeRatio {
+                        xml += "          <movinn:gradeRatio>\(pointExtensionValueString(gradeRatio))</movinn:gradeRatio>\n"
+                    }
+                    xml += "        </extensions>\n"
+                }
+                xml += "      </trkpt>\n"
             }
             xml += "    </trkseg>\n"
         }
@@ -183,6 +195,10 @@ enum GPXRouteExporter {
 
     nonisolated private static func measurementString(_ value: Double) -> String {
         String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+
+    nonisolated private static func pointExtensionValueString(_ value: Double) -> String {
+        String(format: "%.8f", locale: Locale(identifier: "en_US_POSIX"), value)
     }
 
     nonisolated private static func sanitizedFileName(_ value: String) -> String {

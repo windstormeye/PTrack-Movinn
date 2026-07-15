@@ -73,6 +73,11 @@ struct TrackedWorkout: nonisolated Codable {
     // routeSegments. Older HealthKit caches flattened all locations by timestamp,
     // so their segment location counts cannot safely be used as array boundaries.
     nonisolated static let currentHealthDataVersion = 3
+    /// Version of the per-coordinate streams persisted for direct Strava imports.
+    /// Bump this when a newly requested stream needs to be backfilled into cached
+    /// activities independently of HealthKit's cache schema.
+    nonisolated static let currentStravaStreamDataVersion = 1
+    nonisolated static let stravaStreamDataVersionMetadataKey = "strava.streamDataVersion"
 
     let id: String
     let healthDataVersion: Int?
@@ -175,6 +180,25 @@ struct TrackedWorkout: nonisolated Codable {
 
     var needsHealthDataRefresh: Bool {
         isHealthKitBackedSource && healthDataVersion != Self.currentHealthDataVersion
+    }
+
+    var stravaStreamDataVersion: Int? {
+        guard let rawValue = metadata?[Self.stravaStreamDataVersionMetadataKey]?.doubleValue,
+              let version = Int(exactly: rawValue),
+              version >= 0 else {
+            return nil
+        }
+        return version
+    }
+
+    var needsStravaStreamDataRefresh: Bool {
+        guard !isRouteCollectionSource, isDirectStravaImport else {
+            return false
+        }
+        guard let stravaStreamDataVersion else {
+            return true
+        }
+        return stravaStreamDataVersion < Self.currentStravaStreamDataVersion
     }
 
     /// Route collections and direct Strava imports share the cache model, but are

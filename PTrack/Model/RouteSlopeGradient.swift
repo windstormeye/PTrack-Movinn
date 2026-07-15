@@ -8,6 +8,63 @@
 import CoreLocation
 import Foundation
 
+nonisolated struct RouteSlopePeak: Sendable {
+    let distanceMeters: CLLocationDistance
+    let altitudeMeters: Double?
+    let gradeRatio: Double
+}
+
+nonisolated struct RouteSlopeAnalysis: Sendable {
+    let gradient: RouteSlopeGradient
+    let distances: [CLLocationDistance]
+    let gradeRatios: [Double?]
+    let steepestUphill: RouteSlopePeak?
+
+    func gradeRatio(at distanceMeters: CLLocationDistance) -> Double? {
+        guard distances.count == gradeRatios.count,
+              !distances.isEmpty,
+              distanceMeters.isFinite else {
+            return nil
+        }
+        if distanceMeters <= distances[0] {
+            return gradeRatios[0]
+        }
+        if distanceMeters >= distances[distances.count - 1] {
+            return gradeRatios[gradeRatios.count - 1]
+        }
+
+        var lowerBound = 1
+        var upperBound = distances.count - 1
+        while lowerBound < upperBound {
+            let middleIndex = (lowerBound + upperBound) / 2
+            if distances[middleIndex] < distanceMeters {
+                lowerBound = middleIndex + 1
+            } else {
+                upperBound = middleIndex
+            }
+        }
+        let upperIndex = lowerBound
+        let lowerIndex = upperIndex - 1
+        if abs(distances[upperIndex] - distanceMeters) < 0.000_001 {
+            return gradeRatios[upperIndex]
+        }
+        let span = distances[upperIndex] - distances[lowerIndex]
+        guard span > 0 else {
+            return gradeRatios[upperIndex]
+        }
+        let progress = min(
+            max((distanceMeters - distances[lowerIndex]) / span, 0),
+            1
+        )
+        switch (gradeRatios[lowerIndex], gradeRatios[upperIndex]) {
+        case let (lowerGrade?, upperGrade?):
+            return lowerGrade + (upperGrade - lowerGrade) * progress
+        case (nil, nil), (_?, nil), (nil, _?):
+            return nil
+        }
+    }
+}
+
 struct RouteSlopeGradient: Sendable {
     let locations: [Double]
     let normalizedSlopes: [Double?]
@@ -15,9 +72,29 @@ struct RouteSlopeGradient: Sendable {
     nonisolated static func make(
         distances: [CLLocationDistance],
         altitudes: [Double?],
+        sourceGradeRatios: [Double?]? = nil,
+        sourceCumulativeDistances: [CLLocationDistance?]? = nil,
         maximumStopCount: Int = 128,
         isCancelled: @Sendable () -> Bool = { false }
     ) -> RouteSlopeGradient? {
+        analyze(
+            distances: distances,
+            altitudes: altitudes,
+            sourceGradeRatios: sourceGradeRatios,
+            sourceCumulativeDistances: sourceCumulativeDistances,
+            maximumStopCount: maximumStopCount,
+            isCancelled: isCancelled
+        )?.gradient
+    }
+
+    nonisolated static func analyze(
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        sourceGradeRatios: [Double?]? = nil,
+        sourceCumulativeDistances: [CLLocationDistance?]? = nil,
+        maximumStopCount: Int = 128,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) -> RouteSlopeAnalysis? {
         guard !isCancelled(),
               distances.count == altitudes.count,
               distances.count > 1,
@@ -25,14 +102,40 @@ struct RouteSlopeGradient: Sendable {
               let totalDistance = distances.last,
               totalDistance.isFinite,
               totalDistance >= 20,
-              areValidCumulativeDistances(distances, isCancelled: isCancelled),
-              let samples = resampledAltitudes(
+              areValidCumulativeDistances(distances, isCancelled: isCancelled) else {
+            return nil
+        }
+        let validatedSourceGrades = validatedSourceGradeRatios(
+            sourceGradeRatios,
+            sourceCumulativeDistances: sourceCumulativeDistances,
+            fallbackDistances: distances,
+            isCancelled: isCancelled
+        )
+        guard !isCancelled() else {
+            return nil
+        }
+
+        let samples: AltitudeSamples
+        if let altitudeSamples = resampledAltitudes(
                 altitudes,
                 distances: distances,
                 totalDistance: totalDistance,
                 isCancelled: isCancelled
-              ) else {
-            return nil
+              ) {
+            samples = altitudeSamples
+        } else {
+            guard !isCancelled(),
+                  validatedSourceGrades != nil,
+                  let sampleDistances = uniformSampleDistances(
+                      totalDistance: totalDistance,
+                      isCancelled: isCancelled
+                  ) else {
+                return nil
+            }
+            samples = AltitudeSamples(
+                distances: sampleDistances,
+                altitudes: Array(repeating: nil, count: sampleDistances.count)
+            )
         }
 
         guard let filteredAltitudes = replacingAltitudeSpikes(
@@ -41,29 +144,120 @@ struct RouteSlopeGradient: Sendable {
         ) else {
             return nil
         }
-        let sampleSpacing = samples.distances.count > 1
-            ? samples.distances[1] - samples.distances[0]
+        let resampledSourceGrades: [Double?]?
+        if let validatedSourceGrades {
+            guard let sourceGrades = resampledGradeRatios(
+                validatedSourceGrades,
+                distances: distances,
+                sampleDistances: samples.distances,
+                isCancelled: isCancelled
+            ) else {
+                return nil
+            }
+            resampledSourceGrades = sourceGrades
+        } else {
+            resampledSourceGrades = nil
+        }
+
+        let slopes: [Double?]
+        if let resampledSourceGrades {
+            var derivedSlopeMask = Array(
+                repeating: false,
+                count: resampledSourceGrades.count
+            )
+            var requiresDerivedSlopes = false
+            for index in resampledSourceGrades.indices {
+                if index.isMultiple(of: 256), isCancelled() {
+                    return nil
+                }
+                if resampledSourceGrades[index] == nil {
+                    derivedSlopeMask[index] = true
+                    requiresDerivedSlopes = true
+                }
+            }
+
+            // A complete native grade stream is already the most faithful source.
+            // Only run the altitude regression at samples where that stream has a
+            // gap, instead of deriving and immediately discarding a full profile.
+            if !requiresDerivedSlopes {
+                slopes = resampledSourceGrades
+            } else {
+                guard let derivedSlopes = regressionSlopes(
+                    altitudes: filteredAltitudes,
+                    distances: samples.distances,
+                    window: gradeWindow(
+                        totalDistance: totalDistance,
+                        sampleDistances: samples.distances
+                    ),
+                    requiredSamples: derivedSlopeMask,
+                    isCancelled: isCancelled
+                ) else {
+                    return nil
+                }
+                var mergedSlopes: [Double?] = []
+                mergedSlopes.reserveCapacity(derivedSlopes.count)
+                for index in derivedSlopes.indices {
+                    if index.isMultiple(of: 256), isCancelled() {
+                        return nil
+                    }
+                    mergedSlopes.append(
+                        resampledSourceGrades[index] ?? derivedSlopes[index]
+                    )
+                }
+                slopes = mergedSlopes
+            }
+        } else {
+            guard let derivedSlopes = regressionSlopes(
+                altitudes: filteredAltitudes,
+                distances: samples.distances,
+                window: gradeWindow(
+                    totalDistance: totalDistance,
+                    sampleDistances: samples.distances
+                ),
+                isCancelled: isCancelled
+            ) else {
+                return nil
+            }
+            slopes = derivedSlopes
+        }
+        return makeAnalysis(
+            distances: samples.distances,
+            filteredAltitudes: filteredAltitudes,
+            slopes: slopes,
+            totalDistance: totalDistance,
+            maximumStopCount: maximumStopCount,
+            isCancelled: isCancelled
+        )
+    }
+
+    private nonisolated static func gradeWindow(
+        totalDistance: CLLocationDistance,
+        sampleDistances: [CLLocationDistance]
+    ) -> CLLocationDistance {
+        let sampleSpacing = sampleDistances.count > 1
+            ? sampleDistances[1] - sampleDistances[0]
             : 0
-        let gradeWindow = max(
+        return max(
             min(max(totalDistance / 200, 40), 120),
             sampleSpacing * 4
         )
-        guard let slopes = regressionSlopes(
-            altitudes: filteredAltitudes,
-            distances: samples.distances,
-            window: gradeWindow,
-            isCancelled: isCancelled
-        ),
-        let normalizedSlopes = normalized(slopes, isCancelled: isCancelled) else {
-            return nil
-        }
+    }
 
-        guard let stopIndices = gradientStopIndices(
-            distances: samples.distances,
-            normalizedSlopes: normalizedSlopes,
-            maximumCount: maximumStopCount,
-            isCancelled: isCancelled
-        ) else {
+    private nonisolated static func makeAnalysis(
+        distances: [CLLocationDistance],
+        filteredAltitudes: [Double?],
+        slopes: [Double?],
+        totalDistance: CLLocationDistance,
+        maximumStopCount: Int,
+        isCancelled: @Sendable () -> Bool
+    ) -> RouteSlopeAnalysis? {
+        guard let normalizedSlopes = normalized(slopes, isCancelled: isCancelled),
+              let stopIndices = gradientStopIndices(
+                  distances: distances,
+                  normalizedSlopes: normalizedSlopes,
+                  maximumCount: maximumStopCount,
+                  isCancelled: isCancelled
+              ) else {
             return nil
         }
         var locations: [Double] = []
@@ -74,7 +268,7 @@ struct RouteSlopeGradient: Sendable {
             if offset.isMultiple(of: 256), isCancelled() {
                 return nil
             }
-            locations.append(min(max(samples.distances[index] / totalDistance, 0), 1))
+            locations.append(min(max(distances[index] / totalDistance, 0), 1))
             stopSlopes.append(normalizedSlopes[index])
         }
         guard !isCancelled(),
@@ -82,9 +276,28 @@ struct RouteSlopeGradient: Sendable {
             return nil
         }
 
-        return RouteSlopeGradient(
-            locations: locations,
-            normalizedSlopes: stopSlopes
+        // The color profile and live dashboard keep the responsive local grade,
+        // while the chart marker represents a sustained climb. Selecting the raw
+        // pointwise maximum lets a bridge lip or a few noisy altitude samples beat
+        // a clearly steeper main climb in the elevation overview.
+        let steepestUphill = sustainedUphillPeak(
+            distances: distances,
+            altitudes: filteredAltitudes,
+            slopes: slopes,
+            isCancelled: isCancelled
+        )
+        guard !isCancelled() else {
+            return nil
+        }
+
+        return RouteSlopeAnalysis(
+            gradient: RouteSlopeGradient(
+                locations: locations,
+                normalizedSlopes: stopSlopes
+            ),
+            distances: distances,
+            gradeRatios: slopes,
+            steepestUphill: steepestUphill
         )
     }
 
@@ -188,6 +401,27 @@ struct RouteSlopeGradient: Sendable {
         return true
     }
 
+    private nonisolated static func uniformSampleDistances(
+        totalDistance: CLLocationDistance,
+        isCancelled: @Sendable () -> Bool
+    ) -> [CLLocationDistance]? {
+        let preferredStep = min(max(totalDistance / 4_000, 5), 25)
+        let sampleCount = min(
+            20_001,
+            max(2, Int(ceil(totalDistance / preferredStep)) + 1)
+        )
+        let sampleStep = totalDistance / Double(sampleCount - 1)
+        var sampleDistances: [CLLocationDistance] = []
+        sampleDistances.reserveCapacity(sampleCount)
+        for sampleIndex in 0..<sampleCount {
+            if sampleIndex.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            sampleDistances.append(Double(sampleIndex) * sampleStep)
+        }
+        return sampleDistances
+    }
+
     private nonisolated static func resampledAltitudes(
         _ altitudes: [Double?],
         distances: [CLLocationDistance],
@@ -237,17 +471,14 @@ struct RouteSlopeGradient: Sendable {
 
         let medianSpacing = median(of: positiveSpacings)
         let maximumInterpolationGap = max(250, min(medianSpacing * 5, 1_000))
-        let preferredStep = min(max(totalDistance / 4_000, 5), 25)
-        let sampleCount = min(20_001, max(2, Int(ceil(totalDistance / preferredStep)) + 1))
-        let sampleStep = totalDistance / Double(sampleCount - 1)
-        var sampleDistances: [CLLocationDistance] = []
-        sampleDistances.reserveCapacity(sampleCount)
-        for sampleIndex in 0..<sampleCount {
-            if sampleIndex.isMultiple(of: 256), isCancelled() {
-                return nil
-            }
-            sampleDistances.append(Double(sampleIndex) * sampleStep)
+        guard let sampleDistances = uniformSampleDistances(
+            totalDistance: totalDistance,
+            isCancelled: isCancelled
+        ) else {
+            return nil
         }
+        let sampleCount = sampleDistances.count
+        let sampleStep = totalDistance / Double(sampleCount - 1)
         var sampleAltitudes = Array<Double?>(repeating: nil, count: sampleCount)
         var upperValidIndex = 1
 
@@ -266,12 +497,15 @@ struct RouteSlopeGradient: Sendable {
 
             let lowerSample = validSamples[upperValidIndex - 1]
             let upperSample = validSamples[upperValidIndex]
-            if abs(distance - lowerSample.distance) <= sampleStep / 2 {
-                sampleAltitudes[sampleIndex] = lowerSample.altitude
-                continue
-            }
-            if abs(distance - upperSample.distance) <= sampleStep / 2 {
-                sampleAltitudes[sampleIndex] = upperSample.altitude
+            let lowerDistance = abs(distance - lowerSample.distance)
+            let upperDistance = abs(distance - upperSample.distance)
+            if min(lowerDistance, upperDistance) <= sampleStep / 2 {
+                // Dense source data can put both neighbors inside the snapping
+                // tolerance. Pick the genuinely nearest sample; on an exact tie,
+                // consistently keep the earlier one.
+                sampleAltitudes[sampleIndex] = lowerDistance <= upperDistance
+                    ? lowerSample.altitude
+                    : upperSample.altitude
                 continue
             }
             guard distance > lowerSample.distance,
@@ -302,6 +536,179 @@ struct RouteSlopeGradient: Sendable {
             return nil
         }
         return AltitudeSamples(distances: sampleDistances, altitudes: sampleAltitudes)
+    }
+
+    private nonisolated static func validatedSourceGradeRatios(
+        _ gradeRatios: [Double?]?,
+        sourceCumulativeDistances: [CLLocationDistance?]?,
+        fallbackDistances: [CLLocationDistance],
+        isCancelled: @Sendable () -> Bool
+    ) -> [Double?]? {
+        guard let gradeRatios,
+              gradeRatios.count == fallbackDistances.count,
+              gradeRatios.count >= 3,
+              !isCancelled() else {
+            return nil
+        }
+
+        var sanitizedGrades: [Double?] = []
+        sanitizedGrades.reserveCapacity(gradeRatios.count)
+        var validGradeCount = 0
+        for index in gradeRatios.indices {
+            if index.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            if let gradeRatio = gradeRatios[index],
+               gradeRatio.isFinite,
+               (-1...1).contains(gradeRatio) {
+                sanitizedGrades.append(gradeRatio)
+                validGradeCount += 1
+            } else {
+                sanitizedGrades.append(nil)
+            }
+        }
+        let validCoverage = Double(validGradeCount) / Double(gradeRatios.count)
+        guard validGradeCount >= 3,
+              validCoverage >= 0.35 else {
+            return nil
+        }
+
+        if let sourceCumulativeDistances {
+            guard sourceCumulativeDistances.count == fallbackDistances.count else {
+                return nil
+            }
+            let providedDistanceCount = sourceCumulativeDistances.reduce(into: 0) {
+                count, distance in
+                if distance != nil {
+                    count += 1
+                }
+            }
+            if providedDistanceCount > 0 {
+                guard providedDistanceCount == sourceCumulativeDistances.count,
+                      let firstDistance = sourceCumulativeDistances[0],
+                      firstDistance.isFinite,
+                      firstDistance >= 0 else {
+                    return nil
+                }
+                var previousDistance = firstDistance
+                var strictlyIncreasingCount = 0
+                for index in 1..<sourceCumulativeDistances.count {
+                    if index.isMultiple(of: 256), isCancelled() {
+                        return nil
+                    }
+                    guard let distance = sourceCumulativeDistances[index],
+                          distance.isFinite,
+                          distance >= 0,
+                          distance >= previousDistance - 0.01 else {
+                        return nil
+                    }
+                    if distance > previousDistance + 0.001 {
+                        strictlyIncreasingCount += 1
+                    }
+                    previousDistance = max(previousDistance, distance)
+                }
+                guard strictlyIncreasingCount > 0,
+                      previousDistance - firstDistance >= 20 else {
+                    return nil
+                }
+            }
+        }
+        return sanitizedGrades
+    }
+
+    private nonisolated static func resampledGradeRatios(
+        _ gradeRatios: [Double?],
+        distances: [CLLocationDistance],
+        sampleDistances: [CLLocationDistance],
+        isCancelled: @Sendable () -> Bool
+    ) -> [Double?]? {
+        guard gradeRatios.count == distances.count,
+              !sampleDistances.isEmpty,
+              !isCancelled() else {
+            return nil
+        }
+
+        var samples: [(distance: CLLocationDistance, gradeRatio: Double?)] = []
+        samples.reserveCapacity(gradeRatios.count)
+        for index in gradeRatios.indices {
+            if index.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            let gradeRatio = gradeRatios[index].flatMap {
+                $0.isFinite && (-1...1).contains($0) ? $0 : nil
+            }
+            if let lastSample = samples.last,
+               abs(lastSample.distance - distances[index]) < 0.001 {
+                if let gradeRatio {
+                    samples[samples.count - 1].gradeRatio = gradeRatio
+                }
+            } else {
+                samples.append((distances[index], gradeRatio))
+            }
+        }
+
+        var result = Array<Double?>(repeating: nil, count: sampleDistances.count)
+        guard samples.count >= 2 else {
+            return result
+        }
+
+        var positiveSpacings: [CLLocationDistance] = []
+        positiveSpacings.reserveCapacity(samples.count - 1)
+        for index in 1..<samples.count {
+            let spacing = samples[index].distance - samples[index - 1].distance
+            if spacing.isFinite, spacing > 0 {
+                positiveSpacings.append(spacing)
+            }
+        }
+        positiveSpacings.sort()
+        guard !isCancelled() else {
+            return nil
+        }
+        guard !positiveSpacings.isEmpty else {
+            return result
+        }
+
+        let medianSpacing = median(of: positiveSpacings)
+        let maximumInterpolationGap = max(250, min(medianSpacing * 5, 1_000))
+        let matchingTolerance = 0.001
+        var upperValidIndex = 1
+
+        for sampleIndex in sampleDistances.indices {
+            if sampleIndex.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            let distance = sampleDistances[sampleIndex]
+            while upperValidIndex < samples.count - 1,
+                  samples[upperValidIndex].distance < distance {
+                upperValidIndex += 1
+            }
+
+            let lowerSample = samples[upperValidIndex - 1]
+            let upperSample = samples[upperValidIndex]
+            if abs(distance - lowerSample.distance) <= matchingTolerance {
+                result[sampleIndex] = lowerSample.gradeRatio
+                continue
+            }
+            if abs(distance - upperSample.distance) <= matchingTolerance {
+                result[sampleIndex] = upperSample.gradeRatio
+                continue
+            }
+            guard distance > lowerSample.distance,
+                  distance < upperSample.distance else {
+                continue
+            }
+
+            let gap = upperSample.distance - lowerSample.distance
+            guard gap > 0,
+                  gap <= maximumInterpolationGap,
+                  let lowerGrade = lowerSample.gradeRatio,
+                  let upperGrade = upperSample.gradeRatio else {
+                continue
+            }
+            let progress = (distance - lowerSample.distance) / gap
+            result[sampleIndex] = lowerGrade + (upperGrade - lowerGrade) * progress
+        }
+        return result
     }
 
     private nonisolated static func replacingAltitudeSpikes(
@@ -346,9 +753,12 @@ struct RouteSlopeGradient: Sendable {
         altitudes: [Double?],
         distances: [CLLocationDistance],
         window: CLLocationDistance,
+        requiredSamples: [Bool]? = nil,
         isCancelled: @Sendable () -> Bool
     ) -> [Double?]? {
-        guard !isCancelled() else {
+        guard altitudes.count == distances.count,
+              requiredSamples == nil || requiredSamples?.count == altitudes.count,
+              !isCancelled() else {
             return nil
         }
         let halfWindow = window / 2
@@ -359,6 +769,9 @@ struct RouteSlopeGradient: Sendable {
         for index in altitudes.indices {
             if index.isMultiple(of: 256), isCancelled() {
                 return nil
+            }
+            if let requiredSamples, !requiredSamples[index] {
+                continue
             }
             while lowerIndex < index,
                   distances[index] - distances[lowerIndex] > halfWindow {
@@ -402,12 +815,212 @@ struct RouteSlopeGradient: Sendable {
             guard slope.isFinite else {
                 continue
             }
-            // The map's green-to-red palette represents climbing difficulty.
-            // Descents must stay at the baseline instead of being treated as
-            // equally steep climbs through an absolute value.
-            slopes[index] = min(max(slope, 0), 1)
+            // Keep the signed physical grade for the replay dashboard. The
+            // green-to-red map palette still clamps descents to its baseline
+            // later when these values are normalized for color rendering.
+            slopes[index] = min(max(slope, -1), 1)
         }
         return slopes
+    }
+
+    private nonisolated static func sustainedUphillPeak(
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        slopes: [Double?],
+        isCancelled: @Sendable () -> Bool
+    ) -> RouteSlopePeak? {
+        guard distances.count == altitudes.count,
+              distances.count == slopes.count,
+              distances.count > 1 else {
+            return nil
+        }
+        // The marker represents the steepest sustained 275 m, while the map and
+        // live dashboard continue using the responsive 40-120 m profile above.
+        // Signed distance integration naturally cancels a short bump that rises
+        // and falls again inside the window.
+        let window: CLLocationDistance = 275
+        let halfWindow = window / 2
+        var bestCandidate: (distance: CLLocationDistance, gradeRatio: Double)?
+        var runStartIndex = 0
+        while runStartIndex < slopes.count {
+            while runStartIndex < slopes.count, slopes[runStartIndex] == nil {
+                runStartIndex += 1
+            }
+            guard runStartIndex < slopes.count else {
+                break
+            }
+            var runEndIndex = runStartIndex
+            while runEndIndex + 1 < slopes.count,
+                  slopes[runEndIndex + 1] != nil {
+                runEndIndex += 1
+            }
+
+            if distances[runEndIndex] - distances[runStartIndex] >= window {
+                for index in runStartIndex...runEndIndex {
+                    if index.isMultiple(of: 256), isCancelled() {
+                        return nil
+                    }
+                    let latestLowerDistance = distances[runEndIndex] - window
+                    let lowerDistance = min(
+                        max(
+                            distances[index] - halfWindow,
+                            distances[runStartIndex]
+                        ),
+                        latestLowerDistance
+                    )
+                    let upperDistance = lowerDistance + window
+                    guard let integratedGrade = integratedGradeRatio(
+                              from: lowerDistance,
+                              to: upperDistance,
+                              distances: distances,
+                              slopes: slopes,
+                              within: runStartIndex...runEndIndex
+                          ) else {
+                        continue
+                    }
+                    let averageGrade = integratedGrade / window
+                    guard averageGrade.isFinite,
+                          averageGrade > 0 else {
+                        continue
+                    }
+                    if bestCandidate == nil
+                        || averageGrade > (bestCandidate?.gradeRatio
+                            ?? -.greatestFiniteMagnitude) {
+                        bestCandidate = (
+                            lowerDistance + halfWindow,
+                            averageGrade
+                        )
+                    }
+                }
+            }
+            runStartIndex = runEndIndex + 1
+        }
+
+        guard let bestCandidate else {
+            return nil
+        }
+        return RouteSlopePeak(
+            distanceMeters: bestCandidate.distance,
+            altitudeMeters: interpolatedAltitude(
+                at: bestCandidate.distance,
+                distances: distances,
+                altitudes: altitudes
+            ),
+            gradeRatio: bestCandidate.gradeRatio
+        )
+    }
+
+    private nonisolated static func interpolatedAltitude(
+        at distance: CLLocationDistance,
+        distances: [CLLocationDistance],
+        altitudes: [Double?]
+    ) -> Double? {
+        guard distances.count == altitudes.count,
+              !distances.isEmpty,
+              distance >= distances[0],
+              distance <= distances[distances.count - 1] else {
+            return nil
+        }
+        var lowerBound = 0
+        var upperBound = distances.count - 1
+        while lowerBound < upperBound {
+            let middleIndex = (lowerBound + upperBound) / 2
+            if distances[middleIndex] < distance {
+                lowerBound = middleIndex + 1
+            } else {
+                upperBound = middleIndex
+            }
+        }
+        let upperIndex = lowerBound
+        if abs(distances[upperIndex] - distance) < 0.000_001 {
+            return altitudes[upperIndex]
+        }
+        guard upperIndex > 0,
+              let lowerAltitude = altitudes[upperIndex - 1],
+              let upperAltitude = altitudes[upperIndex] else {
+            return nil
+        }
+        let span = distances[upperIndex] - distances[upperIndex - 1]
+        guard span > 0 else {
+            return upperAltitude
+        }
+        let progress = (distance - distances[upperIndex - 1]) / span
+        return lowerAltitude + (upperAltitude - lowerAltitude) * progress
+    }
+
+    private nonisolated static func integratedGradeRatio(
+        from lowerDistance: CLLocationDistance,
+        to upperDistance: CLLocationDistance,
+        distances: [CLLocationDistance],
+        slopes: [Double?],
+        within range: ClosedRange<Int>
+    ) -> Double? {
+        guard lowerDistance < upperDistance,
+              range.lowerBound >= 0,
+              range.upperBound < distances.count,
+              range.upperBound < slopes.count,
+              lowerDistance >= distances[range.lowerBound],
+              upperDistance <= distances[range.upperBound] else {
+            return nil
+        }
+
+        func firstIndex(atOrAfter targetDistance: CLLocationDistance) -> Int {
+            var lowerBound = range.lowerBound
+            var upperBound = range.upperBound
+            while lowerBound < upperBound {
+                let middleIndex = (lowerBound + upperBound) / 2
+                if distances[middleIndex] < targetDistance {
+                    lowerBound = middleIndex + 1
+                } else {
+                    upperBound = middleIndex
+                }
+            }
+            return lowerBound
+        }
+
+        func gradeRatio(at targetDistance: CLLocationDistance) -> Double? {
+            let upperIndex = firstIndex(atOrAfter: targetDistance)
+            if abs(distances[upperIndex] - targetDistance) < 0.000_001 {
+                return slopes[upperIndex]
+            }
+            guard upperIndex > range.lowerBound,
+                  let lowerGrade = slopes[upperIndex - 1],
+                  let upperGrade = slopes[upperIndex] else {
+                return nil
+            }
+            let span = distances[upperIndex] - distances[upperIndex - 1]
+            guard span > 0 else {
+                return upperGrade
+            }
+            let progress = (targetDistance - distances[upperIndex - 1]) / span
+            return lowerGrade + (upperGrade - lowerGrade) * progress
+        }
+
+        guard var previousGrade = gradeRatio(at: lowerDistance),
+              let finalGrade = gradeRatio(at: upperDistance) else {
+            return nil
+        }
+        var previousDistance = lowerDistance
+        var integratedGrade = 0.0
+        var index = firstIndex(atOrAfter: lowerDistance)
+        if distances[index] <= lowerDistance + 0.000_001 {
+            index += 1
+        }
+        while index <= range.upperBound,
+              distances[index] < upperDistance {
+            guard let grade = slopes[index] else {
+                return nil
+            }
+            let distance = distances[index]
+            integratedGrade += (previousGrade + grade) * 0.5
+                * (distance - previousDistance)
+            previousDistance = distance
+            previousGrade = grade
+            index += 1
+        }
+        integratedGrade += (previousGrade + finalGrade) * 0.5
+            * (upperDistance - previousDistance)
+        return integratedGrade
     }
 
     private nonisolated static func normalized(

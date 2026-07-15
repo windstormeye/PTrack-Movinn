@@ -34,7 +34,16 @@ final class StravaManager: NSObject {
 
     struct LoadResult {
         let workouts: [TrackedWorkout]
-        let failedActivityCount: Int
+        /// All IDs returned by the authoritative activity summary listing.
+        let summaryActivityIDs: Set<Int64>
+        /// Summary activities eligible for a stream request before cache exclusion.
+        let routeCandidateActivityIDs: Set<Int64>
+        /// IDs whose stream request or conversion failed and should be retried.
+        let failedActivityIDs: Set<Int64>
+
+        var failedActivityCount: Int {
+            failedActivityIDs.count
+        }
 
         var didCompleteWithoutActivityFailures: Bool {
             failedActivityCount == 0
@@ -127,6 +136,10 @@ final class StravaManager: NSObject {
         let unsupportedCount = activities.filter { $0.supportedSport == nil }.count
         let withoutRouteHintCount = activities.filter { $0.supportedSport != nil && !$0.hasRouteHint }.count
         let alreadyCachedCount = activities.filter { excludingStravaActivityIDs.contains($0.id) }.count
+        let summaryActivityIDs = Set(activities.map(\.id))
+        let routeCandidateActivityIDs = Set(activities.compactMap { activity in
+            activity.supportedSport != nil && activity.hasRouteHint ? activity.id : nil
+        })
         let supportedActivities = activities.filter {
             $0.supportedSport != nil &&
             $0.hasRouteHint &&
@@ -142,7 +155,7 @@ final class StravaManager: NSObject {
         var trackedWorkouts: [TrackedWorkout] = []
         trackedWorkouts.reserveCapacity(supportedActivities.count)
         var importedActivityIDs = Set<Int64>()
-        var failedActivityCount = 0
+        var failedActivityIDs = Set<Int64>()
 
         for (index, activity) in supportedActivities.enumerated() {
             guard importedActivityIDs.insert(activity.id).inserted else {
@@ -162,6 +175,7 @@ final class StravaManager: NSObject {
                         "converted activity \(activity.id), coordinates: \(workout.coordinates.count), distance: \(workout.distanceMeters)"
                     )
                 } else {
+                    failedActivityIDs.insert(activity.id)
                     log("skipped activity \(activity.id), streams did not contain enough route data")
                 }
             } catch is CancellationError {
@@ -170,16 +184,21 @@ final class StravaManager: NSObject {
                 if Self.requiresReauthorization(error) {
                     throw error
                 }
-                failedActivityCount += 1
+                failedActivityIDs.insert(activity.id)
                 log("failed to load streams for activity \(activity.id): \(error.localizedDescription)")
             }
         }
 
         let sortedWorkouts = trackedWorkouts.sorted { $0.startDate > $1.startDate }
         log(
-            "load tracked workouts completed, converted routes: \(sortedWorkouts.count), activity failures: \(failedActivityCount)"
+            "load tracked workouts completed, converted routes: \(sortedWorkouts.count), activity failures: \(failedActivityIDs.count)"
         )
-        return LoadResult(workouts: sortedWorkouts, failedActivityCount: failedActivityCount)
+        return LoadResult(
+            workouts: sortedWorkouts,
+            summaryActivityIDs: summaryActivityIDs,
+            routeCandidateActivityIDs: routeCandidateActivityIDs,
+            failedActivityIDs: failedActivityIDs
+        )
     }
 
     func authorize(
@@ -421,7 +440,7 @@ final class StravaManager: NSObject {
             urlString: "\(define.APIBaseURL)/activities/\(activityID)/streams",
             method: .get,
             parameters: [
-                "keys": .stringArray(["time", "latlng", "altitude", "velocity_smooth", "distance", "heartrate", "cadence", "watts", "temp"]),
+                "keys": .stringArray(["time", "latlng", "altitude", "velocity_smooth", "distance", "grade_smooth", "heartrate", "cadence", "watts", "temp"]),
                 "key_by_type": .bool(true)
             ],
             parameterEncoding: .query
@@ -877,20 +896,69 @@ private struct StravaActivityStreamSet: Decodable {
         }
 
         let times = streams["time"]?.data.intValues
+        let distances = streams["distance"]?.data.doubleValues
         let altitudes = streams["altitude"]?.data.doubleValues
+        let gradePercents = streams["grade_smooth"]?.data.doubleValues
         let speeds = streams["velocity_smooth"]?.data.doubleValues
         let heartRates = streams["heartrate"]?.data.doubleValues
         let powers = streams["watts"]?.data.doubleValues
         let temperatures = streams["temp"]?.data.doubleValues
 
+        let alignedSourceDistances: [Double]? = {
+            guard let distances,
+                  distances.count == latLngPairs.count,
+                  let firstDistance = distances.first,
+                  firstDistance.isFinite,
+                  firstDistance >= 0 else {
+                return nil
+            }
+            var normalizedDistances: [Double] = [firstDistance]
+            normalizedDistances.reserveCapacity(distances.count)
+            var previousDistance = firstDistance
+            var hasForwardProgress = false
+            for distance in distances.dropFirst() {
+                guard distance.isFinite,
+                      distance >= 0,
+                      distance >= previousDistance - 0.01 else {
+                    return nil
+                }
+                let normalizedDistance = max(distance, previousDistance)
+                if normalizedDistance > previousDistance + 0.001 {
+                    hasForwardProgress = true
+                }
+                normalizedDistances.append(normalizedDistance)
+                previousDistance = normalizedDistance
+            }
+            guard hasForwardProgress,
+                  previousDistance - firstDistance >= 20 else {
+                return nil
+            }
+            return normalizedDistances
+        }()
+        let alignedGradePercents: [Double]? = {
+            guard alignedSourceDistances != nil,
+                  let gradePercents,
+                  gradePercents.count == latLngPairs.count else {
+                return nil
+            }
+            return gradePercents
+        }()
+
         return latLngPairs.enumerated().map { index, pair in
-            RouteCoordinate(
+            let gradeRatio = (alignedGradePercents?[index]).flatMap { gradePercent -> Double? in
+                let ratio = gradePercent / 100
+                return ratio.isFinite && (-1...1).contains(ratio) ? ratio : nil
+            }
+
+            return RouteCoordinate(
                 latitude: pair.latitude,
                 longitude: pair.longitude,
                 timestamp: startDate.addingTimeInterval(TimeInterval(times?[safe: index] ?? index)),
+                sourceDistanceMeters: alignedSourceDistances?[index],
                 horizontalAccuracyMeters: nil,
                 altitudeMeters: altitudes?[safe: index],
                 verticalAccuracyMeters: nil,
+                gradeRatio: gradeRatio,
                 speedMetersPerSecond: speeds?[safe: index],
                 speedAccuracyMetersPerSecond: nil,
                 courseDegrees: nil,
@@ -1038,7 +1106,11 @@ private extension TrackedWorkout {
         sport: StravaSupportedSport
     ) -> [String: TrackedMetadataValue] {
         var metadata: [String: TrackedMetadataValue] = [
-            "strava.id": TrackedMetadataValue(type: "string", stringValue: "\(activity.id)")
+            "strava.id": TrackedMetadataValue(type: "string", stringValue: "\(activity.id)"),
+            TrackedWorkout.stravaStreamDataVersionMetadataKey: TrackedMetadataValue(
+                type: "number",
+                doubleValue: Double(TrackedWorkout.currentStravaStreamDataVersion)
+            )
         ]
 
         if let name = activity.name {
