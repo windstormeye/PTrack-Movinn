@@ -165,8 +165,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let preferredSlopeOverlayChunkDistance: CLLocationDistance = 15_000
     private let maximumSlopeOverlayChunkCount = 8
     private let slopeRouteLineWidth: CGFloat = 3
-    private static let routeSlopeColorHintShownDefaultsKey =
-        "studio.pj.PTrack.routeSlopeColorHint.hasShown.v1"
     private static let minimumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
         "routeDetailMinimum"
     )
@@ -989,25 +987,47 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return
         }
 
-        isRouteSlopeVisible.toggle()
-        replaceRouteOverlaysForSlopeVisibility()
-        updateRouteSlopeVisibilityButtonAppearance()
         if isRouteSlopeVisible {
-            showRouteSlopeColorHintIfNeeded()
+            setRouteSlopeVisible(false)
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.ensureAccessResolved()
+            guard ProSubscriptionManager.shared.isProUser else {
+                modalPresentationHost.presentProPaywall { [weak self] in
+                    self?.setRouteSlopeVisible(true)
+                }
+                return
+            }
+
+            setRouteSlopeVisible(true)
         }
     }
 
-    private func showRouteSlopeColorHintIfNeeded() {
+    private func setRouteSlopeVisible(_ isVisible: Bool) {
+        guard routeSlopeGradient != nil,
+              isRouteSlopeVisible != isVisible else {
+            return
+        }
+
+        isRouteSlopeVisible = isVisible
+        replaceRouteOverlaysForSlopeVisibility()
+        updateRouteSlopeVisibilityButtonAppearance()
+        if isRouteSlopeVisible {
+            showRouteSlopeColorHint()
+        }
+    }
+
+    private func showRouteSlopeColorHint() {
         guard let window = view.window else {
             return
         }
 
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: Self.routeSlopeColorHintShownDefaultsKey) else {
-            return
-        }
-
-        defaults.set(true, forKey: Self.routeSlopeColorHintShownDefaultsKey)
         let message = AppLocalization.text(.routeSlopeColorHint)
         Toast.show(
             message,

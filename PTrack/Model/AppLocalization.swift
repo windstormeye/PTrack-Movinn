@@ -155,6 +155,7 @@ enum AppTextKey: String {
     case proFeatureMultiLivePhotoExport
     case proFeatureMoreComing
     case proFeatureRouteMerge
+    case proFeatureRouteSlope
     case proPaywallSubtitle
     case proPaywallTitle
     case proProductUnavailable
@@ -530,6 +531,7 @@ enum AppLocalization {
             .proFeatureMultiLivePhotoExport: "支持轨迹多动图\n分享",
             .proFeatureMoreComing: "未来更多功能",
             .proFeatureRouteMerge: "合并多段运动轨迹",
+            .proFeatureRouteSlope: "显示轨迹坡度情况",
             .proPaywallSubtitle: "Movinn 持续提供高级功能，让你的运动更加从容！",
             .proPaywallTitle: "解锁高级功能",
             .proProductUnavailable: "暂时无法获取订阅商品，请稍后再试。",
@@ -553,7 +555,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "需要位置权限",
             .route: "轨迹",
             .routeSlope: "坡度",
-            .routeSlopeColorHint: "越红的地方爬升坡度越陡",
+            .routeSlopeColorHint: "偏绿的路段平缓，偏红的路段陡峭",
             .routeCollection: "导入路线",
             .routeCollectionMenuTitle: "路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
@@ -783,6 +785,7 @@ enum AppLocalization {
             .proFeatureMultiLivePhotoExport: "複数の軌跡アニメーション共有に対応",
             .proFeatureMoreComing: "今後の機能",
             .proFeatureRouteMerge: "複数区間のルート結合",
+            .proFeatureRouteSlope: "ルートの勾配を表示",
             .proPaywallSubtitle: "Movinn は高度な機能で運動をもっと快適にします。",
             .proPaywallTitle: "高度な機能を解放",
             .proProductUnavailable: "サブスクリプションを取得できません。あとでもう一度お試しください。",
@@ -806,7 +809,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "位置情報の許可が必要です",
             .route: "ルート",
             .routeSlope: "勾配",
-            .routeSlopeColorHint: "赤い場所ほど上り勾配が急です",
+            .routeSlopeColorHint: "緑寄りの区間は緩やかで、赤寄りの区間は急です",
             .routeCollection: "ルート読み込み",
             .routeCollectionMenuTitle: "ルート",
             .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
@@ -1036,6 +1039,7 @@ enum AppLocalization {
             .proFeatureMultiLivePhotoExport: "여러 경로 애니메이션 공유 지원",
             .proFeatureMoreComing: "더 많은 기능 예정",
             .proFeatureRouteMerge: "여러 구간 경로 병합",
+            .proFeatureRouteSlope: "경로 경사도 표시",
             .proPaywallSubtitle: "Movinn은 고급 기능으로 운동을 더 편하게 합니다.",
             .proPaywallTitle: "고급 기능 잠금 해제",
             .proProductUnavailable: "구독 상품을 불러올 수 없습니다. 나중에 다시 시도해 주세요.",
@@ -1059,7 +1063,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "위치 권한 필요",
             .route: "경로",
             .routeSlope: "경사도",
-            .routeSlopeColorHint: "붉을수록 오르막 경사가 가파릅니다",
+            .routeSlopeColorHint: "초록색에 가까운 구간은 완만하고, 빨간색에 가까운 구간은 가파릅니다",
             .routeCollection: "경로 가져오기",
             .routeCollectionMenuTitle: "경로",
             .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
@@ -1289,6 +1293,7 @@ enum AppLocalization {
             .proFeatureMultiLivePhotoExport: "Share multiple animated routes",
             .proFeatureMoreComing: "More features soon",
             .proFeatureRouteMerge: "Merge route segments",
+            .proFeatureRouteSlope: "Show route gradients",
             .proPaywallSubtitle: "Movinn keeps advanced tools ready for easier workouts.",
             .proPaywallTitle: "Unlock Pro Features",
             .proProductUnavailable: "The subscription is unavailable. Please try again later.",
@@ -1312,7 +1317,7 @@ enum AppLocalization {
             .routeBookLocationPermissionRequiredTitle: "Location Permission Required",
             .route: "Route",
             .routeSlope: "Slope",
-            .routeSlopeColorHint: "Redder sections are steeper climbs",
+            .routeSlopeColorHint: "Greener sections are gentler; redder sections are steeper",
             .routeCollection: "Imported Routes",
             .routeCollectionMenuTitle: "Routes",
             .routeCollectionEmptyMessage: "No imported routes yet",

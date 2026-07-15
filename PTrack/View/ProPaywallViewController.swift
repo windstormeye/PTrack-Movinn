@@ -288,6 +288,10 @@ final class ProPaywallViewController: UIViewController {
             title: AppLocalization.text(.proFeatureHeatmap)
         ))
         featuresStackView.addArrangedSubview(ProFeatureRowView(
+            iconName: "mountain.2.fill",
+            title: AppLocalization.text(.proFeatureRouteSlope)
+        ))
+        featuresStackView.addArrangedSubview(ProFeatureRowView(
             iconName: "arrow.trianglehead.merge",
             fallbackIconName: "arrow.merge",
             title: AppLocalization.text(.proFeatureRouteMerge)
