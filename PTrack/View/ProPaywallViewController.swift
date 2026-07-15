@@ -27,7 +27,6 @@ final class ProPaywallViewController: UIViewController {
     private let featuresStackView = UIStackView()
     private let bottomContainerView = UIView()
     private let purchaseButton = UIButton(type: .system)
-    private let purchasePromoBadgeView = PromoBadgeView()
     private let linksStackView = UIStackView()
     private let privacyButton = UIButton(type: .system)
     private let restoreButton = UIButton(type: .system)
@@ -114,7 +113,6 @@ final class ProPaywallViewController: UIViewController {
         contentView.addSubview(subtitleLabel)
         contentView.addSubview(featuresStackView)
         bottomContainerView.addSubview(purchaseButton)
-        bottomContainerView.addSubview(purchasePromoBadgeView)
         bottomContainerView.addSubview(linksStackView)
 
         backgroundView.snp.makeConstraints { make in
@@ -141,13 +139,6 @@ final class ProPaywallViewController: UIViewController {
         purchaseButton.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
             make.height.equalTo(62)
-        }
-
-        purchasePromoBadgeView.snp.makeConstraints { make in
-            make.top.equalTo(purchaseButton.snp.top).offset(-9)
-            make.trailing.equalTo(purchaseButton.snp.trailing).offset(7)
-            make.height.equalTo(24)
-            make.width.greaterThanOrEqualTo(52)
         }
 
         linksStackView.snp.makeConstraints { make in
@@ -313,7 +304,6 @@ final class ProPaywallViewController: UIViewController {
         codeRedemptionButton.configuration?.title = AppLocalization.text(.proCodeRedemption)
         restoreButton.setTitle(AppLocalization.text(.restorePurchases), for: .normal)
         termsButton.setTitle(AppLocalization.text(.termsOfUse), for: .normal)
-        purchasePromoBadgeView.configure(text: AppLocalization.text(.promotionBadge))
         updatePurchaseButton()
     }
 

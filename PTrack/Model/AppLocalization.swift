@@ -148,7 +148,6 @@ enum AppTextKey: String {
     case photoBackgroundAdjustmentHint
     case photoMatching
     case privacyPolicy
-    case promotionBadge
     case proCodeRedemption
     case proFeatureHeatmap
     case proFeatureICloudRouteSync
@@ -524,7 +523,6 @@ enum AppLocalization {
             .photoBackgroundAdjustmentHint: "双击照片调整",
             .photoMatching: "照片匹配",
             .privacyPolicy: "隐私政策",
-            .promotionBadge: "促销",
             .proCodeRedemption: "代码兑换",
             .proFeatureHeatmap: "查看运动路线热图",
             .proFeatureICloudRouteSync: "iCloud 同步导入路线",
@@ -778,7 +776,6 @@ enum AppLocalization {
             .photoBackgroundAdjustmentHint: "写真をダブルタップして調整",
             .photoMatching: "写真照合",
             .privacyPolicy: "プライバシー",
-            .promotionBadge: "セール",
             .proCodeRedemption: "コードを使う",
             .proFeatureHeatmap: "ルートヒートマップ",
             .proFeatureICloudRouteSync: "読み込んだルートを iCloud で同期",
@@ -1032,7 +1029,6 @@ enum AppLocalization {
             .photoBackgroundAdjustmentHint: "사진을 두 번 탭해 조정",
             .photoMatching: "사진 매칭",
             .privacyPolicy: "개인정보",
-            .promotionBadge: "할인",
             .proCodeRedemption: "코드 등록",
             .proFeatureHeatmap: "경로 히트맵 보기",
             .proFeatureICloudRouteSync: "가져온 경로를 iCloud로 동기화",
@@ -1286,7 +1282,6 @@ enum AppLocalization {
             .photoBackgroundAdjustmentHint: "Double-tap photo to adjust",
             .photoMatching: "Photo Matching",
             .privacyPolicy: "Privacy",
-            .promotionBadge: "SALE",
             .proCodeRedemption: "Redeem Code",
             .proFeatureHeatmap: "View route heatmaps",
             .proFeatureICloudRouteSync: "Sync imported routes with iCloud",

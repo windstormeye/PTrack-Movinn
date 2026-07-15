@@ -982,7 +982,6 @@ private final class MoreProStatusCell: UICollectionViewCell {
     private let gradientView = AnimatedProGradientView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
-    private let promoBadgeView = PromoBadgeView()
     private var isProUser = false
 
     override init(frame: CGRect) {
@@ -1009,12 +1008,6 @@ private final class MoreProStatusCell: UICollectionViewCell {
         updateGradientAppearance()
         titleLabel.text = AppLocalization.text(isProUser ? .proUnlockedTitle : .proPaywallTitle)
         subtitleLabel.text = AppLocalization.text(.proPaywallSubtitle)
-        promoBadgeView.isHidden = isProUser
-        if isProUser {
-            promoBadgeView.stopAnimations()
-        } else {
-            promoBadgeView.configure(text: AppLocalization.text(.promotionBadge))
-        }
         updateColors()
     }
 
@@ -1039,7 +1032,6 @@ private final class MoreProStatusCell: UICollectionViewCell {
         contentView.addSubview(gradientView)
         contentView.addSubview(titleLabel)
         contentView.addSubview(subtitleLabel)
-        addSubview(promoBadgeView)
 
         gradientView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
@@ -1055,13 +1047,6 @@ private final class MoreProStatusCell: UICollectionViewCell {
             make.leading.equalTo(titleLabel)
             make.trailing.equalToSuperview().inset(16)
             make.top.equalTo(titleLabel.snp.bottom).offset(5)
-        }
-
-        promoBadgeView.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(-7)
-            make.trailing.equalToSuperview().offset(7)
-            make.height.equalTo(24)
-            make.width.greaterThanOrEqualTo(52)
         }
 
         registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (cell: Self, _) in
