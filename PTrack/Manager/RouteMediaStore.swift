@@ -18,6 +18,7 @@ final class RouteMediaStore {
     }()
     private static let imageManager = PHCachingImageManager()
     private static let matchingDistanceThreshold: CLLocationDistance = 200
+    private static let routePointSamplingBudget = 760
 
     static func clearMemoryCache() {
         resultCache.removeAllObjects()
@@ -34,13 +35,14 @@ final class RouteMediaStore {
 
             switch authorizationResult {
             case .success:
-                let cacheKey = Self.cacheKey(for: workout)
-                if let cachedResult = Self.resultCache.object(forKey: cacheKey) {
-                    completion(.success(cachedResult.items))
-                    return
-                }
-
                 DispatchQueue.global(qos: .userInitiated).async {
+                    let cacheKey = Self.cacheKey(for: workout)
+                    if let cachedResult = Self.resultCache.object(forKey: cacheKey) {
+                        DispatchQueue.main.async {
+                            completion(.success(cachedResult.items))
+                        }
+                        return
+                    }
                     let mediaItems = self.findMedia(for: workout)
                     Self.resultCache.setObject(RouteMediaResultBox(items: mediaItems), forKey: cacheKey)
                     DispatchQueue.main.async {
@@ -56,7 +58,24 @@ final class RouteMediaStore {
     }
 
     private static func cacheKey(for workout: TrackedWorkout) -> NSString {
-        "\(workout.id)-detail\(workout.routeDetailCoordinates.count)-\(CoordinateTransformer.cacheKey)" as NSString
+        var fingerprint: UInt64 = 0xcbf2_9ce4_8422_2325
+        func mix(_ value: UInt64) {
+            fingerprint ^= value
+            fingerprint &*= 0x0000_0100_0000_01b3
+        }
+
+        let coordinates = workout.routeDetailCoordinates
+        mix(UInt64(coordinates.count))
+        for coordinate in coordinates {
+            mix(coordinate.latitude.bitPattern)
+            mix(coordinate.longitude.bitPattern)
+            mix(coordinate.timestamp.timeIntervalSinceReferenceDate.bitPattern)
+            mix(coordinate.altitudeMeters?.bitPattern ?? UInt64.max)
+        }
+        for segmentStartIndex in workout.routeDetailSegmentStartIndices.sorted() {
+            mix(UInt64(segmentStartIndex))
+        }
+        return "\(workout.id)-geometry\(String(fingerprint, radix: 16))-\(CoordinateTransformer.cacheKey)" as NSString
     }
 
     private func requestAuthorization(completion: @escaping (Result<Void, Error>) -> Void) {
@@ -78,12 +97,12 @@ final class RouteMediaStore {
     }
 
     private func findMedia(for workout: TrackedWorkout) -> [RouteMediaItem] {
-        let routePoints = routeMapPoints(for: workout)
-        guard routePoints.count > 1 else {
+        let routeSegments = routeMapPoints(for: workout)
+        guard routeSegments.contains(where: { !$0.isEmpty }) else {
             return []
         }
 
-        let routeSearchRect = expandedSearchRect(for: routePoints, workout: workout)
+        let routeSearchRect = expandedSearchRect(for: routeSegments, workout: workout)
         let assets = fetchCandidateAssets(for: workout)
         let distanceThreshold = matchingDistanceThreshold(for: workout)
         var mediaItems: [RouteMediaItem] = []
@@ -108,7 +127,7 @@ final class RouteMediaStore {
             }
             routeBoundsCandidateCount += 1
 
-            let distance = minimumDistance(from: mapPoint, toPolyline: routePoints)
+            let distance = minimumDistance(from: mapPoint, toPolylines: routeSegments)
             guard distance <= distanceThreshold else {
                 continue
             }
@@ -191,19 +210,205 @@ final class RouteMediaStore {
         return assets
     }
 
-    private func routeMapPoints(for workout: TrackedWorkout) -> [MKMapPoint] {
+    private func routeMapPoints(for workout: TrackedWorkout) -> [[MKMapPoint]] {
         let sourceCoordinates = workout.routeDetailCoordinates
-        guard sourceCoordinates.count > 1 else {
+        guard !sourceCoordinates.isEmpty else {
             return []
         }
 
         let displayCoordinates = CoordinateTransformer.displayCoordinates(for: sourceCoordinates.map(\.coordinate))
-        let targetCount = min(sourceCoordinates.count, 760)
-        let step = Double(sourceCoordinates.count - 1) / Double(max(targetCount - 1, 1))
+        guard displayCoordinates.count == sourceCoordinates.count else {
+            return []
+        }
 
-        return (0..<targetCount).map { index in
-            let sourceIndex = min(Int(round(Double(index) * step)), sourceCoordinates.count - 1)
-            return MKMapPoint(displayCoordinates[sourceIndex])
+        let segmentStarts = workout.routeDetailSegmentStartIndices
+            .filter { $0 > 0 && $0 < sourceCoordinates.count }
+            .sorted()
+        let boundaries = [0] + segmentStarts + [sourceCoordinates.count]
+        let segmentRanges = zip(boundaries, boundaries.dropFirst()).compactMap { bounds -> Range<Int>? in
+            guard bounds.0 < bounds.1 else {
+                return nil
+            }
+            return bounds.0..<bounds.1
+        }
+        let sampledIndices = sampledRouteIndices(
+            in: segmentRanges,
+            maximumCount: Self.routePointSamplingBudget
+        )
+
+        return zip(segmentRanges, sampledIndices).compactMap { range, indices -> [MKMapPoint]? in
+            guard !indices.isEmpty else {
+                return nil
+            }
+            return shapePreservingMapPoints(
+                displayCoordinates: displayCoordinates,
+                range: range,
+                maximumCount: indices.count
+            ) ?? indices.map { MKMapPoint(displayCoordinates[$0]) }
+        }
+    }
+
+    private func shapePreservingMapPoints(
+        displayCoordinates: [CLLocationCoordinate2D],
+        range: Range<Int>,
+        maximumCount: Int
+    ) -> [MKMapPoint]? {
+        guard maximumCount > 0, !range.isEmpty else {
+            return nil
+        }
+        if maximumCount == 1 {
+            return [MKMapPoint(displayCoordinates[range.lowerBound])]
+        }
+
+        let coordinates = Array(displayCoordinates[range])
+        var cumulativeDistances: [CLLocationDistance] = [0]
+        cumulativeDistances.reserveCapacity(coordinates.count)
+        var totalDistance: CLLocationDistance = 0
+        var previousLocation = CLLocation(
+            latitude: coordinates[0].latitude,
+            longitude: coordinates[0].longitude
+        )
+        for coordinate in coordinates.dropFirst() {
+            let location = CLLocation(
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude
+            )
+            totalDistance += location.distance(from: previousLocation)
+            cumulativeDistances.append(totalDistance)
+            previousLocation = location
+        }
+        guard totalDistance > 0,
+              let geometry = RouteSlopeGeometryPreparer.prepare(
+                  coordinates: coordinates,
+                  cumulativeDistances: cumulativeDistances,
+                  toleranceMeters: 2,
+                  maximumCount: maximumCount,
+                  isCancelled: { false }
+              ) else {
+            return nil
+        }
+        return geometry.coordinates.map(MKMapPoint.init)
+    }
+
+    /// Shares one global sampling budget across every route segment. Under the
+    /// normal budget each segment keeps both endpoints; unusually fragmented
+    /// routes retain an evenly distributed subset of endpoint candidates rather
+    /// than creating artificial connector lines between segments.
+    private func sampledRouteIndices(
+        in segmentRanges: [Range<Int>],
+        maximumCount: Int
+    ) -> [[Int]] {
+        guard maximumCount > 0, !segmentRanges.isEmpty else {
+            return []
+        }
+
+        let totalPointCount = segmentRanges.reduce(0) { $0 + $1.count }
+        let targetCount = min(totalPointCount, maximumCount)
+        guard totalPointCount > targetCount else {
+            return segmentRanges.map(Array.init)
+        }
+
+        let endpointCount = segmentRanges.reduce(0) { partialResult, range in
+            partialResult + min(range.count, 2)
+        }
+        guard endpointCount <= targetCount else {
+            return endpointLimitedRouteIndices(
+                in: segmentRanges,
+                maximumCount: targetCount
+            )
+        }
+
+        var targetCounts = segmentRanges.map { min($0.count, 2) }
+        var remainingCount = targetCount - endpointCount
+        let capacities = zip(segmentRanges, targetCounts).map { range, selectedCount in
+            range.count - selectedCount
+        }
+        let totalCapacity = capacities.reduce(0, +)
+
+        if remainingCount > 0, totalCapacity > 0 {
+            var remainders: [(segmentIndex: Int, remainder: Int)] = []
+            remainders.reserveCapacity(segmentRanges.count)
+            for index in segmentRanges.indices {
+                let scaledCapacity = remainingCount * capacities[index]
+                let additionalCount = min(
+                    capacities[index],
+                    scaledCapacity / totalCapacity
+                )
+                targetCounts[index] += additionalCount
+                remainders.append((index, scaledCapacity % totalCapacity))
+            }
+
+            remainingCount = targetCount - targetCounts.reduce(0, +)
+            remainders.sort { lhs, rhs in
+                if lhs.remainder != rhs.remainder {
+                    return lhs.remainder > rhs.remainder
+                }
+                return lhs.segmentIndex < rhs.segmentIndex
+            }
+            for candidate in remainders where remainingCount > 0 {
+                let index = candidate.segmentIndex
+                guard targetCounts[index] < segmentRanges[index].count else {
+                    continue
+                }
+                targetCounts[index] += 1
+                remainingCount -= 1
+            }
+        }
+
+        return zip(segmentRanges, targetCounts).map { range, count in
+            evenlySpacedIndices(in: range, count: count)
+        }
+    }
+
+    private func endpointLimitedRouteIndices(
+        in segmentRanges: [Range<Int>],
+        maximumCount: Int
+    ) -> [[Int]] {
+        var endpointCandidates: [(segmentIndex: Int, sourceIndex: Int)] = []
+        endpointCandidates.reserveCapacity(segmentRanges.count * 2)
+        for (segmentIndex, range) in segmentRanges.enumerated() {
+            endpointCandidates.append((segmentIndex, range.lowerBound))
+            if range.count > 1 {
+                endpointCandidates.append((segmentIndex, range.upperBound - 1))
+            }
+        }
+
+        var selectedIndices = Array(repeating: [Int](), count: segmentRanges.count)
+        guard maximumCount > 0 else {
+            return selectedIndices
+        }
+        if maximumCount == 1, let candidate = endpointCandidates.first {
+            selectedIndices[candidate.segmentIndex].append(candidate.sourceIndex)
+            return selectedIndices
+        }
+
+        for position in 0..<maximumCount {
+            let candidateOffset = Int(round(
+                Double(endpointCandidates.count - 1) * Double(position)
+                    / Double(maximumCount - 1)
+            ))
+            let candidate = endpointCandidates[candidateOffset]
+            selectedIndices[candidate.segmentIndex].append(candidate.sourceIndex)
+        }
+        return selectedIndices
+    }
+
+    private func evenlySpacedIndices(in range: Range<Int>, count: Int) -> [Int] {
+        guard count > 0, !range.isEmpty else {
+            return []
+        }
+        guard count < range.count else {
+            return Array(range)
+        }
+        guard count > 1 else {
+            return [range.lowerBound]
+        }
+
+        let lastOffset = range.count - 1
+        return (0..<count).map { position in
+            range.lowerBound + Int(round(
+                Double(lastOffset) * Double(position) / Double(count - 1)
+            ))
         }
     }
 
@@ -211,10 +416,15 @@ final class RouteMediaStore {
         Self.matchingDistanceThreshold
     }
 
-    private func expandedSearchRect(for routePoints: [MKMapPoint], workout: TrackedWorkout) -> MKMapRect {
-        let firstPoint = routePoints[0]
+    private func expandedSearchRect(
+        for routeSegments: [[MKMapPoint]],
+        workout: TrackedWorkout
+    ) -> MKMapRect {
+        guard let firstPoint = routeSegments.lazy.compactMap(\.first).first else {
+            return .null
+        }
         let initialRect = MKMapRect(x: firstPoint.x, y: firstPoint.y, width: 0, height: 0)
-        let routeRect = routePoints.dropFirst().reduce(initialRect) { partialResult, point in
+        let routeRect = routeSegments.lazy.joined().reduce(initialRect) { partialResult, point in
             partialResult.union(MKMapRect(x: point.x, y: point.y, width: 0, height: 0))
         }
         let latitude = routeRectCenterCoordinate(for: routeRect).latitude
@@ -228,20 +438,44 @@ final class RouteMediaStore {
         MKMapPoint(x: rect.midX, y: rect.midY).coordinate
     }
 
-    private func minimumDistance(from point: MKMapPoint, toPolyline routePoints: [MKMapPoint]) -> CLLocationDistance {
+    private func minimumDistance(
+        from point: MKMapPoint,
+        toPolylines routeSegments: [[MKMapPoint]]
+    ) -> CLLocationDistance {
         var minSquaredDistance = Double.greatestFiniteMagnitude
 
-        for index in 1..<routePoints.count {
-            let distance = squaredMapPointDistance(
-                from: point,
-                toSegmentStart: routePoints[index - 1],
-                end: routePoints[index]
-            )
-            minSquaredDistance = min(minSquaredDistance, distance)
+        for routePoints in routeSegments {
+            guard let firstRoutePoint = routePoints.first else {
+                continue
+            }
+            if routePoints.count == 1 {
+                minSquaredDistance = min(
+                    minSquaredDistance,
+                    squaredMapPointDistance(from: point, to: firstRoutePoint)
+                )
+                continue
+            }
+            for index in 1..<routePoints.count {
+                let distance = squaredMapPointDistance(
+                    from: point,
+                    toSegmentStart: routePoints[index - 1],
+                    end: routePoints[index]
+                )
+                minSquaredDistance = min(minSquaredDistance, distance)
+            }
         }
 
+        guard minSquaredDistance.isFinite else {
+            return .greatestFiniteMagnitude
+        }
         let metersPerMapPoint = max(MKMetersPerMapPointAtLatitude(point.coordinate.latitude), .leastNonzeroMagnitude)
         return sqrt(minSquaredDistance) * metersPerMapPoint
+    }
+
+    private func squaredMapPointDistance(from lhs: MKMapPoint, to rhs: MKMapPoint) -> Double {
+        let dx = lhs.x - rhs.x
+        let dy = lhs.y - rhs.y
+        return dx * dx + dy * dy
     }
 
     private func squaredMapPointDistance(

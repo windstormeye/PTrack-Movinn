@@ -69,7 +69,15 @@ enum TrackedWorkoutSportKind: String, CaseIterable, Codable, Hashable {
 }
 
 struct TrackedWorkout: nonisolated Codable {
-    nonisolated static let currentHealthDataVersion = 2
+    // Version 3 stores HealthKit route coordinates grouped in the same order as
+    // routeSegments. Older HealthKit caches flattened all locations by timestamp,
+    // so their segment location counts cannot safely be used as array boundaries.
+    nonisolated static let currentHealthDataVersion = 3
+    /// Version of the per-coordinate streams persisted for direct Strava imports.
+    /// Bump this when a newly requested stream needs to be backfilled into cached
+    /// activities independently of HealthKit's cache schema.
+    nonisolated static let currentStravaStreamDataVersion = 1
+    nonisolated static let stravaStreamDataVersionMetadataKey = "strava.streamDataVersion"
 
     let id: String
     let healthDataVersion: Int?
@@ -156,6 +164,7 @@ struct TrackedWorkout: nonisolated Codable {
         let sampledCoordinates = RouteSampler.downsample(rawCoordinates, limit: 1_200)
         routeSummary = TrackedRouteSummary(
             locations: locations,
+            routeSegments: routeSegments,
             sampledCoordinateCount: sampledCoordinates.count
         )
         coordinates = sampledCoordinates
@@ -170,7 +179,36 @@ struct TrackedWorkout: nonisolated Codable {
     }
 
     var needsHealthDataRefresh: Bool {
-        healthDataVersion != Self.currentHealthDataVersion
+        isHealthKitBackedSource && healthDataVersion != Self.currentHealthDataVersion
+    }
+
+    var stravaStreamDataVersion: Int? {
+        guard let rawValue = metadata?[Self.stravaStreamDataVersionMetadataKey]?.doubleValue,
+              let version = Int(exactly: rawValue),
+              version >= 0 else {
+            return nil
+        }
+        return version
+    }
+
+    var needsStravaStreamDataRefresh: Bool {
+        guard !isRouteCollectionSource, isDirectStravaImport else {
+            return false
+        }
+        guard let stravaStreamDataVersion else {
+            return true
+        }
+        return stravaStreamDataVersion < Self.currentStravaStreamDataVersion
+    }
+
+    /// Route collections and direct Strava imports share the cache model, but are
+    /// not reloadable through HealthKit and must not participate in its migrations.
+    private var isHealthKitBackedSource: Bool {
+        !isRouteCollectionSource && !isDirectStravaImport
+    }
+
+    private var isDirectStravaImport: Bool {
+        id.hasPrefix("strava-") || metadata?["strava.id"] != nil
     }
 
     var stravaActivityID: Int64? {
@@ -393,14 +431,62 @@ struct TrackedWorkout: nonisolated Codable {
     }
 
     var displayElevationGainMeters: Double? {
-        if isMergedRouteCollectionSource,
-           let elevationGainMeters = metadata?["routeCollection.merge.elevationGainMeters"]?.doubleValue,
-           elevationGainMeters.isFinite,
-           elevationGainMeters > 0 {
-            return elevationGainMeters
+        if isMergedRouteCollectionSource {
+            let hasExactSegmentMetadata = metadata?[
+                Self.routeCollectionSegmentCoordinateCountsMetadataKey
+            ]?.numberArrayValue != nil
+                || metadata?["routeCollection.merge.segmentCoordinateCounts"]?
+                    .numberArrayValue != nil
+            if hasExactSegmentMetadata {
+                if let elevationGainMeters = metadata?[
+                    "routeCollection.merge.elevationGainMeters"
+                ]?.doubleValue,
+                   elevationGainMeters.isFinite,
+                   elevationGainMeters > 0 {
+                    return elevationGainMeters
+                }
+                return routeSummary?.elevationGainMeters
+            }
+
+            if let rawLocationCount = routeSummary?.rawLocationCount,
+               routeDetailCoordinates.count < rawLocationCount {
+                // A legacy preview may have sampled away its timestamp
+                // boundaries. Wait for the full route instead of displaying a
+                // known cross-segment summary.
+                return nil
+            }
+            return recomputedMergedRouteElevationGainMeters
         }
 
         return routeSummary?.elevationGainMeters
+    }
+
+    private var recomputedMergedRouteElevationGainMeters: Double? {
+        let coordinates = routeDetailCoordinates
+        guard coordinates.count > 1 else {
+            return nil
+        }
+
+        let segmentStartIndices = routeDetailSegmentStartIndices
+        var gain: Double = 0
+        var previousAltitude: Double?
+        var comparisonCount = 0
+        for (index, coordinate) in coordinates.enumerated() {
+            if segmentStartIndices.contains(index) {
+                previousAltitude = nil
+            }
+            guard let altitude = coordinate.altitudeMeters,
+                  altitude.isFinite else {
+                previousAltitude = nil
+                continue
+            }
+            if let previousAltitude {
+                gain += max(altitude - previousAltitude, 0)
+                comparisonCount += 1
+            }
+            previousAltitude = altitude
+        }
+        return comparisonCount > 0 ? gain : nil
     }
 
     var elevationGainText: String? {

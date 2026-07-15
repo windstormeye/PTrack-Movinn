@@ -432,6 +432,11 @@ final class HealthWorkoutStore {
                 case .success(let routeDetails):
                     if routeDetails.hasPartialFailures {
                         failedRouteLoadCount += 1
+                        // Never replace a complete cached workout with a route
+                        // assembled from only the HealthKit queries that happened
+                        // to succeed. Leaving it stale makes the next sync retry.
+                        loadNextWorkout(at: index + 1)
+                        return
                     }
                     print(
                         "PTrack HealthKit: \(workout.workoutActivityType.rawValue) \(workout.startDate) route locations: \(routeDetails.locations.count)"
@@ -515,8 +520,10 @@ final class HealthWorkoutStore {
 
         let group = DispatchGroup()
         let lock = NSLock()
-        var allLocations: [CLLocation] = []
-        var segments: [TrackedWorkoutRouteSegment] = []
+        var routeDetails: [(
+            segment: TrackedWorkoutRouteSegment,
+            locations: [CLLocation]
+        )] = []
         var firstError: Error?
 
         for route in routes {
@@ -529,10 +536,13 @@ final class HealthWorkoutStore {
                     guard !isFinished else { return }
                     isFinished = true
                     lock.lock()
-                    allLocations.append(contentsOf: routeLocations)
-                    segments.append(TrackedWorkoutRouteSegment(
+                    let segment = TrackedWorkoutRouteSegment(
                         route: route,
                         locationCount: routeLocations.count
+                    )
+                    routeDetails.append((
+                        segment: segment,
+                        locations: routeLocations
                     ))
                     lock.unlock()
                     group.leave()
@@ -563,12 +573,20 @@ final class HealthWorkoutStore {
         }
 
         group.notify(queue: .global(qos: .userInitiated)) {
+            let orderedRouteDetails = routeDetails.sorted { lhs, rhs in
+                if lhs.segment.startDate != rhs.segment.startDate {
+                    return lhs.segment.startDate < rhs.segment.startDate
+                }
+                return lhs.segment.id < rhs.segment.id
+            }
+            let allLocations = orderedRouteDetails.flatMap(\.locations)
+            let segments = orderedRouteDetails.map(\.segment)
             if let firstError, allLocations.isEmpty {
                 completion(.failure(firstError))
             } else {
                 completion(.success(LoadedWorkoutRouteDetails(
-                    locations: allLocations.sorted { $0.timestamp < $1.timestamp },
-                    segments: segments.sorted { $0.startDate < $1.startDate },
+                    locations: allLocations,
+                    segments: segments,
                     hasPartialFailures: firstError != nil
                 )))
             }

@@ -18,6 +18,8 @@ class ViewController: UIViewController {
         static let healthHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.health.historicalBackfillCacheCommitCompleted"
         static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
         static let stravaHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.strava.historicalBackfillCacheCommitCompleted"
+        static let stravaStreamDataMigrationVersion = "studio.pj.PTrack.strava.streamDataMigrationVersion"
+        static let stravaTerminalStreamMigrationState = "studio.pj.PTrack.strava.terminalStreamMigrationState"
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
@@ -39,8 +41,55 @@ class ViewController: UIViewController {
         let segmentProjection: Double
     }
 
+    private struct RouteBookMatchCache {
+        let timestamp: Date
+        let latitude: CLLocationDegrees
+        let longitude: CLLocationDegrees
+        let horizontalAccuracy: CLLocationAccuracy
+        let match: RouteBookRouteMatch?
+
+        func matches(_ location: CLLocation) -> Bool {
+            timestamp == location.timestamp
+                && latitude == location.coordinate.latitude
+                && longitude == location.coordinate.longitude
+                && horizontalAccuracy == location.horizontalAccuracy
+        }
+    }
+
+    private struct RouteBookProjection {
+        let distanceSquared: Double
+        let projectedPoint: MKMapPoint
+        let routeDistance: CLLocationDistance
+        let segmentIndex: Int
+        let segmentProjection: Double
+    }
+
+    private nonisolated struct RouteBookMatchingGeometry: Sendable {
+        let coordinates: [CLLocationCoordinate2D]
+        let cumulativeDistances: [CLLocationDistance]
+        let segmentStartIndices: Set<Int>
+        let sourceIndices: [Int]
+    }
+
+    private struct PreparedRouteBook {
+        let coordinates: [CLLocationCoordinate2D]
+        let boundingMapRect: MKMapRect
+        let replayDistances: [CLLocationDistance]
+        let replayAltitudes: [Double?]
+        let segmentStartIndices: Set<Int>
+        let elevationSamples: [RouteElevationSample]
+        let viewportGeometry: RouteViewportDistanceResolver.PreparedGeometry
+        let displayGeometry: RouteViewportDistanceResolver.PreparedGeometry
+        let matchingGeometry: RouteBookMatchingGeometry
+    }
+
     private struct PendingStravaSyncRequest {
         let showsLoadingIndicator: Bool
+    }
+
+    private struct StravaTerminalStreamMigrationState: Codable {
+        let schemaVersion: Int
+        let activityIDs: [Int64]
     }
 
     private let store = HealthWorkoutStore()
@@ -50,6 +99,7 @@ class ViewController: UIViewController {
     private let cacheLoadQueue = DispatchQueue(label: "studio.pj.PTrack.cache-load", qos: .userInitiated)
     private let cacheSaveQueue = DispatchQueue(label: "studio.pj.PTrack.cache-save", qos: .utility)
     private let routeSourcePrewarmQueue = DispatchQueue(label: "studio.pj.PTrack.route-source-prewarm", qos: .utility)
+    private let routeBookPreparationQueue = DispatchQueue(label: "studio.pj.PTrack.route-book-prepare", qos: .userInitiated)
     var workouts: [TrackedWorkout] = []
     private var knownWorkoutIDs = Set<String>()
     private var pendingWorkouts: [TrackedWorkout] = []
@@ -127,7 +177,7 @@ class ViewController: UIViewController {
     private let routeBookPanelExpandedPrimaryContentTop: CGFloat = 33
     private let routeBookPanelMinimumPrimaryContentScale: CGFloat = 0.88
     private let routeBookLocateButtonPanelSpacing: CGFloat = 18
-    private let routeBookMaximumElevationSampleCount = 120
+    private let routeBookMaximumElevationSampleCount = 24_000
     private let routeBookBaseMatchDistance: CLLocationDistance = 100
     private let routeBookMaximumLocationAccuracy: CLLocationAccuracy = 200
     private let routeBookMaximumLocationAge: TimeInterval = 120
@@ -138,12 +188,24 @@ class ViewController: UIViewController {
     private var routeBookPresentedPanelHeight: CGFloat = 68
     private var isRouteBookModeActive = false
     private var routeBookWorkout: TrackedWorkout?
-    private var routeBookPolyline: MKPolyline?
+    private var routeBookBoundingMapRect: MKMapRect?
+    private var routeBookDisplayPolylines: [MKPolyline] = []
+    private var routeBookDirectionIndicatorPolylines: [MKPolyline] = []
+    private var routeBookDirectionIndicatorBudgets: [ObjectIdentifier: Int] = [:]
     private var routeBookEndpointAnnotations: [RouteEndpointAnnotation] = []
     private var routeBookReplayAnnotation: RouteReplayAnnotation?
     private var routeBookReplayCoordinates: [CLLocationCoordinate2D] = []
     private var routeBookReplayDistances: [CLLocationDistance] = []
     private var routeBookReplayAltitudes: [Double?] = []
+    private var routeBookReplaySegmentStartIndices = Set<Int>()
+    private var routeBookViewportGeometry: RouteViewportDistanceResolver.PreparedGeometry?
+    private var routeBookViewportUpdateWorkItem: DispatchWorkItem?
+    private var routeBookLastFocusedDistance: CLLocationDistance?
+    private var isRouteBookMapRegionChanging = false
+    private var routeBookMatchingGeometry: RouteBookMatchingGeometry?
+    private var routeBookMatchCache: RouteBookMatchCache?
+    private var routeBookPreparationID: UUID?
+    private var routeBookPreparationCancellationToken: RouteSlopePreparationCancellationToken?
     private var shouldCenterRouteBookOnNextLocation = false
     private var routeBookLastLocation: CLLocation?
     private var routeBookLastHeadingDegrees: CLLocationDirection?
@@ -161,6 +223,8 @@ class ViewController: UIViewController {
     private lazy var scrollDateFormatter = Self.makeHomeScrollDateFormatter()
 
     deinit {
+        routeBookPreparationCancellationToken?.cancel()
+        routeBookViewportUpdateWorkItem?.cancel()
         pendingFlushWorkItem?.cancel()
         pendingCacheSaveWorkItem?.cancel()
         scrollDateIndicatorHideWorkItem?.cancel()
@@ -368,6 +432,7 @@ class ViewController: UIViewController {
         routeBookMapView.showsScale = false
         routeBookMapView.showsUserLocation = false
         routeBookMapView.isRotateEnabled = false
+        routeBookMapView.isPitchEnabled = false
         routeBookMapView.userTrackingMode = .none
         resetRouteBookMapHeading(animated: false)
         routeBookLocationManager.delegate = self
@@ -426,7 +491,10 @@ class ViewController: UIViewController {
         routeBookPanelDetailStackView.spacing = 0
         routeBookPanelDetailStackView.alpha = 1
 
-        routeBookReplayRulerView.configure(totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: 0))
+        routeBookReplayRulerView.configure(
+            totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: 0),
+            totalDistanceMeters: 0
+        )
         routeBookReplayRulerView.addTarget(
             self,
             action: #selector(handleRouteBookReplayProgressChanged(_:)),
@@ -556,16 +624,16 @@ class ViewController: UIViewController {
     }
 
     private func refreshRouteBookOverlayStrokeColor() {
-        guard let routeBookPolyline,
-              let renderer = routeBookMapView.renderer(for: routeBookPolyline) as? MKPolylineRenderer else {
-            return
+        for routeBookPolyline in routeBookDisplayPolylines {
+            guard let renderer = routeBookMapView.renderer(for: routeBookPolyline) as? MKPolylineRenderer else {
+                continue
+            }
+            renderer.strokeColor = routeBookRouteStrokeColor
+            if let directionRenderer = renderer as? RouteDirectionPolylineRenderer {
+                directionRenderer.directionIndicatorColor = routeBookRouteStrokeColor
+            }
+            renderer.setNeedsDisplay()
         }
-
-        renderer.strokeColor = routeBookRouteStrokeColor
-        if let directionRenderer = renderer as? RouteDirectionPolylineRenderer {
-            directionRenderer.directionIndicatorColor = routeBookRouteStrokeColor
-        }
-        renderer.setNeedsDisplay()
     }
 
     private func configureHeaderView() {
@@ -874,6 +942,7 @@ class ViewController: UIViewController {
         case .medium:
             updateRouteBookReplayProgressForCurrentLocation()
         }
+        updateRouteBookReplayRulerVisibleRange()
 
         let changes = {
             self.updateRouteBookPanelMetricsScale(for: height)
@@ -1506,7 +1575,10 @@ class ViewController: UIViewController {
     @objc private func handleLanguageDidChange() {
         demoModeEntryButton.setTitle(AppLocalization.text(.demoModeEntry), for: .normal)
         updateTotalDistanceText()
-        updateRouteBookPanelText()
+        if let routeBookWorkout {
+            routeBookPanelDistanceLabel.text = routeBookPanelDistanceText(for: routeBookWorkout)
+            routeBookPanelDistanceLabel.isHidden = routeBookPanelDistanceLabel.text == nil
+        }
         emptyDataSourceView.updateLocalizedText()
         routeBookMapStyleButton.menu = makeRouteBookMapStyleMenu()
         routeBookMapStyleButton.accessibilityLabel = AppLocalization.text(.mapStyle)
@@ -1909,6 +1981,27 @@ class ViewController: UIViewController {
             return
         }
 
+        // Every Strava entry point eventually reaches this method. During a stream
+        // schema migration, force a complete summary listing and allow only stale
+        // cached activities through the stream loader. This prevents settings and
+        // empty-state authorization flows from accidentally excluding every cache ID.
+        let allStaleStreamActivityIDs = staleStravaStreamActivityIDs()
+        let terminalStreamActivityIDs = terminalStravaStreamMigrationActivityIDs().intersection(
+            allStaleStreamActivityIDs
+        )
+        let unresolvedStaleStreamActivityIDs = allStaleStreamActivityIDs.subtracting(
+            terminalStreamActivityIDs
+        )
+        let shouldRunHistoricalBackfill = shouldRunStravaHistoricalBackfill(
+            unresolvedStaleActivityIDs: unresolvedStaleStreamActivityIDs
+        )
+        let effectiveStartDate = shouldRunHistoricalBackfill ? nil : startDate
+        let effectiveExcludedActivityIDs = shouldRunHistoricalBackfill
+            ? excludingStravaActivityIDs
+                .union(terminalStreamActivityIDs)
+                .subtracting(unresolvedStaleStreamActivityIDs)
+            : excludingStravaActivityIDs
+
         isStravaSyncInProgress = true
         setStravaNewDataSyncInProgress(false)
         isStravaSyncShowingLoadingIndicator = showsLoadingIndicator
@@ -1919,14 +2012,14 @@ class ViewController: UIViewController {
             updateEmptyDataSourceVisibility()
         }
         print(
-            "PTrack Strava: starting import, after: \(Self.debugDateString(startDate)), excluding cached activities: \(excludingStravaActivityIDs.count)"
+            "PTrack Strava: starting import, after: \(Self.debugDateString(effectiveStartDate)), excluding cached activities: \(effectiveExcludedActivityIDs.count), unresolved stale stream activities: \(unresolvedStaleStreamActivityIDs.count), terminal stale activities: \(terminalStreamActivityIDs.count), historical backfill: \(shouldRunHistoricalBackfill)"
         )
 
         Task { [weak self] in
             do {
                 let importResult = try await StravaManager.shared.loadTrackedWorkoutResult(
-                    after: startDate,
-                    excludingStravaActivityIDs: excludingStravaActivityIDs,
+                    after: effectiveStartDate,
+                    excludingStravaActivityIDs: effectiveExcludedActivityIDs,
                     onNewDataDetected: { [weak self] _ in
                         await MainActor.run {
                             self?.setStravaNewDataSyncInProgress(true)
@@ -1956,8 +2049,15 @@ class ViewController: UIViewController {
                     self.scheduleCacheSave(delay: 0)
                     print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
                 }
+                if shouldRunHistoricalBackfill {
+                    self.recordTerminalStravaStreamMigrationAttempts(
+                        staleActivityIDs: unresolvedStaleStreamActivityIDs,
+                        summaryActivityIDs: importResult.summaryActivityIDs,
+                        routeCandidateActivityIDs: importResult.routeCandidateActivityIDs
+                    )
+                }
                 self.markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
-                    after: startDate,
+                    didRunHistoricalBackfill: shouldRunHistoricalBackfill,
                     didCompleteWithoutActivityFailures: importResult.didCompleteWithoutActivityFailures
                 )
 
@@ -2001,7 +2101,10 @@ class ViewController: UIViewController {
     }
 
     private func latestStravaStartDateForIncrementalSync() -> Date? {
-        guard !shouldRunStravaHistoricalBackfill() else {
+        let unresolvedStaleActivityIDs = unresolvedStaleStravaStreamActivityIDs()
+        guard !shouldRunStravaHistoricalBackfill(
+            unresolvedStaleActivityIDs: unresolvedStaleActivityIDs
+        ) else {
             print("PTrack Strava: historical backfill not completed; requesting full activity history")
             return nil
         }
@@ -2014,16 +2117,74 @@ class ViewController: UIViewController {
         return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
     }
 
-    private func shouldRunStravaHistoricalBackfill() -> Bool {
+    private func shouldRunStravaHistoricalBackfill(
+        unresolvedStaleActivityIDs: Set<Int64>
+    ) -> Bool {
         UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) == false
             || UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) == false
+            || UserDefaults.standard.integer(forKey: DefaultsKey.stravaStreamDataMigrationVersion)
+                < TrackedWorkout.currentStravaStreamDataVersion
+            || !unresolvedStaleActivityIDs.isEmpty
+    }
+
+    private func staleStravaStreamActivityIDs() -> Set<Int64> {
+        Set(
+            (workouts + pendingWorkouts)
+                .filter(\.needsStravaStreamDataRefresh)
+                .compactMap(\.stravaActivityID)
+        )
+    }
+
+    private func unresolvedStaleStravaStreamActivityIDs() -> Set<Int64> {
+        staleStravaStreamActivityIDs().subtracting(terminalStravaStreamMigrationActivityIDs())
+    }
+
+    private func terminalStravaStreamMigrationActivityIDs() -> Set<Int64> {
+        guard let data = UserDefaults.standard.data(forKey: DefaultsKey.stravaTerminalStreamMigrationState),
+              let state = try? JSONDecoder().decode(StravaTerminalStreamMigrationState.self, from: data),
+              state.schemaVersion == TrackedWorkout.currentStravaStreamDataVersion else {
+            return []
+        }
+        return Set(state.activityIDs)
+    }
+
+    private func recordTerminalStravaStreamMigrationAttempts(
+        staleActivityIDs: Set<Int64>,
+        summaryActivityIDs: Set<Int64>,
+        routeCandidateActivityIDs: Set<Int64>
+    ) {
+        guard !staleActivityIDs.isEmpty else {
+            return
+        }
+
+        let missingFromAuthoritativeSummary = staleActivityIDs.subtracting(summaryActivityIDs)
+        let presentButNotMigratable = staleActivityIDs
+            .intersection(summaryActivityIDs)
+            .subtracting(routeCandidateActivityIDs)
+        let terminalActivityIDs = missingFromAuthoritativeSummary.union(presentButNotMigratable)
+        guard !terminalActivityIDs.isEmpty else {
+            return
+        }
+
+        let accumulatedActivityIDs = terminalStravaStreamMigrationActivityIDs().union(terminalActivityIDs)
+        let state = StravaTerminalStreamMigrationState(
+            schemaVersion: TrackedWorkout.currentStravaStreamDataVersion,
+            activityIDs: accumulatedActivityIDs.sorted()
+        )
+        guard let data = try? JSONEncoder().encode(state) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: DefaultsKey.stravaTerminalStreamMigrationState)
+        print(
+            "PTrack Strava: marked \(terminalActivityIDs.count) stale activities terminal for stream migration v\(TrackedWorkout.currentStravaStreamDataVersion) (missing: \(missingFromAuthoritativeSummary.count), unsupported/no route: \(presentButNotMigratable.count))"
+        )
     }
 
     private func markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
-        after startDate: Date?,
+        didRunHistoricalBackfill: Bool,
         didCompleteWithoutActivityFailures: Bool
     ) {
-        guard startDate == nil,
+        guard didRunHistoricalBackfill,
               didCompleteWithoutActivityFailures else {
             return
         }
@@ -2034,14 +2195,30 @@ class ViewController: UIViewController {
     }
 
     private func markStravaHistoricalBackfillCompleted() {
+        let unresolvedStaleActivityIDs = unresolvedStaleStravaStreamActivityIDs()
+        guard unresolvedStaleActivityIDs.isEmpty else {
+            print(
+                "PTrack Strava: stream data migration remains pending because \(unresolvedStaleActivityIDs.count) retryable stale activities remain"
+            )
+            return
+        }
+
         guard !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
-                || !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) else {
+                || !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
+                || UserDefaults.standard.integer(forKey: DefaultsKey.stravaStreamDataMigrationVersion)
+                    < TrackedWorkout.currentStravaStreamDataVersion else {
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
-        print("PTrack Strava: historical backfill marked completed after cache save")
+        UserDefaults.standard.set(
+            TrackedWorkout.currentStravaStreamDataVersion,
+            forKey: DefaultsKey.stravaStreamDataMigrationVersion
+        )
+        print(
+            "PTrack Strava: historical backfill and stream data migration v\(TrackedWorkout.currentStravaStreamDataVersion) marked completed after cache save"
+        )
     }
 
     private static func debugDateString(_ date: Date?) -> String {
@@ -2880,8 +3057,7 @@ class ViewController: UIViewController {
 
     private func enterRouteBookMode(with workout: TrackedWorkout, persists: Bool = true) {
         let workout = resolvedWorkoutForDetailedUse(workout)
-        let coordinates = workout.displayCoordinates
-        guard coordinates.count > 1 else {
+        guard workout.routeDetailCoordinates.count > 1 else {
             presentSimpleAlert(title: AppLocalization.text(.routeBook), message: AppLocalization.text(.unknownLocation))
             return
         }
@@ -2896,7 +3072,7 @@ class ViewController: UIViewController {
         updateRouteBookPanelText()
         applyRouteBookInterfaceState()
 
-        drawRouteBookRoute(coordinates, for: workout)
+        startRouteBookPreparation(for: workout)
         requestRouteBookLocationAuthorizationIfNeeded()
         updateRouteBookLocateButtonState()
         updateHeaderReadAuthorizationState()
@@ -2909,9 +3085,15 @@ class ViewController: UIViewController {
             routeBookReplayCoordinates = []
             routeBookReplayDistances = []
             routeBookReplayAltitudes = []
+            routeBookReplaySegmentStartIndices = []
+            routeBookViewportGeometry = nil
+            routeBookLastFocusedDistance = nil
+            routeBookMatchingGeometry = nil
+            routeBookMatchCache = nil
             removeRouteBookReplayAnnotation()
             routeBookReplayRulerView.configure(
                 totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: 0),
+                totalDistanceMeters: 0,
                 elevationSamples: []
             )
             routeBookReplayRulerView.setProgress(0)
@@ -2921,7 +3103,6 @@ class ViewController: UIViewController {
 
         routeBookPanelDistanceLabel.text = routeBookPanelDistanceText(for: routeBookWorkout)
         routeBookPanelDistanceLabel.isHidden = routeBookPanelDistanceLabel.text == nil
-        configureRouteBookReplayRuler(for: routeBookWorkout)
     }
 
     private func routeBookPanelDistanceText(for workout: TrackedWorkout) -> String? {
@@ -2956,31 +3137,414 @@ class ViewController: UIViewController {
         return AppLocalization.format(.elevationGainFormat, roundedElevationGain)
     }
 
-    private func configureRouteBookReplayRuler(for workout: TrackedWorkout) {
-        let routeCoordinates = workout.routeDetailCoordinates
-        let coordinates = CoordinateTransformer.displayCoordinates(for: routeCoordinates.map(\.coordinate))
-        let replayDistances = routeBookCumulativeDistances(for: coordinates)
-        let totalDistance = workout.distanceMeters > 0
-            ? workout.distanceMeters
-            : (replayDistances.last ?? 0)
-        let elevationSamples = routeBookElevationSamples(
-            distances: replayDistances,
-            altitudes: routeCoordinates.map(\.altitudeMeters),
-            maximumCount: routeBookMaximumElevationSampleCount
-        )
-
+    private func startRouteBookPreparation(for workout: TrackedWorkout) {
+        routeBookPreparationCancellationToken?.cancel()
+        routeBookViewportUpdateWorkItem?.cancel()
+        routeBookViewportUpdateWorkItem = nil
+        let cancellationToken = RouteSlopePreparationCancellationToken()
+        routeBookPreparationCancellationToken = cancellationToken
+        let preparationID = UUID()
+        routeBookPreparationID = preparationID
+        routeBookReplayCoordinates = []
+        routeBookReplayDistances = []
+        routeBookReplayAltitudes = []
+        routeBookReplaySegmentStartIndices = []
+        routeBookViewportGeometry = nil
+        routeBookLastFocusedDistance = nil
+        routeBookMatchingGeometry = nil
+        routeBookMatchCache = nil
+        removeRouteBookReplayAnnotation()
+        if !routeBookDisplayPolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookDisplayPolylines)
+        }
+        routeBookBoundingMapRect = nil
+        routeBookDisplayPolylines = []
+        routeBookDirectionIndicatorPolylines = []
+        routeBookDirectionIndicatorBudgets = [:]
+        isRouteBookMapRegionChanging = false
+        removeRouteBookEndpointAnnotations()
         routeBookReplayRulerView.configure(
-            totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: totalDistance),
-            elevationSamples: elevationSamples
+            totalDistanceText: routeBookReplayTotalDistanceText(
+                totalMeters: workout.distanceMeters
+            ),
+            totalDistanceMeters: workout.distanceMeters,
+            elevationSamples: []
         )
         routeBookReplayRulerView.setProgress(0)
         routeBookReplayRulerView.setIndicatorVisible(false)
-        routeBookReplayCoordinates = coordinates
-        routeBookReplayDistances = replayDistances
-        routeBookReplayAltitudes = routeCoordinates.map(\.altitudeMeters)
+
+        let maximumElevationSampleCount = routeBookMaximumElevationSampleCount
+        routeBookPreparationQueue.async { [weak self] in
+            let preparedRouteBook = Self.prepareRouteBook(
+                for: workout,
+                maximumElevationSampleCount: maximumElevationSampleCount,
+                cancellationToken: cancellationToken
+            )
+            DispatchQueue.main.async { [weak self] in
+                guard let self,
+                      self.isRouteBookModeActive,
+                      self.routeBookPreparationID == preparationID,
+                      self.routeBookPreparationCancellationToken === cancellationToken,
+                      self.routeBookWorkout?.id == workout.id else {
+                    return
+                }
+                self.routeBookPreparationID = nil
+                self.routeBookPreparationCancellationToken = nil
+                guard let preparedRouteBook else {
+                    return
+                }
+                self.applyPreparedRouteBook(preparedRouteBook, for: workout)
+            }
+        }
+    }
+
+    private static func prepareRouteBook(
+        for workout: TrackedWorkout,
+        maximumElevationSampleCount: Int,
+        cancellationToken: RouteSlopePreparationCancellationToken
+    ) -> PreparedRouteBook? {
+        guard !cancellationToken.isCancelled else {
+            return nil
+        }
+        let routeCoordinates = workout.routeDetailCoordinates
+        let segmentStartIndices = workout.routeDetailSegmentStartIndices
+        guard routeCoordinates.count > 1 else {
+            return nil
+        }
+        var sourceCoordinates: [CLLocationCoordinate2D] = []
+        var replayAltitudes: [Double?] = []
+        sourceCoordinates.reserveCapacity(routeCoordinates.count)
+        replayAltitudes.reserveCapacity(routeCoordinates.count)
+        for (index, routeCoordinate) in routeCoordinates.enumerated() {
+            if index.isMultiple(of: 256), cancellationToken.isCancelled {
+                return nil
+            }
+            sourceCoordinates.append(routeCoordinate.coordinate)
+            replayAltitudes.append(routeCoordinate.altitudeMeters)
+        }
+        guard let coordinates = CoordinateTransformer.displayCoordinates(
+            for: sourceCoordinates,
+            isCancelled: { cancellationToken.isCancelled }
+        ),
+        let replayDistances = routeBookCumulativeDistances(
+            for: coordinates,
+            segmentStartIndices: segmentStartIndices,
+            isCancelled: { cancellationToken.isCancelled }
+        ),
+        let elevationSamples = routeBookElevationSamples(
+            distances: replayDistances,
+            altitudes: replayAltitudes,
+            seriesBreakIndices: segmentStartIndices,
+            maximumCount: maximumElevationSampleCount,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+        guard let viewportGeometry = RouteViewportDistanceResolver.prepareGeometry(
+            coordinates: coordinates,
+            cumulativeDistances: replayDistances,
+            segmentStartIndices: segmentStartIndices,
+            isCancelled: { cancellationToken.isCancelled }
+        ),
+        let displayGeometry = RouteViewportDistanceResolver.prepareGeometry(
+            coordinates: coordinates,
+            cumulativeDistances: replayDistances,
+            segmentStartIndices: segmentStartIndices,
+            maximumCount: 12_000,
+            toleranceMeters: 4,
+            allowsSinglePointRepresentatives: false,
+            isCancelled: { cancellationToken.isCancelled }
+        ),
+        let matchingGeometry = prepareRouteBookMatchingGeometry(
+            coordinates: coordinates,
+            cumulativeDistances: replayDistances,
+            segmentStartIndices: segmentStartIndices,
+            maximumCount: 4_096,
+            isCancelled: { cancellationToken.isCancelled }
+        ),
+        let boundingMapRect = RouteViewportDistanceResolver.boundingMapRect(
+            for: coordinates,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+        return PreparedRouteBook(
+            coordinates: coordinates,
+            boundingMapRect: boundingMapRect,
+            replayDistances: replayDistances,
+            replayAltitudes: replayAltitudes,
+            segmentStartIndices: segmentStartIndices,
+            elevationSamples: elevationSamples,
+            viewportGeometry: viewportGeometry,
+            displayGeometry: displayGeometry,
+            matchingGeometry: matchingGeometry
+        )
+    }
+
+    private nonisolated static func prepareRouteBookMatchingGeometry(
+        coordinates: [CLLocationCoordinate2D],
+        cumulativeDistances: [CLLocationDistance],
+        segmentStartIndices: Set<Int>,
+        maximumCount: Int,
+        isCancelled: @Sendable () -> Bool
+    ) -> RouteBookMatchingGeometry? {
+        guard coordinates.count == cumulativeDistances.count,
+              coordinates.count > 1,
+              maximumCount > 1,
+              !isCancelled() else {
+            return nil
+        }
+
+        let starts = segmentStartIndices
+            .filter { $0 > 0 && $0 < coordinates.count }
+            .sorted()
+        let boundaries = [0] + starts + [coordinates.count]
+        let allRanges = zip(boundaries, boundaries.dropFirst()).compactMap {
+            lowerBound, upperBound -> Range<Int>? in
+            lowerBound < upperBound ? lowerBound..<upperBound : nil
+        }
+        let maximumSegmentCount = max(maximumCount / 2, 1)
+        let ranges: [Range<Int>]
+        if allRanges.count <= maximumSegmentCount {
+            ranges = allRanges
+        } else {
+            ranges = allRanges
+                .sorted { lhs, rhs in
+                    if lhs.count != rhs.count {
+                        return lhs.count > rhs.count
+                    }
+                    return lhs.lowerBound < rhs.lowerBound
+                }
+                .prefix(maximumSegmentCount)
+                .sorted { $0.lowerBound < $1.lowerBound }
+        }
+
+        var minimumCountSuffix = Array(repeating: 0, count: ranges.count + 1)
+        for index in ranges.indices.reversed() {
+            minimumCountSuffix[index] = minimumCountSuffix[index + 1]
+                + (ranges[index].count > 1 ? 2 : 1)
+        }
+        var remainingBudget = maximumCount
+        var remainingSourceCount = ranges.reduce(0) { $0 + $1.count }
+        var sampledCoordinates: [CLLocationCoordinate2D] = []
+        var sampledDistances: [CLLocationDistance] = []
+        var sampledSourceIndices: [Int] = []
+        var sampledSegmentStarts = Set<Int>()
+        sampledCoordinates.reserveCapacity(min(maximumCount, coordinates.count))
+        sampledDistances.reserveCapacity(min(maximumCount, coordinates.count))
+        sampledSourceIndices.reserveCapacity(min(maximumCount, coordinates.count))
+
+        for (segmentOffset, range) in ranges.enumerated() {
+            if isCancelled() {
+                return nil
+            }
+            if segmentOffset > 0, !sampledCoordinates.isEmpty {
+                sampledSegmentStarts.insert(sampledCoordinates.count)
+            }
+            let minimumCount = range.count > 1 ? 2 : 1
+            let remainingMinimumCount = minimumCountSuffix[segmentOffset + 1]
+            let proportionalCount = Int(round(
+                Double(remainingBudget) * Double(range.count)
+                    / Double(max(remainingSourceCount, 1))
+            ))
+            let sampleCount = min(
+                range.count,
+                max(
+                    minimumCount,
+                    min(proportionalCount, remainingBudget - remainingMinimumCount)
+                )
+            )
+            remainingBudget -= sampleCount
+            remainingSourceCount -= range.count
+
+            let indices: [Int]
+            if sampleCount >= range.count {
+                indices = Array(range)
+            } else if sampleCount == 1 {
+                indices = [range.lowerBound]
+            } else {
+                indices = (0..<sampleCount).map { position in
+                    range.lowerBound + Int(round(
+                        Double(range.count - 1) * Double(position)
+                            / Double(sampleCount - 1)
+                    ))
+                }
+            }
+            for index in indices {
+                sampledCoordinates.append(coordinates[index])
+                sampledDistances.append(cumulativeDistances[index])
+                sampledSourceIndices.append(index)
+            }
+        }
+
+        guard sampledCoordinates.count == sampledDistances.count,
+              sampledCoordinates.count == sampledSourceIndices.count,
+              sampledCoordinates.count > 1,
+              sampledCoordinates.count <= maximumCount,
+              !isCancelled() else {
+            return nil
+        }
+        return RouteBookMatchingGeometry(
+            coordinates: sampledCoordinates,
+            cumulativeDistances: sampledDistances,
+            segmentStartIndices: sampledSegmentStarts,
+            sourceIndices: sampledSourceIndices
+        )
+    }
+
+    private func applyPreparedRouteBook(
+        _ preparedRouteBook: PreparedRouteBook,
+        for workout: TrackedWorkout
+    ) {
+        let replayDistance = preparedRouteBook.replayDistances.last
+            ?? workout.distanceMeters
+        routeBookReplayRulerView.configure(
+            totalDistanceText: routeBookReplayTotalDistanceText(totalMeters: replayDistance),
+            totalDistanceMeters: replayDistance,
+            elevationSamples: preparedRouteBook.elevationSamples,
+            segmentBoundaryDistanceRanges: RouteViewportDistanceResolver
+                .segmentBoundaryDistanceRanges(
+                    cumulativeDistances: preparedRouteBook.replayDistances,
+                    segmentStartIndices: preparedRouteBook.segmentStartIndices
+                )
+        )
+        routeBookReplayRulerView.setProgress(0)
+        routeBookReplayRulerView.setIndicatorVisible(false)
+        routeBookReplayCoordinates = preparedRouteBook.coordinates
+        routeBookReplayDistances = preparedRouteBook.replayDistances
+        routeBookReplayAltitudes = preparedRouteBook.replayAltitudes
+        routeBookReplaySegmentStartIndices = preparedRouteBook.segmentStartIndices
+        routeBookViewportGeometry = preparedRouteBook.viewportGeometry
+        routeBookMatchingGeometry = preparedRouteBook.matchingGeometry
+        routeBookMatchCache = nil
         removeRouteBookReplayAnnotation()
+        drawRouteBookRoute(preparedRouteBook, for: workout)
+        updateRouteBookReplayRulerVisibleRange()
         if selectedRouteBookPanelDetent == .medium {
             updateRouteBookReplayProgressForCurrentLocation()
+        }
+    }
+
+    private func updateRouteBookReplayRulerVisibleRange() {
+        guard selectedRouteBookPanelDetent == .medium,
+              routeBookReplayCoordinates.count == routeBookReplayDistances.count,
+              let totalDistance = routeBookReplayDistances.last,
+              totalDistance > 0,
+              let routeBookViewportGeometry else {
+            return
+        }
+
+        let preferredDistance: CLLocationDistance? = routeBookReplayAnnotation == nil
+            ? routeBookLastFocusedDistance
+            : CLLocationDistance(routeBookReplayRulerView.progress) * totalDistance
+        let visibleContainerBounds = routeBookMapContainerView.bounds.inset(
+            by: UIEdgeInsets(
+                top: 150,
+                left: 0,
+                bottom: routeBookPanelContentHeight(for: selectedRouteBookPanelDetent),
+                right: 0
+            )
+        )
+        let visibleMapBounds = routeBookMapContainerView.convert(
+            visibleContainerBounds,
+            to: routeBookMapView
+        )
+        guard let focusedRange = RouteViewportDistanceResolver.focusedVisibleRange(
+            coordinates: routeBookViewportGeometry.coordinates,
+            mapPoints: routeBookViewportGeometry.mapPoints,
+            cumulativeDistances: routeBookViewportGeometry.cumulativeDistances,
+            mapView: routeBookMapView,
+            visibleBounds: visibleMapBounds,
+            segmentStartIndices: routeBookViewportGeometry.segmentStartIndices,
+            segmentDistanceRanges: routeBookViewportGeometry.segmentDistanceRanges,
+            segmentBoundingMapRects: routeBookViewportGeometry.segmentBoundingMapRects,
+            preferredDistance: preferredDistance
+        ) else {
+            return
+        }
+
+        let visibleRange = focusedRange.visibleDistanceRange
+        if let preferredDistance,
+           visibleRange.contains(preferredDistance) {
+            routeBookLastFocusedDistance = preferredDistance
+        } else {
+            routeBookLastFocusedDistance = (
+                visibleRange.lowerBound + visibleRange.upperBound
+            ) / 2
+        }
+        let contextRange = focusedRange.contextDistanceRange
+        let span = visibleRange.upperBound - visibleRange.lowerBound
+        let contextSpan = contextRange.upperBound - contextRange.lowerBound
+        if span >= contextSpan * 0.9 {
+            routeBookReplayRulerView.setVisibleDistanceRange(contextRange)
+            return
+        }
+
+        let contextDistance = max(span * 0.04, min(contextSpan * 0.001, 20))
+        let lowerBound = max(
+            visibleRange.lowerBound - contextDistance,
+            contextRange.lowerBound
+        )
+        let upperBound = min(
+            visibleRange.upperBound + contextDistance,
+            contextRange.upperBound
+        )
+        routeBookReplayRulerView.setVisibleDistanceRange(lowerBound...upperBound)
+    }
+
+    private func handleRouteBookMapRegionChangeForReplayRuler() {
+        routeBookViewportUpdateWorkItem?.cancel()
+        guard isRouteBookModeActive else {
+            routeBookViewportUpdateWorkItem = nil
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.isRouteBookModeActive else {
+                return
+            }
+            self.routeBookViewportUpdateWorkItem = nil
+            self.isRouteBookMapRegionChanging = false
+            self.restoreRouteBookDirectionIndicatorsAfterMapChange()
+            if self.selectedRouteBookPanelDetent == .medium {
+                self.updateRouteBookReplayRulerVisibleRange()
+            }
+        }
+        routeBookViewportUpdateWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.08,
+            execute: workItem
+        )
+    }
+
+    private func restoreRouteBookDirectionIndicatorsAfterMapChange() {
+        for routePolyline in routeBookDirectionIndicatorPolylines {
+            guard let renderer = routeBookMapView.renderer(for: routePolyline)
+                    as? RouteDirectionPolylineRenderer else {
+                continue
+            }
+            let budget = routeBookDirectionIndicatorBudgets[
+                ObjectIdentifier(routePolyline)
+            ] ?? 0
+            guard renderer.maximumIndicatorCount != budget else {
+                continue
+            }
+            renderer.maximumIndicatorCount = budget
+            renderer.setNeedsDisplay()
+        }
+    }
+
+    private func handleRouteBookMapRegionWillChange() {
+        isRouteBookMapRegionChanging = true
+        routeBookViewportUpdateWorkItem?.cancel()
+        routeBookViewportUpdateWorkItem = nil
+        for routePolyline in routeBookDirectionIndicatorPolylines {
+            guard let renderer = routeBookMapView.renderer(for: routePolyline)
+                    as? RouteDirectionPolylineRenderer,
+                  renderer.maximumIndicatorCount > 0 else {
+                continue
+            }
+            renderer.maximumIndicatorCount = 0
         }
     }
 
@@ -2995,9 +3559,14 @@ class ViewController: UIViewController {
         return String(format: "%.2fkm", kilometers)
     }
 
-    private func routeBookCumulativeDistances(
-        for coordinates: [CLLocationCoordinate2D]
-    ) -> [CLLocationDistance] {
+    private nonisolated static func routeBookCumulativeDistances(
+        for coordinates: [CLLocationCoordinate2D],
+        segmentStartIndices: Set<Int>,
+        isCancelled: @Sendable () -> Bool
+    ) -> [CLLocationDistance]? {
+        guard !isCancelled() else {
+            return nil
+        }
         guard let firstCoordinate = coordinates.first else {
             return []
         }
@@ -3008,47 +3577,62 @@ class ViewController: UIViewController {
         var totalDistance: CLLocationDistance = 0
         var previousLocation = CLLocation(latitude: firstCoordinate.latitude, longitude: firstCoordinate.longitude)
 
-        for coordinate in coordinates.dropFirst() {
+        for (offset, coordinate) in coordinates.dropFirst().enumerated() {
+            if offset.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
             let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            totalDistance += location.distance(from: previousLocation)
+            if segmentStartIndices.contains(offset + 1) {
+                totalDistance += RouteViewportDistanceResolver.segmentBoundaryDistance
+            } else {
+                totalDistance += location.distance(from: previousLocation)
+            }
             distances.append(totalDistance)
             previousLocation = location
         }
 
-        return distances
+        return isCancelled() ? nil : distances
     }
 
-    private func routeBookElevationSamples(
+    private nonisolated static func routeBookElevationSamples(
         distances: [CLLocationDistance],
         altitudes: [Double?],
-        maximumCount: Int
-    ) -> [RouteElevationSample] {
+        seriesBreakIndices: Set<Int>,
+        maximumCount: Int,
+        isCancelled: @Sendable () -> Bool
+    ) -> [RouteElevationSample]? {
         guard distances.count == altitudes.count else {
             return []
         }
 
-        let samples = altitudes.enumerated().compactMap { index, altitude -> RouteElevationSample? in
-            guard let altitude else {
+        var samples: [RouteElevationSample] = []
+        samples.reserveCapacity(min(altitudes.count, maximumCount))
+        var seriesIdentifier = 0
+        var previousValidIndex: Int?
+        for index in altitudes.indices {
+            if index.isMultiple(of: 256), isCancelled() {
                 return nil
             }
-            return RouteElevationSample(distanceMeters: distances[index], altitudeMeters: altitude)
+            guard let altitude = altitudes[index], altitude.isFinite else {
+                continue
+            }
+            if let previousValidIndex,
+               index != previousValidIndex + 1 || seriesBreakIndices.contains(index) {
+                seriesIdentifier += 1
+            }
+            samples.append(RouteElevationSample(
+                distanceMeters: distances[index],
+                altitudeMeters: altitude,
+                seriesIdentifier: seriesIdentifier
+            ))
+            previousValidIndex = index
         }
 
-        return routeBookDownsampleElevationSamples(samples, maximumCount: maximumCount)
-    }
-
-    private func routeBookDownsampleElevationSamples(
-        _ samples: [RouteElevationSample],
-        maximumCount: Int
-    ) -> [RouteElevationSample] {
-        guard samples.count > maximumCount, maximumCount > 2 else {
-            return samples
-        }
-
-        let step = Double(samples.count - 1) / Double(maximumCount - 1)
-        return (0..<maximumCount).map { index in
-            samples[Int(round(Double(index) * step))]
-        }
+        return RouteElevationSampler.downsample(
+            samples,
+            maximumCount: maximumCount,
+            isCancelled: isCancelled
+        )
     }
 
     private func updateRouteBookReplayProgressForCurrentLocation() {
@@ -3061,6 +3645,7 @@ class ViewController: UIViewController {
 
         routeBookReplayRulerView.setIndicatorVisible(true)
         routeBookReplayRulerView.setProgress(match.progress)
+        routeBookLastFocusedDistance = match.routeDistance
         updateRouteBookReplayAnnotation(with: replayState)
     }
 
@@ -3084,6 +3669,10 @@ class ViewController: UIViewController {
               let maximumMatchDistance = routeBookMaximumMatchDistance(for: location) else {
             return nil
         }
+        if let routeBookMatchCache,
+           routeBookMatchCache.matches(location) {
+            return routeBookMatchCache.match
+        }
 
         let displayCoordinate = CoordinateTransformer.displayCoordinate(for: location.coordinate)
         guard CLLocationCoordinate2DIsValid(displayCoordinate) else {
@@ -3091,15 +3680,94 @@ class ViewController: UIViewController {
         }
 
         let userPoint = MKMapPoint(displayCoordinate)
-        var nearestDistanceSquared = Double.greatestFiniteMagnitude
-        var nearestRouteDistance: CLLocationDistance = 0
-        var nearestProjectedPoint: MKMapPoint?
-        var nearestSegmentIndex = 0
-        var nearestSegmentProjection = 0.0
+        guard let coarseGeometry = routeBookMatchingGeometry else {
+            return nil
+        }
+        guard let coarseProjection = nearestRouteBookProjection(
+            to: userPoint,
+            coordinates: coarseGeometry.coordinates,
+            cumulativeDistances: coarseGeometry.cumulativeDistances,
+            segmentStartIndices: coarseGeometry.segmentStartIndices,
+            segmentIndexRange: nil
+        ) else {
+            return nil
+        }
 
-        for index in 0..<(routeBookReplayCoordinates.count - 1) {
-            let startPoint = MKMapPoint(routeBookReplayCoordinates[index])
-            let endPoint = MKMapPoint(routeBookReplayCoordinates[index + 1])
+        let firstSourceIndex = coarseGeometry
+            .sourceIndices[coarseProjection.segmentIndex]
+        let lastSourceIndex = coarseGeometry
+            .sourceIndices[coarseProjection.segmentIndex + 1]
+        let firstCoordinateIndex = max(min(firstSourceIndex, lastSourceIndex) - 1, 0)
+        let localSegmentUpperBound = min(
+            max(max(firstSourceIndex, lastSourceIndex) + 1, firstCoordinateIndex),
+            routeBookReplayCoordinates.count - 1
+        )
+        guard let exactProjection = nearestRouteBookProjection(
+            to: userPoint,
+            coordinates: routeBookReplayCoordinates,
+            cumulativeDistances: routeBookReplayDistances,
+            segmentStartIndices: routeBookReplaySegmentStartIndices,
+            segmentIndexRange: firstCoordinateIndex..<localSegmentUpperBound
+        ) else {
+            return nil
+        }
+
+        let distanceToRoute = userPoint.distance(to: exactProjection.projectedPoint)
+        guard distanceToRoute <= maximumMatchDistance else {
+            routeBookMatchCache = RouteBookMatchCache(
+                timestamp: location.timestamp,
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude,
+                horizontalAccuracy: location.horizontalAccuracy,
+                match: nil
+            )
+            return nil
+        }
+
+        let match = RouteBookRouteMatch(
+            progress: CGFloat(min(max(exactProjection.routeDistance / totalDistance, 0), 1)),
+            coordinate: displayCoordinate,
+            routeDistance: exactProjection.routeDistance,
+            segmentIndex: exactProjection.segmentIndex,
+            segmentProjection: exactProjection.segmentProjection
+        )
+        routeBookMatchCache = RouteBookMatchCache(
+            timestamp: location.timestamp,
+            latitude: location.coordinate.latitude,
+            longitude: location.coordinate.longitude,
+            horizontalAccuracy: location.horizontalAccuracy,
+            match: match
+        )
+        return match
+    }
+
+    private func nearestRouteBookProjection(
+        to userPoint: MKMapPoint,
+        coordinates: [CLLocationCoordinate2D],
+        cumulativeDistances: [CLLocationDistance],
+        segmentStartIndices: Set<Int>,
+        segmentIndexRange: Range<Int>?
+    ) -> RouteBookProjection? {
+        guard coordinates.count == cumulativeDistances.count,
+              coordinates.count > 1 else {
+            return nil
+        }
+
+        let validRange = 0..<(coordinates.count - 1)
+        let requestedRange = segmentIndexRange ?? validRange
+        let lowerBound = max(requestedRange.lowerBound, validRange.lowerBound)
+        let upperBound = min(requestedRange.upperBound, validRange.upperBound)
+        guard lowerBound < upperBound else {
+            return nil
+        }
+
+        var nearestProjection: RouteBookProjection?
+        for index in lowerBound..<upperBound {
+            guard !segmentStartIndices.contains(index + 1) else {
+                continue
+            }
+            let startPoint = MKMapPoint(coordinates[index])
+            let endPoint = MKMapPoint(coordinates[index + 1])
             let deltaX = endPoint.x - startPoint.x
             let deltaY = endPoint.y - startPoint.y
             let segmentLengthSquared = deltaX * deltaX + deltaY * deltaY
@@ -3107,43 +3775,73 @@ class ViewController: UIViewController {
             if segmentLengthSquared > 0 {
                 let userDeltaX = userPoint.x - startPoint.x
                 let userDeltaY = userPoint.y - startPoint.y
-                projection = min(max((userDeltaX * deltaX + userDeltaY * deltaY) / segmentLengthSquared, 0), 1)
+                projection = min(
+                    max(
+                        (userDeltaX * deltaX + userDeltaY * deltaY)
+                            / segmentLengthSquared,
+                        0
+                    ),
+                    1
+                )
             } else {
                 projection = 0
             }
 
-            let projectedX = startPoint.x + deltaX * projection
-            let projectedY = startPoint.y + deltaY * projection
-            let distanceX = userPoint.x - projectedX
-            let distanceY = userPoint.y - projectedY
+            let projectedPoint = MKMapPoint(
+                x: startPoint.x + deltaX * projection,
+                y: startPoint.y + deltaY * projection
+            )
+            let distanceX = userPoint.x - projectedPoint.x
+            let distanceY = userPoint.y - projectedPoint.y
             let distanceSquared = distanceX * distanceX + distanceY * distanceY
-            guard distanceSquared < nearestDistanceSquared else {
+            guard distanceSquared < (nearestProjection?.distanceSquared ?? .greatestFiniteMagnitude) else {
                 continue
             }
 
-            nearestDistanceSquared = distanceSquared
-            nearestProjectedPoint = MKMapPoint(x: projectedX, y: projectedY)
-            nearestSegmentIndex = index
-            nearestSegmentProjection = projection
-            let segmentRouteDistance = routeBookReplayDistances[index + 1] - routeBookReplayDistances[index]
-            nearestRouteDistance = routeBookReplayDistances[index] + segmentRouteDistance * projection
+            let segmentRouteDistance = cumulativeDistances[index + 1]
+                - cumulativeDistances[index]
+            nearestProjection = RouteBookProjection(
+                distanceSquared: distanceSquared,
+                projectedPoint: projectedPoint,
+                routeDistance: cumulativeDistances[index]
+                    + segmentRouteDistance * projection,
+                segmentIndex: index,
+                segmentProjection: projection
+            )
         }
+        return nearestProjection
+    }
 
-        guard let nearestProjectedPoint else {
-            return nil
+    private func routeBookReplayDistanceLowerBound(
+        _ targetDistance: CLLocationDistance
+    ) -> Int {
+        var lowerBound = 0
+        var upperBound = routeBookReplayDistances.count
+        while lowerBound < upperBound {
+            let middle = (lowerBound + upperBound) / 2
+            if routeBookReplayDistances[middle] < targetDistance {
+                lowerBound = middle + 1
+            } else {
+                upperBound = middle
+            }
         }
-        let distanceToRoute = userPoint.distance(to: nearestProjectedPoint)
-        guard distanceToRoute <= maximumMatchDistance else {
-            return nil
-        }
+        return lowerBound
+    }
 
-        return RouteBookRouteMatch(
-            progress: CGFloat(min(max(nearestRouteDistance / totalDistance, 0), 1)),
-            coordinate: displayCoordinate,
-            routeDistance: nearestRouteDistance,
-            segmentIndex: nearestSegmentIndex,
-            segmentProjection: nearestSegmentProjection
-        )
+    private func routeBookReplayDistanceUpperBound(
+        _ targetDistance: CLLocationDistance
+    ) -> Int {
+        var lowerBound = 0
+        var upperBound = routeBookReplayDistances.count
+        while lowerBound < upperBound {
+            let middle = (lowerBound + upperBound) / 2
+            if routeBookReplayDistances[middle] <= targetDistance {
+                lowerBound = middle + 1
+            } else {
+                upperBound = middle
+            }
+        }
+        return lowerBound
     }
 
     private func routeBookMaximumMatchDistance(for location: CLLocation) -> CLLocationDistance? {
@@ -3174,6 +3872,7 @@ class ViewController: UIViewController {
             return
         }
 
+        routeBookLastFocusedDistance = replayState.distanceMeters
         sender.setIndicatorVisible(true)
         updateRouteBookReplayAnnotation(with: replayState)
     }
@@ -3240,22 +3939,64 @@ class ViewController: UIViewController {
         guard routeBookReplayCoordinates.count == routeBookReplayDistances.count,
               let totalDistance = routeBookReplayDistances.last,
               totalDistance > 0 else {
-            guard let coordinate = routeBookReplayCoordinates.first else {
-                return nil
-            }
-            return ReplayState(
-                coordinate: coordinate,
-                distanceMeters: 0,
-                altitudeMeters: routeBookReplayAltitude(at: 0),
-                heartRateBeatsPerMinute: nil,
-                powerWatts: nil,
-                temperatureCelsius: nil,
-                isFacingLeft: routeBookReplayFacingLeft(at: 0)
-            )
+            return routeBookReplayState(at: 0)
         }
 
-        let targetDistance = CLLocationDistance(progress) * totalDistance
-        let index = nearestRouteBookReplayCoordinateIndex(for: targetDistance)
+        let targetDistance = min(max(CLLocationDistance(progress), 0), 1) * totalDistance
+        let upperIndex = routeBookReplayDistanceLowerBound(targetDistance)
+        guard upperIndex > 0 else {
+            return routeBookReplayState(at: 0)
+        }
+        guard upperIndex < routeBookReplayCoordinates.count else {
+            return routeBookReplayState(at: routeBookReplayCoordinates.count - 1)
+        }
+        let lowerIndex = upperIndex - 1
+        if routeBookReplaySegmentStartIndices.contains(upperIndex) {
+            let lowerDelta = targetDistance - routeBookReplayDistances[lowerIndex]
+            let upperDelta = routeBookReplayDistances[upperIndex] - targetDistance
+            return routeBookReplayState(at: lowerDelta <= upperDelta ? lowerIndex : upperIndex)
+        }
+
+        let distanceSpan = routeBookReplayDistances[upperIndex]
+            - routeBookReplayDistances[lowerIndex]
+        guard distanceSpan > 0 else {
+            return routeBookReplayState(at: upperIndex)
+        }
+        let interpolation = min(
+            max((targetDistance - routeBookReplayDistances[lowerIndex]) / distanceSpan, 0),
+            1
+        )
+        let lowerCoordinate = routeBookReplayCoordinates[lowerIndex]
+        let upperCoordinate = routeBookReplayCoordinates[upperIndex]
+        let lowerAltitude = routeBookReplayAltitude(at: lowerIndex)
+        let upperAltitude = routeBookReplayAltitude(at: upperIndex)
+        let altitude: Double?
+        if let lowerAltitude, let upperAltitude {
+            altitude = lowerAltitude + (upperAltitude - lowerAltitude) * interpolation
+        } else {
+            altitude = interpolation < 0.5 ? lowerAltitude : upperAltitude
+        }
+        return ReplayState(
+            coordinate: CLLocationCoordinate2D(
+                latitude: lowerCoordinate.latitude
+                    + (upperCoordinate.latitude - lowerCoordinate.latitude) * interpolation,
+                longitude: lowerCoordinate.longitude
+                    + (upperCoordinate.longitude - lowerCoordinate.longitude) * interpolation
+            ),
+            distanceMeters: targetDistance,
+            altitudeMeters: altitude,
+            heartRateBeatsPerMinute: nil,
+            powerWatts: nil,
+            temperatureCelsius: nil,
+            isFacingLeft: upperCoordinate.longitude - lowerCoordinate.longitude < 0
+        )
+    }
+
+    private func routeBookReplayState(at index: Int) -> ReplayState? {
+        guard routeBookReplayCoordinates.indices.contains(index),
+              routeBookReplayDistances.indices.contains(index) else {
+            return nil
+        }
         return ReplayState(
             coordinate: routeBookReplayCoordinates[index],
             distanceMeters: routeBookReplayDistances[index],
@@ -3265,29 +4006,6 @@ class ViewController: UIViewController {
             temperatureCelsius: nil,
             isFacingLeft: routeBookReplayFacingLeft(at: index)
         )
-    }
-
-    private func nearestRouteBookReplayCoordinateIndex(for targetDistance: CLLocationDistance) -> Int {
-        var lowerBound = 0
-        var upperBound = routeBookReplayDistances.count - 1
-
-        while lowerBound < upperBound {
-            let middle = (lowerBound + upperBound) / 2
-            if routeBookReplayDistances[middle] < targetDistance {
-                lowerBound = middle + 1
-            } else {
-                upperBound = middle
-            }
-        }
-
-        guard lowerBound > 0 else {
-            return 0
-        }
-
-        let previousIndex = lowerBound - 1
-        let previousDelta = abs(routeBookReplayDistances[previousIndex] - targetDistance)
-        let currentDelta = abs(routeBookReplayDistances[lowerBound] - targetDistance)
-        return previousDelta <= currentDelta ? previousIndex : lowerBound
     }
 
     private func routeBookReplayAltitude(at index: Int) -> Double? {
@@ -3303,8 +4021,12 @@ class ViewController: UIViewController {
             return true
         }
 
-        let previousIndex = max(index - 1, 0)
-        let nextIndex = min(index + 1, routeBookReplayCoordinates.count - 1)
+        let previousIndex = routeBookReplaySegmentStartIndices.contains(index)
+            ? index
+            : max(index - 1, 0)
+        let nextIndex = routeBookReplaySegmentStartIndices.contains(index + 1)
+            ? index
+            : min(index + 1, routeBookReplayCoordinates.count - 1)
         guard previousIndex != nextIndex else {
             return true
         }
@@ -3336,23 +4058,28 @@ class ViewController: UIViewController {
     }
 
     private func drawRouteBookRoute(
-        _ coordinates: [CLLocationCoordinate2D],
+        _ preparedRouteBook: PreparedRouteBook,
         for workout: TrackedWorkout
     ) {
-        if let routeBookPolyline {
-            routeBookMapView.removeOverlay(routeBookPolyline)
+        if !routeBookDisplayPolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookDisplayPolylines)
         }
         removeRouteBookEndpointAnnotations()
 
-        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
-        routeBookPolyline = polyline
-        routeBookMapView.addOverlay(polyline, level: .aboveLabels)
+        routeBookBoundingMapRect = preparedRouteBook.boundingMapRect
+        let displayGeometry = preparedRouteBook.displayGeometry
+        routeBookDisplayPolylines = RouteViewportDistanceResolver.displayPolylines(
+            coordinates: displayGeometry.coordinates,
+            segmentStartIndices: displayGeometry.segmentStartIndices
+        )
+        configureRouteBookDirectionIndicatorSelection()
+        routeBookMapView.addOverlays(routeBookDisplayPolylines, level: .aboveLabels)
         let startCoordinate = routeBookDisplayEndpointCoordinate(
             workout.routeCollectionMergeStartCoordinate
-        ) ?? coordinates[0]
+        ) ?? preparedRouteBook.coordinates[0]
         let endCoordinate = routeBookDisplayEndpointCoordinate(
             workout.routeCollectionMergeEndCoordinate
-        ) ?? coordinates[coordinates.count - 1]
+        ) ?? preparedRouteBook.coordinates[preparedRouteBook.coordinates.count - 1]
         routeBookEndpointAnnotations = [
             RouteEndpointAnnotation(coordinate: startCoordinate, kind: .start),
             RouteEndpointAnnotation(coordinate: endCoordinate, kind: .end)
@@ -3360,7 +4087,7 @@ class ViewController: UIViewController {
         routeBookMapView.addAnnotations(routeBookEndpointAnnotations)
         resetRouteBookMapHeading(animated: false)
         routeBookMapView.setVisibleMapRect(
-            polyline.boundingMapRect,
+            preparedRouteBook.boundingMapRect,
             edgePadding: UIEdgeInsets(
                 top: 150,
                 left: 44,
@@ -3368,6 +4095,48 @@ class ViewController: UIViewController {
                 right: 44
             ),
             animated: false
+        )
+    }
+
+    private func configureRouteBookDirectionIndicatorSelection() {
+        let maximumIndicatorCount = 80
+        let selectedPolylineCount = min(
+            routeBookDisplayPolylines.count,
+            maximumIndicatorCount
+        )
+        guard selectedPolylineCount > 0 else {
+            routeBookDirectionIndicatorPolylines = []
+            routeBookDirectionIndicatorBudgets = [:]
+            return
+        }
+
+        let selectedIndices: [Int]
+        if selectedPolylineCount == 1 {
+            selectedIndices = [0]
+        } else {
+            selectedIndices = (0..<selectedPolylineCount).map { offset in
+                Int(round(
+                    Double(routeBookDisplayPolylines.count - 1)
+                        * Double(offset)
+                        / Double(selectedPolylineCount - 1)
+                ))
+            }
+        }
+
+        routeBookDirectionIndicatorPolylines = selectedIndices.map {
+            routeBookDisplayPolylines[$0]
+        }
+        let baseBudget = maximumIndicatorCount / selectedPolylineCount
+        let remainder = maximumIndicatorCount % selectedPolylineCount
+        routeBookDirectionIndicatorBudgets = Dictionary(
+            uniqueKeysWithValues: routeBookDirectionIndicatorPolylines
+                .enumerated()
+                .map { offset, polyline in
+                    (
+                        ObjectIdentifier(polyline),
+                        baseBudget + (offset < remainder ? 1 : 0)
+                    )
+                }
         )
     }
 
@@ -3552,10 +4321,16 @@ class ViewController: UIViewController {
 
     private func exitRouteBookMode() {
         isRouteBookModeActive = false
+        routeBookViewportUpdateWorkItem?.cancel()
+        routeBookViewportUpdateWorkItem = nil
+        routeBookPreparationCancellationToken?.cancel()
+        routeBookPreparationCancellationToken = nil
+        routeBookPreparationID = nil
         routeBookWorkout = nil
         RouteBookMode.clearActiveWorkout()
         shouldCenterRouteBookOnNextLocation = false
         routeBookLastLocation = nil
+        routeBookMatchCache = nil
         routeBookLastHeadingDegrees = nil
         routeBookHeadingDisplayDegrees = nil
         removeRouteBookReplayAnnotation()
@@ -3563,10 +4338,15 @@ class ViewController: UIViewController {
         stopRouteBookLocationAndHeadingUpdates()
         routeBookMapView.setUserTrackingMode(.none, animated: false)
         routeBookMapView.showsUserLocation = false
-        if let routeBookPolyline {
-            routeBookMapView.removeOverlay(routeBookPolyline)
+        if !routeBookDisplayPolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookDisplayPolylines)
         }
-        routeBookPolyline = nil
+        routeBookBoundingMapRect = nil
+        routeBookDisplayPolylines = []
+        routeBookDirectionIndicatorPolylines = []
+        routeBookDirectionIndicatorBudgets = [:]
+        routeBookLastFocusedDistance = nil
+        isRouteBookMapRegionChanging = false
         updateRouteBookPanelText()
 
         routeBookMapContainerView.isHidden = true
@@ -3671,6 +4451,23 @@ extension ViewController: ASWebAuthenticationPresentationContextProviding {
 }
 
 extension ViewController: MKMapViewDelegate {
+    func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
+        guard mapView === routeBookMapView,
+              isRouteBookModeActive else {
+            return
+        }
+        handleRouteBookMapRegionWillChange()
+    }
+
+    func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+        guard mapView === routeBookMapView,
+              isRouteBookModeActive else {
+            return
+        }
+
+        handleRouteBookMapRegionChangeForReplayRuler()
+    }
+
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
         guard mapView === routeBookMapView else {
             return nil
@@ -3743,6 +4540,9 @@ extension ViewController: MKMapViewDelegate {
         renderer.lineWidth = 2.4
         renderer.lineJoin = .round
         renderer.lineCap = .round
+        renderer.maximumIndicatorCount = isRouteBookMapRegionChanging
+            ? 0
+            : routeBookDirectionIndicatorBudgets[ObjectIdentifier(polyline)] ?? 0
         return renderer
     }
 

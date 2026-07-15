@@ -21,9 +21,33 @@ final class WorkoutRouteDetailViewController: UIViewController {
         case medium
     }
 
+    private struct PreparedSlopeSegment {
+        let segmentIndex: Int
+        let coordinates: [CLLocationCoordinate2D]
+        let sourceLocations: [Double]
+        let gradient: RouteSlopeGradient
+        let totalDistance: CLLocationDistance
+    }
+
+    private struct PreparedSlopeProfileSegment {
+        let baseDistance: CLLocationDistance
+        let endDistance: CLLocationDistance
+        let analysis: RouteSlopeAnalysis
+    }
+
+    private struct PreparedSlopeData {
+        let renderingSegments: [PreparedSlopeSegment]
+        let profileSegments: [PreparedSlopeProfileSegment]
+        let steepestUphill: RouteSlopePeak?
+    }
+
     private struct PreparedRoute {
         let coordinates: [CLLocationCoordinate2D]
+        let viewportGeometry: RouteViewportDistanceResolver.PreparedGeometry
+        let displayGeometry: RouteViewportDistanceResolver.PreparedGeometry
+        let slopeSegments: [PreparedSlopeSegment]
         let routeCoordinates: [RouteCoordinate]
+        let boundingMapRect: MKMapRect
         let startCoordinate: CLLocationCoordinate2D
         let endCoordinate: CLLocationCoordinate2D
         let replayDistances: [CLLocationDistance]
@@ -31,7 +55,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         let replayHeartRates: [Double?]
         let replayPowers: [Double?]
         let replayTemperatures: [Double?]
+        let replayGradeRatios: [Double?]
+        let replaySegmentStartIndices: Set<Int>
         let elevationSamples: [RouteElevationSample]
+        let globalPeakSamples: ElevationProfileView.PeakSamples
         let totalDistanceMeters: CLLocationDistance
     }
 
@@ -44,6 +71,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var mapView: MKMapView { mapContainerView.mapView }
     private let mapToneOverlay = AppMapStyle.makeToneOverlay()
     private let routePreparationQueue = DispatchQueue(label: "studio.pj.PTrack.route-detail-prepare", qos: .userInitiated)
+    private var routePreparationCancellationToken: RouteSlopePreparationCancellationToken?
     private let routeMergeSourceLoadQueue = DispatchQueue(label: "studio.pj.PTrack.route-merge-source-load", qos: .userInitiated)
     private let gpxExportQueue = DispatchQueue(label: "studio.pj.PTrack.gpx-export", qos: .userInitiated)
     private let routeLoadingView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
@@ -56,6 +84,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let panelSheetViewController = UIViewController()
     private let panelView = UIVisualEffectView(effect: WorkoutRouteDetailViewController.makePanelGlassEffect())
     private let handleTouchView = UIView()
+    private let mapControlStackView = UIStackView()
+    private let routeSlopeVisibilityButton = UIButton(type: .system)
+    private let routeSlopeVisibilityIconView = UIImageView()
     private let routeMediaVisibilityButton = UIButton(type: .system)
     private let routeMediaVisibilityIconView = UIImageView()
     private let iconView = UIImageView()
@@ -72,7 +103,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let replayRulerView = WorkoutRouteReplayRulerView()
     private let calorieRiceView = WorkoutRouteCalorieRiceView()
     private var primaryContentTopConstraint: Constraint?
-    private var routeMediaVisibilityButtonBottomConstraint: Constraint?
+    private var mapControlStackViewBottomConstraint: Constraint?
     private var selectedPanelDetent: PanelDetent = .minimum
     private var hasFittedRoute = false
     private var hasPresentedPanelSheet = false
@@ -84,8 +115,25 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var replayHeartRates: [Double?] = []
     private var replayPowers: [Double?] = []
     private var replayTemperatures: [Double?] = []
+    private var replayGradeRatios: [Double?] = []
+    private var replaySegmentStartIndices = Set<Int>()
+    private var replayViewportGeometry: RouteViewportDistanceResolver.PreparedGeometry?
+    private var replayViewportUpdateWorkItem: DispatchWorkItem?
+    private var lastFocusedRouteDistance: CLLocationDistance?
     private var replayAnnotation: RouteReplayAnnotation?
-    private var routePolyline: MKPolyline?
+    private var routeBoundingMapRect: MKMapRect?
+    private var routeDisplayPolylines: [MKPolyline] = []
+    private var routeDisplayIndicatorPolylines: [MKPolyline] = []
+    private var routeDisplayIndicatorBudgets: [ObjectIdentifier: Int] = [:]
+    private var routeSlopePolylines: [MKPolyline] = []
+    private var routeSlopeUncoveredMultiPolyline: MKMultiPolyline?
+    private var routeSlopeGradients: [ObjectIdentifier: RouteSlopeGradient] = [:]
+    private var routeSlopeDirectionPolylines: [MKPolyline] = []
+    private var routeSlopeDirectionPolylineIdentifiers = Set<ObjectIdentifier>()
+    private var areSlopeDirectionOverlaysSuspendedForMapChange = false
+    private var isMapRegionChanging = false
+    private var routeSlopeGradient: RouteSlopeGradient?
+    private var isRouteSlopeVisible = false
     private var selectedMapStyle = AppMapDisplayStyleStore.shared.routeDetailStyle()
     private var resolvedNavigationTitle: String?
     private var lastObservedPhotoAuthorizationState: PhotoLibraryAuthorizationState?
@@ -102,13 +150,21 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let calorieRiceTopSpacing: CGFloat = 12
     private let mediumPanelBottomPadding: CGFloat = 18
     private let panelHandleTouchHeight: CGFloat = 32
-    private let routeMediaVisibilityButtonPanelSpacing: CGFloat = 14
+    private let mapControlPanelSpacing: CGFloat = 14
+    private let mapControlButtonSpacing: CGFloat = 10
     private let primaryContentSize: CGFloat = 28
     private let expandedPrimaryContentTop: CGFloat = 33
     private let minimumPrimaryContentScale: CGFloat = 0.88
     private let navigationBackgroundHeight: CGFloat = 124
     private let mapBottomExtension = AppMapContainerView.defaultBottomLogoAvoidanceOffset
-    private let maximumElevationSampleCount = 120
+    private let maximumElevationSampleCount = 24_000
+    private let maximumDisplayCoordinateCount = 12_000
+    private let maximumSlopeRenderingCoordinateCount = 1_200
+    private let maximumSlopeSegmentCount = 8
+    private let slopeGeometrySimplificationToleranceMeters: CLLocationDistance = 4
+    private let preferredSlopeOverlayChunkDistance: CLLocationDistance = 15_000
+    private let maximumSlopeOverlayChunkCount = 8
+    private let slopeRouteLineWidth: CGFloat = 3
     private static let minimumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
         "routeDetailMinimum"
     )
@@ -164,7 +220,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         registerTraitChangeHandler()
         configureMapView()
         configureNavigationBackgroundView()
-        configureRouteMediaVisibilityButton()
+        configureMapControlButtons()
         configureRouteLoadingView()
         configurePanelView()
         configureGPXExportLoadingView()
@@ -227,6 +283,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         hasPreparedForPermanentDismissal = true
+        routePreparationCancellationToken?.cancel()
+        routePreparationCancellationToken = nil
+        replayViewportUpdateWorkItem?.cancel()
+        replayViewportUpdateWorkItem = nil
         isExportingGPX = false
         routeLoadingView.layer.removeAllAnimations()
         gpxExportLoadingView.layer.removeAllAnimations()
@@ -248,7 +308,22 @@ final class WorkoutRouteDetailViewController: UIViewController {
         replayHeartRates.removeAll(keepingCapacity: false)
         replayPowers.removeAll(keepingCapacity: false)
         replayTemperatures.removeAll(keepingCapacity: false)
-        routePolyline = nil
+        replayGradeRatios.removeAll(keepingCapacity: false)
+        replaySegmentStartIndices.removeAll(keepingCapacity: false)
+        replayViewportGeometry = nil
+        lastFocusedRouteDistance = nil
+        routeBoundingMapRect = nil
+        routeDisplayPolylines.removeAll(keepingCapacity: false)
+        routeDisplayIndicatorPolylines.removeAll(keepingCapacity: false)
+        routeDisplayIndicatorBudgets.removeAll(keepingCapacity: false)
+        routeSlopePolylines.removeAll(keepingCapacity: false)
+        routeSlopeUncoveredMultiPolyline = nil
+        routeSlopeGradients.removeAll(keepingCapacity: false)
+        routeSlopeDirectionPolylines.removeAll(keepingCapacity: false)
+        routeSlopeDirectionPolylineIdentifiers.removeAll(keepingCapacity: false)
+        areSlopeDirectionOverlaysSuspendedForMapChange = false
+        isMapRegionChanging = false
+        routeSlopeGradient = nil
         replayAnnotation = nil
         mapView.layer.removeAllAnimations()
         mapContainerView.layer.removeAllAnimations()
@@ -281,12 +356,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
 
         updatePanelText()
-        let measuredDistance = replayDistances.last ?? workout.distanceMeters
-        let totalDistance = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
-        replayRulerView.configure(
-            totalDistanceText: replayTotalDistanceText(totalMeters: totalDistance),
-            elevationSamples: routeElevationSamples()
-        )
 
         if let caloriesKilocalories = panelCaloriesKilocalories {
             calorieRiceView.configure(
@@ -294,6 +363,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 isEstimated: panelCaloriesIsEstimated
             )
         }
+        routeSlopeVisibilityButton.accessibilityLabel = AppLocalization.text(.routeSlope)
+        updateRouteSlopeVisibilityButtonAppearance()
         routeMediaVisibilityButton.accessibilityLabel = AppLocalization.text(.photoMatching)
         routeLoadingLabel.text = AppLocalization.text(.routeLoading)
         gpxExportLoadingLabel.text = AppLocalization.text(.gpxExporting)
@@ -726,6 +797,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         AppMapStyle.apply(selectedMapStyle, to: mapView)
         mapView.showsCompass = false
         mapView.showsScale = true
+        mapView.isRotateEnabled = false
+        mapView.isPitchEnabled = false
 
         view.addSubview(mapContainerView)
 
@@ -752,7 +825,30 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
-    private func configureRouteMediaVisibilityButton() {
+    private func configureMapControlButtons() {
+        mapControlStackView.axis = .vertical
+        mapControlStackView.alignment = .fill
+        mapControlStackView.distribution = .fill
+        mapControlStackView.spacing = mapControlButtonSpacing
+
+        routeSlopeVisibilityButton.overrideUserInterfaceStyle = .light
+        routeSlopeVisibilityButton.accessibilityLabel = AppLocalization.text(.routeSlope)
+        routeSlopeVisibilityIconView.overrideUserInterfaceStyle = .light
+        routeSlopeVisibilityIconView.isUserInteractionEnabled = false
+        routeSlopeVisibilityIconView.contentMode = .scaleAspectFit
+        routeSlopeVisibilityIconView.image = UIImage(
+            systemName: "mountain.2.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        )?.withRenderingMode(.alwaysTemplate)
+        routeSlopeVisibilityIconView.layer.zPosition = 1
+        routeSlopeVisibilityButton.addTarget(
+            self,
+            action: #selector(handleRouteSlopeVisibilityButtonTap),
+            for: .touchUpInside
+        )
+        applyMapControlButtonShadow(to: routeSlopeVisibilityButton)
+        updateRouteSlopeVisibilityButtonAppearance()
+
         routeMediaVisibilityButton.isHidden = presentationMode != .workout || isDemoMode
         routeMediaVisibilityButton.overrideUserInterfaceStyle = .light
         routeMediaVisibilityButton.accessibilityLabel = AppLocalization.text(.photoMatching)
@@ -769,18 +865,34 @@ final class WorkoutRouteDetailViewController: UIViewController {
             action: #selector(handleRouteMediaVisibilityButtonTap),
             for: .touchUpInside
         )
-        applyRouteMediaVisibilityButtonShadow()
+        applyMapControlButtonShadow(to: routeMediaVisibilityButton)
         updateRouteMediaVisibilityButtonAppearance()
 
-        view.addSubview(routeMediaVisibilityButton)
+        view.addSubview(mapControlStackView)
+        mapControlStackView.addArrangedSubview(routeSlopeVisibilityButton)
+        mapControlStackView.addArrangedSubview(routeMediaVisibilityButton)
+        routeSlopeVisibilityButton.addSubview(routeSlopeVisibilityIconView)
         routeMediaVisibilityButton.addSubview(routeMediaVisibilityIconView)
 
-        routeMediaVisibilityButton.snp.makeConstraints { make in
+        mapControlStackView.snp.makeConstraints { make in
             make.trailing.equalTo(view.safeAreaLayoutGuide.snp.trailing).inset(18)
-            routeMediaVisibilityButtonBottomConstraint = make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
-                .inset(routeMediaVisibilityButtonBottomInset)
+            mapControlStackViewBottomConstraint = make.bottom.equalTo(view.safeAreaLayoutGuide.snp.bottom)
+                .inset(mapControlStackViewBottomInset)
                 .constraint
-            make.size.equalTo(48)
+            make.width.equalTo(48)
+        }
+
+        routeSlopeVisibilityButton.snp.makeConstraints { make in
+            make.height.equalTo(48).priority(.high)
+        }
+
+        routeMediaVisibilityButton.snp.makeConstraints { make in
+            make.height.equalTo(48).priority(.high)
+        }
+
+        routeSlopeVisibilityIconView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.size.equalTo(22)
         }
 
         routeMediaVisibilityIconView.snp.makeConstraints { make in
@@ -789,17 +901,53 @@ final class WorkoutRouteDetailViewController: UIViewController {
         }
     }
 
-    private func applyRouteMediaVisibilityButtonShadow() {
-        routeMediaVisibilityButton.layer.shadowColor = UIColor.black.cgColor
+    private func applyMapControlButtonShadow(to button: UIButton) {
+        button.layer.shadowColor = UIColor.black.cgColor
         if #available(iOS 26.0, *) {
-            routeMediaVisibilityButton.layer.shadowOpacity = 0
-            routeMediaVisibilityButton.layer.shadowRadius = 0
-            routeMediaVisibilityButton.layer.shadowOffset = .zero
+            button.layer.shadowOpacity = 0
+            button.layer.shadowRadius = 0
+            button.layer.shadowOffset = .zero
         } else {
-            routeMediaVisibilityButton.layer.shadowOpacity = 0.14
-            routeMediaVisibilityButton.layer.shadowRadius = 12
-            routeMediaVisibilityButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+            button.layer.shadowOpacity = 0.14
+            button.layer.shadowRadius = 12
+            button.layer.shadowOffset = CGSize(width: 0, height: 4)
         }
+    }
+
+    private func updateRouteSlopeVisibilityButtonAppearance() {
+        let isAvailable = routeSlopeGradient != nil
+        routeSlopeVisibilityButton.isEnabled = isAvailable
+        // Keep the glass/filled background neutral, matching the photo button.
+        routeSlopeVisibilityButton.isSelected = false
+        if isRouteSlopeVisible {
+            routeSlopeVisibilityButton.accessibilityTraits.insert(.selected)
+        } else {
+            routeSlopeVisibilityButton.accessibilityTraits.remove(.selected)
+        }
+        let foregroundColor: UIColor
+        if isRouteSlopeVisible {
+            foregroundColor = AppColors.movinnGreen
+        } else {
+            foregroundColor = UIColor.black.withAlphaComponent(isAvailable ? 0.42 : 0.22)
+        }
+        let resolvedForegroundColor = foregroundColor.resolvedColor(with: traitCollection)
+        var configuration: UIButton.Configuration
+        if #available(iOS 26.0, *) {
+            configuration = .glass()
+        } else {
+            configuration = .filled()
+            configuration.baseBackgroundColor = UIColor.white.withAlphaComponent(0.92)
+        }
+        configuration.image = nil
+        configuration.cornerStyle = .capsule
+        configuration.contentInsets = .zero
+        routeSlopeVisibilityButton.configuration = configuration
+        routeSlopeVisibilityButton.tintColor = resolvedForegroundColor
+        routeSlopeVisibilityIconView.tintColor = resolvedForegroundColor
+        routeSlopeVisibilityButton.accessibilityValue = nil
+        routeSlopeVisibilityButton.accessibilityHint = isAvailable
+            ? AppLocalization.text(isRouteSlopeVisible ? .disable : .enable)
+            : nil
     }
 
     private func updateRouteMediaVisibilityButtonAppearance() {
@@ -830,8 +978,64 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return UIColor.black.withAlphaComponent(0.42)
     }
 
-    private var routeMediaVisibilityButtonBottomInset: CGFloat {
-        panelHeight(for: selectedPanelDetent) + routeMediaVisibilityButtonPanelSpacing
+    private var mapControlStackViewBottomInset: CGFloat {
+        panelHeight(for: selectedPanelDetent) + mapControlPanelSpacing
+    }
+
+    @objc private func handleRouteSlopeVisibilityButtonTap() {
+        guard routeSlopeGradient != nil else {
+            return
+        }
+
+        if isRouteSlopeVisible {
+            setRouteSlopeVisible(false)
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.ensureAccessResolved()
+            guard ProSubscriptionManager.shared.isProUser else {
+                modalPresentationHost.presentProPaywall { [weak self] in
+                    self?.setRouteSlopeVisible(true)
+                }
+                return
+            }
+
+            setRouteSlopeVisible(true)
+        }
+    }
+
+    private func setRouteSlopeVisible(_ isVisible: Bool) {
+        guard routeSlopeGradient != nil,
+              isRouteSlopeVisible != isVisible else {
+            return
+        }
+
+        isRouteSlopeVisible = isVisible
+        replaceRouteOverlaysForSlopeVisibility()
+        updateRouteSlopeVisibilityButtonAppearance()
+        if isRouteSlopeVisible {
+            showRouteSlopeColorHint()
+        }
+    }
+
+    private func showRouteSlopeColorHint() {
+        guard let window = view.window else {
+            return
+        }
+
+        let message = AppLocalization.text(.routeSlopeColorHint)
+        Toast.show(
+            message,
+            in: window,
+            duration: 2.4,
+            bottomInset: mapControlStackViewBottomInset
+        )
+        UIAccessibility.post(notification: .announcement, argument: message)
     }
 
     @objc private func handleRouteMediaVisibilityButtonTap() {
@@ -980,6 +1184,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             viewController.updateNavigationBackgroundColors()
             viewController.updateLoadingViewColors()
             viewController.updatePanelAppearanceColors()
+            viewController.updateRouteSlopeVisibilityButtonAppearance()
             viewController.updateRouteMediaVisibilityButtonAppearance()
             viewController.setNeedsStatusBarAppearanceUpdate()
         }
@@ -1106,14 +1311,16 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         let routeName = AppLocalization.text(.gpxExportRouteName)
         let coordinates = workout.routeDetailCoordinates
+        let segmentStartIndices = workout.routeDetailSegmentStartIndices
         let fileName = GPXRouteExporter.suggestedFileName(routeName: routeName)
 
-        gpxExportQueue.async { [weak self, routeName, coordinates, fileName] in
+        gpxExportQueue.async { [weak self, routeName, coordinates, segmentStartIndices, fileName] in
             let result: Result<URL, Error>
             do {
                 let data = try GPXRouteExporter.data(
                     routeName: routeName,
-                    coordinates: coordinates
+                    coordinates: coordinates,
+                    segmentStartIndices: segmentStartIndices
                 )
                 let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
                 try data.write(to: fileURL, options: .atomic)
@@ -1231,7 +1438,10 @@ final class WorkoutRouteDetailViewController: UIViewController {
         detailStackView.spacing = caloriesKilocalories == nil ? 0 : calorieRiceTopSpacing
         detailStackView.alpha = 1
 
-        replayRulerView.configure(totalDistanceText: replayTotalDistanceText(totalMeters: workout.distanceMeters))
+        replayRulerView.configure(
+            totalDistanceText: replayTotalDistanceText(totalMeters: workout.distanceMeters),
+            totalDistanceMeters: workout.distanceMeters
+        )
         replayRulerView.addTarget(self, action: #selector(handleReplayProgressChanged(_:)), for: .valueChanged)
 
         detailStackView.addArrangedSubview(replayRulerView)
@@ -1418,17 +1628,34 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         let workout = workout
         let maximumElevationSampleCount = self.maximumElevationSampleCount
+        let maximumDisplayCoordinateCount = self.maximumDisplayCoordinateCount
+        let maximumSlopeRenderingCoordinateCount = self.maximumSlopeRenderingCoordinateCount
+        let maximumSlopeSegmentCount = self.maximumSlopeSegmentCount
+        let slopeSimplificationTolerance = slopeGeometrySimplificationToleranceMeters
+        let cancellationToken = RouteSlopePreparationCancellationToken()
+        routePreparationCancellationToken?.cancel()
+        routePreparationCancellationToken = cancellationToken
         routePreparationQueue.async { [weak self] in
             let preparedRoute = Self.prepareRoute(
                 for: workout,
-                maximumElevationSampleCount: maximumElevationSampleCount
+                maximumElevationSampleCount: maximumElevationSampleCount,
+                maximumDisplayCoordinateCount: maximumDisplayCoordinateCount,
+                maximumSlopeRenderingCoordinateCount: maximumSlopeRenderingCoordinateCount,
+                maximumSlopeSegmentCount: maximumSlopeSegmentCount,
+                slopeGeometrySimplificationToleranceMeters: slopeSimplificationTolerance,
+                cancellationToken: cancellationToken
             )
+            guard !cancellationToken.isCancelled else {
+                return
+            }
 
             DispatchQueue.main.async { [weak self] in
                 guard let self,
+                      self.routePreparationCancellationToken === cancellationToken,
                       !self.hasPreparedForPermanentDismissal else {
                     return
                 }
+                self.routePreparationCancellationToken = nil
 
                 guard let preparedRoute else {
                     self.setRouteLoadingVisible(false)
@@ -1442,30 +1669,156 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private static func prepareRoute(
         for workout: TrackedWorkout,
-        maximumElevationSampleCount: Int
+        maximumElevationSampleCount: Int,
+        maximumDisplayCoordinateCount: Int,
+        maximumSlopeRenderingCoordinateCount: Int,
+        maximumSlopeSegmentCount: Int,
+        slopeGeometrySimplificationToleranceMeters: CLLocationDistance,
+        cancellationToken: RouteSlopePreparationCancellationToken
     ) -> PreparedRoute? {
-        let routeCoordinates = workout.routeDetailCoordinates
-        let coordinates = CoordinateTransformer.displayCoordinates(for: routeCoordinates.map(\.coordinate))
-        guard coordinates.count > 1 else {
+        guard !cancellationToken.isCancelled else {
             return nil
         }
 
-        let replayDistances = cumulativeDistances(for: coordinates)
-        let replayAltitudes = routeCoordinates.map(\.altitudeMeters)
-        let replayHeartRates = routeCoordinates.map(\.heartRateBeatsPerMinute)
-        let replayPowers = routeCoordinates.map(\.powerWatts)
-        let replayTemperatures = routeCoordinates.map(\.temperatureCelsius)
+        let routeCoordinates = workout.routeDetailCoordinates
+        let segmentStartIndices = workout.routeDetailSegmentStartIndices
+        guard routeCoordinates.count > 1 else {
+            return nil
+        }
+
+        var sourceCoordinates: [CLLocationCoordinate2D] = []
+        var replayAltitudes: [Double?] = []
+        var replayHeartRates: [Double?] = []
+        var replayPowers: [Double?] = []
+        var replayTemperatures: [Double?] = []
+        var slopeAltitudes: [Double?] = []
+        var sourceDistances: [CLLocationDistance?] = []
+        var sourceGradeRatios: [Double?] = []
+        sourceCoordinates.reserveCapacity(routeCoordinates.count)
+        replayAltitudes.reserveCapacity(routeCoordinates.count)
+        replayHeartRates.reserveCapacity(routeCoordinates.count)
+        replayPowers.reserveCapacity(routeCoordinates.count)
+        replayTemperatures.reserveCapacity(routeCoordinates.count)
+        slopeAltitudes.reserveCapacity(routeCoordinates.count)
+        sourceDistances.reserveCapacity(routeCoordinates.count)
+        sourceGradeRatios.reserveCapacity(routeCoordinates.count)
+        for (index, routeCoordinate) in routeCoordinates.enumerated() {
+            if index.isMultiple(of: 256), cancellationToken.isCancelled {
+                return nil
+            }
+
+            sourceCoordinates.append(routeCoordinate.coordinate)
+            replayAltitudes.append(routeCoordinate.altitudeMeters)
+            replayHeartRates.append(routeCoordinate.heartRateBeatsPerMinute)
+            replayPowers.append(routeCoordinate.powerWatts)
+            replayTemperatures.append(routeCoordinate.temperatureCelsius)
+            sourceDistances.append(routeCoordinate.sourceDistanceMeters)
+            sourceGradeRatios.append(routeCoordinate.gradeRatio)
+            if let verticalAccuracy = routeCoordinate.verticalAccuracyMeters,
+               (!verticalAccuracy.isFinite
+                || verticalAccuracy < 0
+                || verticalAccuracy > 15) {
+                slopeAltitudes.append(nil)
+            } else {
+                slopeAltitudes.append(routeCoordinate.altitudeMeters)
+            }
+        }
+
+        guard let coordinates = CoordinateTransformer.displayCoordinates(
+            for: sourceCoordinates,
+            isCancelled: { cancellationToken.isCancelled }
+        ),
+        let replayDistances = cumulativeDistances(
+            for: coordinates,
+            segmentStartIndices: segmentStartIndices,
+            cancellationToken: cancellationToken
+        ) else {
+            return nil
+        }
+
         let measuredDistance = replayDistances.last ?? workout.distanceMeters
         let totalDistanceMeters = workout.distanceMeters > 0 ? workout.distanceMeters : measuredDistance
-        let elevationSamples = routeElevationSamples(
+        guard let slopeData = preparedSlopeData(
+            coordinates: coordinates,
+            cumulativeDistances: replayDistances,
+            altitudes: slopeAltitudes,
+            sourceDistances: sourceDistances,
+            sourceGradeRatios: sourceGradeRatios,
+            segmentStartIndices: segmentStartIndices,
+            maximumRenderingCoordinateCount: maximumSlopeRenderingCoordinateCount,
+            maximumSegmentCount: maximumSlopeSegmentCount,
+            simplificationToleranceMeters: slopeGeometrySimplificationToleranceMeters,
+            cancellationToken: cancellationToken
+        ),
+        let replayGradeRatios = replayGradeRatios(
+            for: replayDistances,
+            profileSegments: slopeData.profileSegments,
+            cancellationToken: cancellationToken
+        ) else {
+            return nil
+        }
+        guard let elevationSamples = routeElevationSamples(
             distances: replayDistances,
-            routeCoordinates: routeCoordinates,
-            maximumCount: maximumElevationSampleCount
-        )
+            altitudes: replayAltitudes,
+            heartRates: replayHeartRates,
+            powers: replayPowers,
+            temperatures: replayTemperatures,
+            seriesBreakIndices: segmentStartIndices,
+            maximumCount: maximumElevationSampleCount,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+        guard let globalPeakSamples = routeElevationGlobalPeakSamples(
+            distances: replayDistances,
+            altitudes: replayAltitudes,
+            heartRates: replayHeartRates,
+            powers: replayPowers,
+            temperatures: replayTemperatures,
+            steepestUphill: slopeData.steepestUphill,
+            seriesBreakIndices: segmentStartIndices,
+            elevationSamples: elevationSamples,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+
+        guard let viewportGeometry = RouteViewportDistanceResolver.prepareGeometry(
+            coordinates: coordinates,
+            cumulativeDistances: replayDistances,
+            segmentStartIndices: segmentStartIndices,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+        guard let displayGeometry = RouteViewportDistanceResolver.prepareGeometry(
+            coordinates: coordinates,
+            cumulativeDistances: replayDistances,
+            segmentStartIndices: segmentStartIndices,
+            maximumCount: max(maximumDisplayCoordinateCount, 4_096),
+            toleranceMeters: slopeGeometrySimplificationToleranceMeters,
+            allowsSinglePointRepresentatives: false,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+        guard let boundingMapRect = RouteViewportDistanceResolver.boundingMapRect(
+            for: coordinates,
+            isCancelled: { cancellationToken.isCancelled }
+        ) else {
+            return nil
+        }
+        guard !cancellationToken.isCancelled else {
+            return nil
+        }
 
         return PreparedRoute(
             coordinates: coordinates,
+            viewportGeometry: viewportGeometry,
+            displayGeometry: displayGeometry,
+            slopeSegments: slopeData.renderingSegments,
             routeCoordinates: routeCoordinates,
+            boundingMapRect: boundingMapRect,
             startCoordinate: displayEndpointCoordinate(workout.routeCollectionMergeStartCoordinate)
                 ?? coordinates[0],
             endCoordinate: displayEndpointCoordinate(workout.routeCollectionMergeEndCoordinate)
@@ -1475,9 +1828,243 @@ final class WorkoutRouteDetailViewController: UIViewController {
             replayHeartRates: replayHeartRates,
             replayPowers: replayPowers,
             replayTemperatures: replayTemperatures,
+            replayGradeRatios: replayGradeRatios,
+            replaySegmentStartIndices: segmentStartIndices,
             elevationSamples: elevationSamples,
+            globalPeakSamples: globalPeakSamples,
             totalDistanceMeters: totalDistanceMeters
         )
+    }
+
+    private static func preparedSlopeData(
+        coordinates: [CLLocationCoordinate2D],
+        cumulativeDistances: [CLLocationDistance],
+        altitudes: [Double?],
+        sourceDistances: [CLLocationDistance?],
+        sourceGradeRatios: [Double?],
+        segmentStartIndices: Set<Int>,
+        maximumRenderingCoordinateCount: Int,
+        maximumSegmentCount: Int,
+        simplificationToleranceMeters: CLLocationDistance,
+        cancellationToken: RouteSlopePreparationCancellationToken
+    ) -> PreparedSlopeData? {
+        guard coordinates.count == cumulativeDistances.count,
+              coordinates.count == altitudes.count,
+              coordinates.count == sourceDistances.count,
+              coordinates.count == sourceGradeRatios.count,
+              maximumRenderingCoordinateCount > 1 else {
+            return PreparedSlopeData(
+                renderingSegments: [],
+                profileSegments: [],
+                steepestUphill: nil
+            )
+        }
+
+        let segmentStarts = segmentStartIndices
+            .filter { $0 > 0 && $0 < coordinates.count }
+            .sorted()
+        let boundaries = [0] + segmentStarts + [coordinates.count]
+        let allSegmentRanges = zip(boundaries, boundaries.dropFirst())
+            .enumerated()
+            .compactMap { segmentIndex, bounds -> (
+                segmentIndex: Int,
+                lowerBound: Int,
+                upperBound: Int
+            )? in
+                guard bounds.1 - bounds.0 > 1 else {
+                    return nil
+                }
+                return (segmentIndex, bounds.0, bounds.1)
+            }
+        let maximumSlopeSegmentCount = min(
+            max(maximumSegmentCount, 1),
+            max(maximumRenderingCoordinateCount / 2, 1)
+        )
+        var validCandidates: [(
+            segmentIndex: Int,
+            lowerBound: Int,
+            upperBound: Int,
+            totalDistance: CLLocationDistance,
+            gradient: RouteSlopeGradient
+        )] = []
+        validCandidates.reserveCapacity(
+            min(allSegmentRanges.count, maximumSlopeSegmentCount * 2)
+        )
+        var profileSegments: [PreparedSlopeProfileSegment] = []
+        profileSegments.reserveCapacity(allSegmentRanges.count)
+        var steepestUphill: RouteSlopePeak?
+        for segmentRange in allSegmentRanges {
+            if cancellationToken.isCancelled {
+                return nil
+            }
+            let baseDistance = cumulativeDistances[segmentRange.lowerBound]
+            let segmentDistances = cumulativeDistances[
+                segmentRange.lowerBound..<segmentRange.upperBound
+            ].map { $0 - baseDistance }
+            guard let totalDistance = segmentDistances.last,
+                  totalDistance >= 20,
+                  let analysis = RouteSlopeGradient.analyze(
+                      distances: segmentDistances,
+                      altitudes: Array(
+                          altitudes[segmentRange.lowerBound..<segmentRange.upperBound]
+                      ),
+                      sourceGradeRatios: Array(
+                          sourceGradeRatios[
+                              segmentRange.lowerBound..<segmentRange.upperBound
+                          ]
+                      ),
+                      sourceCumulativeDistances: Array(
+                          sourceDistances[
+                              segmentRange.lowerBound..<segmentRange.upperBound
+                          ]
+                      ),
+                      isCancelled: { cancellationToken.isCancelled }
+                  ) else {
+                continue
+            }
+            profileSegments.append(PreparedSlopeProfileSegment(
+                baseDistance: baseDistance,
+                endDistance: baseDistance + totalDistance,
+                analysis: analysis
+            ))
+            if let localPeak = analysis.steepestUphill {
+                let globalPeak = RouteSlopePeak(
+                    distanceMeters: baseDistance + localPeak.distanceMeters,
+                    altitudeMeters: localPeak.altitudeMeters,
+                    gradeRatio: localPeak.gradeRatio
+                )
+                if steepestUphill == nil
+                    || globalPeak.gradeRatio > (steepestUphill?.gradeRatio
+                        ?? -.greatestFiniteMagnitude) {
+                    steepestUphill = globalPeak
+                }
+            }
+            validCandidates.append((
+                segmentIndex: segmentRange.segmentIndex,
+                lowerBound: segmentRange.lowerBound,
+                upperBound: segmentRange.upperBound,
+                totalDistance: totalDistance,
+                gradient: analysis.gradient
+            ))
+        }
+        let selectedCandidates = validCandidates
+            .sorted { lhs, rhs in
+                if lhs.totalDistance != rhs.totalDistance {
+                    return lhs.totalDistance > rhs.totalDistance
+                }
+                return lhs.segmentIndex < rhs.segmentIndex
+            }
+            .prefix(maximumSlopeSegmentCount)
+            .sorted { $0.segmentIndex < $1.segmentIndex }
+        let totalPointCount = selectedCandidates.reduce(0) {
+            $0 + ($1.upperBound - $1.lowerBound)
+        }
+        guard totalPointCount > 1 else {
+            return PreparedSlopeData(
+                renderingSegments: [],
+                profileSegments: profileSegments,
+                steepestUphill: steepestUphill
+            )
+        }
+
+        var result: [PreparedSlopeSegment] = []
+        result.reserveCapacity(selectedCandidates.count)
+        var remainingRenderingBudget = maximumRenderingCoordinateCount
+        var remainingPointCount = totalPointCount
+        for (segmentOffset, segmentRange) in selectedCandidates.enumerated() {
+            if cancellationToken.isCancelled {
+                return nil
+            }
+            let lowerBound = segmentRange.lowerBound
+            let upperBound = segmentRange.upperBound
+            let baseDistance = cumulativeDistances[lowerBound]
+            let segmentDistances = cumulativeDistances[lowerBound..<upperBound].map {
+                $0 - baseDistance
+            }
+
+            let pointCount = upperBound - lowerBound
+            let minimumRemainingCount = max(
+                (selectedCandidates.count - segmentOffset - 1) * 2,
+                0
+            )
+            let proportionalCount = Int(round(
+                Double(remainingRenderingBudget) * Double(pointCount)
+                    / Double(max(remainingPointCount, 1))
+            ))
+            let segmentMaximumCount = min(
+                pointCount,
+                max(
+                    2,
+                    min(
+                        proportionalCount,
+                        remainingRenderingBudget - minimumRemainingCount
+                    )
+                )
+            )
+            remainingRenderingBudget -= segmentMaximumCount
+            remainingPointCount -= pointCount
+            guard let geometry = RouteSlopeGeometryPreparer.prepare(
+                coordinates: Array(coordinates[lowerBound..<upperBound]),
+                cumulativeDistances: segmentDistances,
+                toleranceMeters: simplificationToleranceMeters,
+                maximumCount: segmentMaximumCount,
+                cancellationToken: cancellationToken
+            ) else {
+                if cancellationToken.isCancelled {
+                    return nil
+                }
+                continue
+            }
+            result.append(PreparedSlopeSegment(
+                segmentIndex: segmentRange.segmentIndex,
+                coordinates: geometry.coordinates,
+                sourceLocations: geometry.sourceLocations,
+                gradient: segmentRange.gradient,
+                totalDistance: segmentRange.totalDistance
+            ))
+        }
+        guard !cancellationToken.isCancelled else {
+            return nil
+        }
+        return PreparedSlopeData(
+            renderingSegments: result,
+            profileSegments: profileSegments,
+            steepestUphill: steepestUphill
+        )
+    }
+
+    private static func replayGradeRatios(
+        for distances: [CLLocationDistance],
+        profileSegments: [PreparedSlopeProfileSegment],
+        cancellationToken: RouteSlopePreparationCancellationToken
+    ) -> [Double?]? {
+        var gradeRatios = Array<Double?>(repeating: nil, count: distances.count)
+        var profileIndex = 0
+        let tolerance = 0.000_001
+        for index in distances.indices {
+            if index.isMultiple(of: 256), cancellationToken.isCancelled {
+                return nil
+            }
+            let distance = distances[index]
+            while profileIndex < profileSegments.count,
+                  distance > profileSegments[profileIndex].endDistance + tolerance {
+                profileIndex += 1
+            }
+            guard profileIndex < profileSegments.count else {
+                break
+            }
+            let profile = profileSegments[profileIndex]
+            guard distance >= profile.baseDistance - tolerance,
+                  distance <= profile.endDistance + tolerance else {
+                continue
+            }
+            let localDistance = min(
+                max(distance - profile.baseDistance, 0),
+                profile.endDistance - profile.baseDistance
+            )
+            gradeRatios[index] = profile.analysis.gradeRatio(at: localDistance)
+        }
+        return cancellationToken.isCancelled ? nil : gradeRatios
     }
 
     private func applyPreparedRoute(_ preparedRoute: PreparedRoute) {
@@ -1487,11 +2074,88 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         configureReplayRoute(with: preparedRoute)
 
-        let coordinates = preparedRoute.coordinates
-        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
-        routePolyline = polyline
+        routeBoundingMapRect = preparedRoute.boundingMapRect
+        let displayGeometry = preparedRoute.displayGeometry
+        routeDisplayPolylines = RouteViewportDistanceResolver.displayPolylines(
+            coordinates: displayGeometry.coordinates,
+            segmentStartIndices: displayGeometry.segmentStartIndices
+        )
+        configureRouteDisplayOverlayCaches()
+        routeSlopeGradient = nil
+        routeSlopePolylines.removeAll(keepingCapacity: true)
+        routeSlopeUncoveredMultiPolyline = nil
+        routeSlopeGradients.removeAll(keepingCapacity: true)
+        routeSlopeDirectionPolylines.removeAll(keepingCapacity: true)
+        routeSlopeDirectionPolylineIdentifiers.removeAll(keepingCapacity: true)
+        // Keep MapKit renderer count bounded: preparation already limits the
+        // selected slope segments, and each selected segment receives at least
+        // one chunk from this fixed budget.
+        var remainingChunkCount = maximumSlopeOverlayChunkCount
+        var renderedSlopeSegmentIndices = Set<Int>()
+        for (index, slopeSegment) in preparedRoute.slopeSegments.enumerated() {
+            guard remainingChunkCount > 0 else {
+                break
+            }
+            let remainingSegmentCount = preparedRoute.slopeSegments.count - index
+            let segmentChunkLimit = max(
+                1,
+                remainingChunkCount / max(remainingSegmentCount, 1)
+            )
+            let chunks = RouteSlopeOverlayFactory.makeChunks(
+                coordinates: slopeSegment.coordinates,
+                sourceLocations: slopeSegment.sourceLocations,
+                gradient: slopeSegment.gradient,
+                totalDistance: slopeSegment.totalDistance,
+                preferredChunkDistance: preferredSlopeOverlayChunkDistance,
+                maximumChunkCount: segmentChunkLimit
+            )
+            guard !chunks.isEmpty else {
+                continue
+            }
+            routeSlopeGradient = routeSlopeGradient ?? slopeSegment.gradient
+            renderedSlopeSegmentIndices.insert(slopeSegment.segmentIndex)
+            for chunk in chunks {
+                routeSlopePolylines.append(chunk.polyline)
+                routeSlopeGradients[ObjectIdentifier(chunk.polyline)] = chunk.gradient
+            }
+            remainingChunkCount -= chunks.count
+            routeSlopeDirectionPolylines.append(MKPolyline(
+                coordinates: slopeSegment.coordinates,
+                count: slopeSegment.coordinates.count
+            ))
+        }
+        let displaySegmentCount = displayGeometry.segmentStartIndices.count + 1
+        let displaySourceSegmentIndices = displayGeometry.sourceSegmentIndices.count
+                == displaySegmentCount
+            ? displayGeometry.sourceSegmentIndices
+            : Array(0..<displaySegmentCount)
+        let uncoveredDisplaySegmentIndices = Set(
+            displaySourceSegmentIndices.enumerated().compactMap {
+                renderedSlopeSegmentIndices.contains($0.element) ? nil : $0.offset
+            }
+        )
+        let uncoveredPolylines = RouteViewportDistanceResolver.displayPolylines(
+            coordinates: displayGeometry.coordinates,
+            segmentStartIndices: displayGeometry.segmentStartIndices,
+            includedSegmentIndices: uncoveredDisplaySegmentIndices
+        )
+        if !uncoveredPolylines.isEmpty {
+            routeSlopeUncoveredMultiPolyline = MKMultiPolyline(uncoveredPolylines)
+        }
+        routeSlopeDirectionPolylineIdentifiers = Set(
+            routeSlopeDirectionPolylines.map(ObjectIdentifier.init)
+        )
+        if routeSlopePolylines.isEmpty {
+            routeSlopeGradient = nil
+            routeSlopeDirectionPolylines.removeAll(keepingCapacity: true)
+            routeSlopeDirectionPolylineIdentifiers.removeAll(keepingCapacity: true)
+            routeSlopeUncoveredMultiPolyline = nil
+        }
+        isRouteSlopeVisible = false
+        updateRouteSlopeVisibilityButtonAppearance()
         hasFittedRoute = false
-        mapView.addOverlay(polyline, level: .aboveLabels)
+        mapView.addOverlays(routeDisplayPolylines, level: .aboveLabels)
+        addRouteSlopeDirectionOverlayIfNeeded()
 
         mapView.addAnnotations([
             RouteEndpointAnnotation(coordinate: preparedRoute.startCoordinate, kind: .start),
@@ -1510,13 +2174,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func fitRouteIfNeeded() {
-        guard !hasFittedRoute, let routePolyline else {
+        guard !hasFittedRoute, let routeBoundingMapRect else {
             return
         }
 
         hasFittedRoute = true
         mapView.setVisibleMapRect(
-            routePolyline.boundingMapRect,
+            routeBoundingMapRect,
             edgePadding: UIEdgeInsets(
                 top: 96,
                 left: 32,
@@ -1538,25 +2202,171 @@ final class WorkoutRouteDetailViewController: UIViewController {
             && PhotoLibraryAuthorizationManager.authorizationState == .authorized
     }
 
-    var mapRouteStrokeColor: UIColor {
+    private var mapRouteStrokeColor: UIColor {
         selectedMapStyle == .dark ? .white : .black
     }
 
-    var mapRouteDirectionIndicatorColor: UIColor {
-        .black
-    }
-
-    private func refreshRouteOverlayStrokeColor() {
-        guard let routePolyline,
-              let renderer = mapView.renderer(for: routePolyline) as? MKPolylineRenderer else {
+    private func configureRouteDisplayOverlayCaches() {
+        routeDisplayIndicatorPolylines.removeAll(keepingCapacity: true)
+        routeDisplayIndicatorBudgets.removeAll(keepingCapacity: true)
+        guard !routeDisplayPolylines.isEmpty else {
             return
         }
 
-        renderer.strokeColor = mapRouteStrokeColor
-        if let directionRenderer = renderer as? RouteDirectionPolylineRenderer {
-            directionRenderer.directionIndicatorColor = mapRouteDirectionIndicatorColor
+        let maximumPolylineCount = 80
+        let selectedIndices: [Int]
+        if routeDisplayPolylines.count <= maximumPolylineCount {
+            selectedIndices = Array(routeDisplayPolylines.indices)
+        } else {
+            selectedIndices = (0..<maximumPolylineCount).map { offset in
+                Int(round(
+                    Double(routeDisplayPolylines.count - 1) * Double(offset)
+                        / Double(maximumPolylineCount - 1)
+                ))
+            }
         }
-        renderer.setNeedsDisplay()
+        let perPolylineBudget = max(80 / max(selectedIndices.count, 1), 1)
+        routeDisplayIndicatorPolylines.reserveCapacity(selectedIndices.count)
+        routeDisplayIndicatorBudgets.reserveCapacity(selectedIndices.count)
+        for index in selectedIndices {
+            let polyline = routeDisplayPolylines[index]
+            routeDisplayIndicatorPolylines.append(polyline)
+            routeDisplayIndicatorBudgets[ObjectIdentifier(polyline)] = perPolylineBudget
+        }
+    }
+
+    func routeOverlayRenderer(for overlay: MKOverlay) -> MKOverlayRenderer {
+        if let multiPolyline = overlay as? MKMultiPolyline,
+           multiPolyline === routeSlopeUncoveredMultiPolyline {
+            let renderer = MKMultiPolylineRenderer(multiPolyline: multiPolyline)
+            renderer.strokeColor = UIColor.systemGray.withAlphaComponent(0.58)
+            renderer.lineWidth = slopeRouteLineWidth
+            renderer.lineJoin = .round
+            renderer.lineCap = .round
+            return renderer
+        }
+
+        guard let polyline = overlay as? MKPolyline else {
+            return MKOverlayRenderer(overlay: overlay)
+        }
+        return routeOverlayRenderer(for: polyline)
+    }
+
+    func routeOverlayRenderer(for polyline: MKPolyline) -> MKOverlayRenderer {
+        let polylineIdentifier = ObjectIdentifier(polyline)
+        if routeSlopeDirectionPolylineIdentifiers.contains(polylineIdentifier) {
+            let renderer = makeRouteDirectionRenderer(for: polyline)
+            renderer.drawsRouteStroke = false
+            renderer.strokeColor = .clear
+            renderer.directionIndicatorColor = .black
+            renderer.directionIndicatorSpacing = 180
+            renderer.maximumIndicatorCount = min(
+                40,
+                max(4, 48 / max(routeSlopeDirectionPolylines.count, 1))
+            )
+            return renderer
+        }
+
+        if let routeSlopeGradient = routeSlopeGradients[polylineIdentifier] {
+            return AppMapStyle.makeSlopeRenderer(
+                for: polyline,
+                gradient: routeSlopeGradient,
+                lineWidth: slopeRouteLineWidth
+            )
+        }
+
+        let renderer = makeRouteDirectionRenderer(for: polyline)
+        renderer.strokeColor = mapRouteStrokeColor
+        renderer.directionIndicatorColor = .black
+        renderer.maximumIndicatorCount = isMapRegionChanging
+            ? 0
+            : (routeDisplayIndicatorBudgets[polylineIdentifier] ?? 0)
+        return renderer
+    }
+
+    private func makeRouteDirectionRenderer(
+        for polyline: MKPolyline
+    ) -> RouteDirectionPolylineRenderer {
+        let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
+        renderer.lineWidth = 1.5
+        renderer.directionIndicatorLength = 14.5
+        renderer.directionIndicatorWidth = 17
+        renderer.directionIndicatorStrokeWidth = 3.4
+        renderer.lineJoin = .round
+        renderer.lineCap = .round
+        return renderer
+    }
+
+    private func replaceRouteOverlaysForSlopeVisibility() {
+        guard routeBoundingMapRect != nil else {
+            return
+        }
+
+        let visibleOverlayIdentifiers = Set(
+            mapView.overlays.map { ObjectIdentifier($0 as AnyObject) }
+        )
+        let visibleDirectionPolylines = routeSlopeDirectionPolylines.filter { directionPolyline in
+            visibleOverlayIdentifiers.contains(ObjectIdentifier(directionPolyline))
+        }
+        if !visibleDirectionPolylines.isEmpty {
+            mapView.removeOverlays(visibleDirectionPolylines)
+        }
+        let visibleRoutePolylines = routeDisplayPolylines.filter { routePolyline in
+            visibleOverlayIdentifiers.contains(ObjectIdentifier(routePolyline))
+        }
+        if !visibleRoutePolylines.isEmpty {
+            mapView.removeOverlays(visibleRoutePolylines)
+        }
+        let visibleSlopePolylines = routeSlopePolylines.filter { slopePolyline in
+            visibleOverlayIdentifiers.contains(ObjectIdentifier(slopePolyline))
+        }
+        if !visibleSlopePolylines.isEmpty {
+            mapView.removeOverlays(visibleSlopePolylines)
+        }
+        if let routeSlopeUncoveredMultiPolyline,
+           visibleOverlayIdentifiers.contains(ObjectIdentifier(routeSlopeUncoveredMultiPolyline)) {
+            mapView.removeOverlay(routeSlopeUncoveredMultiPolyline)
+        }
+        if isRouteSlopeVisible,
+           !routeSlopePolylines.isEmpty {
+            if let routeSlopeUncoveredMultiPolyline {
+                mapView.addOverlay(routeSlopeUncoveredMultiPolyline, level: .aboveLabels)
+            }
+            mapView.addOverlays(routeSlopePolylines, level: .aboveLabels)
+            addRouteSlopeDirectionOverlayIfNeeded()
+        } else {
+            mapView.addOverlays(routeDisplayPolylines, level: .aboveLabels)
+        }
+    }
+
+    private func addRouteSlopeDirectionOverlayIfNeeded() {
+        guard isRouteSlopeVisible,
+              !areSlopeDirectionOverlaysSuspendedForMapChange,
+              !isMapRegionChanging else {
+            return
+        }
+        let visibleOverlayIdentifiers = Set(
+            mapView.overlays.map { ObjectIdentifier($0 as AnyObject) }
+        )
+        let missingDirectionPolylines = routeSlopeDirectionPolylines.filter { directionPolyline in
+            !visibleOverlayIdentifiers.contains(ObjectIdentifier(directionPolyline))
+        }
+        if !missingDirectionPolylines.isEmpty {
+            mapView.addOverlays(missingDirectionPolylines, level: .aboveLabels)
+        }
+    }
+
+    private func refreshRouteOverlayStrokeColor() {
+        if isRouteSlopeVisible {
+            return
+        }
+
+        for routePolyline in routeDisplayPolylines {
+            if let renderer = mapView.renderer(for: routePolyline) as? MKPolylineRenderer {
+                renderer.strokeColor = mapRouteStrokeColor
+                renderer.setNeedsDisplay()
+            }
+        }
     }
 
     private func loadRouteMedia() {
@@ -1604,7 +2414,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return
         }
 
-        guard routePolyline != nil,
+        guard routeBoundingMapRect != nil,
               canDisplayRouteMediaAnnotations,
               !hasDisplayedRouteMediaAnnotations,
               !routeMediaItems.isEmpty else {
@@ -1710,13 +2520,18 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
         let height = panelHeight(for: detent)
         primaryContentTopConstraint?.update(offset: primaryContentTopOffset(for: height))
+        if animated, detent == .medium {
+            // Resolve the profile against the target sheet inset before the
+            // custom content animation starts, rather than jumping at its end.
+            updateReplayRulerVisibleRange()
+        }
 
         let changes = {
             self.detailStackView.alpha = 1
             self.updatePrimaryContentScale(for: height)
             self.panelSheetViewController.view.layoutIfNeeded()
-            self.routeMediaVisibilityButtonBottomConstraint?.update(
-                inset: height + self.routeMediaVisibilityButtonPanelSpacing
+            self.mapControlStackViewBottomConstraint?.update(
+                inset: height + self.mapControlPanelSpacing
             )
             self.view.layoutIfNeeded()
         }
@@ -1741,8 +2556,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func handlePanelDetentTransitionCompleted(for detent: PanelDetent) {
-        guard selectedPanelDetent == detent,
-              detent == .medium,
+        guard selectedPanelDetent == detent else {
+            return
+        }
+        updateReplayRulerVisibleRange()
+
+        guard detent == .medium,
               panelCaloriesKilocalories != nil else {
             return
         }
@@ -1754,6 +2573,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
     @objc private func handleReplayProgressChanged(_ sender: WorkoutRouteReplayRulerView) {
         guard let replayState = replayState(for: sender.progress) else {
             return
+        }
+        if let totalDistance = replayDistances.last,
+           totalDistance.isFinite,
+           totalDistance > 0 {
+            lastFocusedRouteDistance = CLLocationDistance(sender.progress) * totalDistance
         }
 
         let statusText = replayStatusText(for: replayState)
@@ -1792,14 +2616,175 @@ final class WorkoutRouteDetailViewController: UIViewController {
         replayHeartRates = preparedRoute.replayHeartRates
         replayPowers = preparedRoute.replayPowers
         replayTemperatures = preparedRoute.replayTemperatures
+        replayGradeRatios = preparedRoute.replayGradeRatios
+        replaySegmentStartIndices = preparedRoute.replaySegmentStartIndices
+        replayViewportGeometry = preparedRoute.viewportGeometry
 
+        let replayDistance = preparedRoute.replayDistances.last
+            ?? preparedRoute.totalDistanceMeters
         replayRulerView.configure(
-            totalDistanceText: replayTotalDistanceText(totalMeters: preparedRoute.totalDistanceMeters),
-            elevationSamples: preparedRoute.elevationSamples
+            totalDistanceText: replayTotalDistanceText(totalMeters: replayDistance),
+            totalDistanceMeters: replayDistance,
+            elevationSamples: preparedRoute.elevationSamples,
+            globalPeakSamples: preparedRoute.globalPeakSamples,
+            segmentBoundaryDistanceRanges: RouteViewportDistanceResolver
+                .segmentBoundaryDistanceRanges(
+                    cumulativeDistances: preparedRoute.replayDistances,
+                    segmentStartIndices: preparedRoute.replaySegmentStartIndices
+                )
         )
     }
 
-    private static func cumulativeDistances(for coordinates: [CLLocationCoordinate2D]) -> [CLLocationDistance] {
+    func updateReplayRulerVisibleRange() {
+        guard selectedPanelDetent == .medium,
+              replayCoordinates.count == replayDistances.count,
+              let totalDistance = replayDistances.last,
+              totalDistance > 0,
+              let replayViewportGeometry else {
+            return
+        }
+
+        let annotationDistance: CLLocationDistance? = replayAnnotation == nil
+            ? nil
+            : CLLocationDistance(replayRulerView.progress) * totalDistance
+        let preferredDistance = lastFocusedRouteDistance ?? annotationDistance
+        let visibleContainerBounds = mapContainerView.bounds.inset(
+            by: UIEdgeInsets(
+                top: 96,
+                left: 0,
+                bottom: panelHeight(for: selectedPanelDetent),
+                right: 0
+            )
+        )
+        let visibleMapBounds = mapContainerView.convert(
+            visibleContainerBounds,
+            to: mapView
+        )
+        guard let focusedRange = RouteViewportDistanceResolver.focusedVisibleRange(
+            coordinates: replayViewportGeometry.coordinates,
+            mapPoints: replayViewportGeometry.mapPoints,
+            cumulativeDistances: replayViewportGeometry.cumulativeDistances,
+            mapView: mapView,
+            visibleBounds: visibleMapBounds,
+            segmentStartIndices: replayViewportGeometry.segmentStartIndices,
+            segmentDistanceRanges: replayViewportGeometry.segmentDistanceRanges,
+            segmentBoundingMapRects: replayViewportGeometry.segmentBoundingMapRects,
+            preferredDistance: preferredDistance
+        ) else {
+            return
+        }
+
+        let focusedDistanceRange = focusedRange.visibleDistanceRange
+        if let preferredDistance,
+           focusedDistanceRange.contains(preferredDistance) {
+            lastFocusedRouteDistance = preferredDistance
+        } else {
+            lastFocusedRouteDistance = focusedDistanceRange.lowerBound
+                + (focusedDistanceRange.upperBound - focusedDistanceRange.lowerBound) / 2
+        }
+
+        replayRulerView.setVisibleDistanceRange(
+            replayRulerRangeWithContext(
+                focusedRange.visibleDistanceRange,
+                contextRange: focusedRange.contextDistanceRange
+            )
+        )
+    }
+
+    func handleMapRegionWillChangeForReplayRuler() {
+        isMapRegionChanging = true
+        replayViewportUpdateWorkItem?.cancel()
+        replayViewportUpdateWorkItem = nil
+        for routePolyline in routeDisplayIndicatorPolylines {
+            (mapView.renderer(for: routePolyline) as? RouteDirectionPolylineRenderer)?
+                .maximumIndicatorCount = 0
+        }
+        guard isRouteSlopeVisible else {
+            return
+        }
+        let visibleOverlayIdentifiers = Set(
+            mapView.overlays.map { ObjectIdentifier($0 as AnyObject) }
+        )
+        let visibleDirectionPolylines = routeSlopeDirectionPolylines.filter {
+            directionPolyline in
+            visibleOverlayIdentifiers.contains(ObjectIdentifier(directionPolyline))
+        }
+        if !visibleDirectionPolylines.isEmpty {
+            areSlopeDirectionOverlaysSuspendedForMapChange = true
+            mapView.removeOverlays(visibleDirectionPolylines)
+        }
+    }
+
+    func handleMapRegionChangeForReplayRuler() {
+        replayViewportUpdateWorkItem?.cancel()
+        guard !hasPreparedForPermanentDismissal else {
+            replayViewportUpdateWorkItem = nil
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  !self.hasPreparedForPermanentDismissal else {
+                return
+            }
+            self.replayViewportUpdateWorkItem = nil
+            self.isMapRegionChanging = false
+            self.restoreRouteDirectionIndicatorsAfterMapChange()
+            if self.selectedPanelDetent == .medium {
+                self.updateReplayRulerVisibleRange()
+            }
+        }
+        replayViewportUpdateWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.08,
+            execute: workItem
+        )
+    }
+
+    private func restoreRouteDirectionIndicatorsAfterMapChange() {
+        if !isRouteSlopeVisible {
+            for routePolyline in routeDisplayIndicatorPolylines {
+                guard let renderer = mapView.renderer(for: routePolyline)
+                        as? RouteDirectionPolylineRenderer,
+                      let indicatorBudget = routeDisplayIndicatorBudgets[
+                          ObjectIdentifier(routePolyline)
+                      ],
+                      indicatorBudget > 0 else {
+                    continue
+                }
+                if renderer.maximumIndicatorCount != indicatorBudget {
+                    renderer.maximumIndicatorCount = indicatorBudget
+                    renderer.setNeedsDisplay()
+                }
+            }
+        }
+        areSlopeDirectionOverlaysSuspendedForMapChange = false
+        if isRouteSlopeVisible {
+            addRouteSlopeDirectionOverlayIfNeeded()
+        }
+    }
+
+    private func replayRulerRangeWithContext(
+        _ range: ClosedRange<CLLocationDistance>,
+        contextRange: ClosedRange<CLLocationDistance>
+    ) -> ClosedRange<CLLocationDistance> {
+        let span = range.upperBound - range.lowerBound
+        let contextSpan = contextRange.upperBound - contextRange.lowerBound
+        guard span < contextSpan * 0.9 else {
+            return contextRange
+        }
+
+        let contextDistance = max(span * 0.04, min(contextSpan * 0.001, 20))
+        let lowerBound = max(range.lowerBound - contextDistance, contextRange.lowerBound)
+        let upperBound = min(range.upperBound + contextDistance, contextRange.upperBound)
+        return lowerBound...upperBound
+    }
+
+    private static func cumulativeDistances(
+        for coordinates: [CLLocationCoordinate2D],
+        segmentStartIndices: Set<Int>,
+        cancellationToken: RouteSlopePreparationCancellationToken
+    ) -> [CLLocationDistance]? {
         guard let firstCoordinate = coordinates.first else {
             return []
         }
@@ -1810,13 +2795,24 @@ final class WorkoutRouteDetailViewController: UIViewController {
         var totalDistance: CLLocationDistance = 0
         var previousLocation = CLLocation(latitude: firstCoordinate.latitude, longitude: firstCoordinate.longitude)
 
-        for coordinate in coordinates.dropFirst() {
+        for (offset, coordinate) in coordinates.dropFirst().enumerated() {
+            if offset.isMultiple(of: 256), cancellationToken.isCancelled {
+                return nil
+            }
             let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            totalDistance += location.distance(from: previousLocation)
+            let coordinateIndex = offset + 1
+            if segmentStartIndices.contains(coordinateIndex) {
+                totalDistance += RouteViewportDistanceResolver.segmentBoundaryDistance
+            } else {
+                totalDistance += location.distance(from: previousLocation)
+            }
             distances.append(totalDistance)
             previousLocation = location
         }
 
+        guard !cancellationToken.isCancelled else {
+            return nil
+        }
         return distances
     }
 
@@ -1832,22 +2828,76 @@ final class WorkoutRouteDetailViewController: UIViewController {
         guard replayCoordinates.count == replayDistances.count,
               let totalDistance = replayDistances.last,
               totalDistance > 0 else {
-            guard let coordinate = replayCoordinates.first else {
-                return nil
-            }
-            return ReplayState(
-                coordinate: coordinate,
-                distanceMeters: 0,
-                altitudeMeters: replayAltitude(at: 0),
-                heartRateBeatsPerMinute: replayHeartRate(at: 0),
-                powerWatts: replayPower(at: 0),
-                temperatureCelsius: replayTemperature(at: 0),
-                isFacingLeft: replayFacingLeft(at: 0)
-            )
+            return replayState(at: 0)
         }
 
-        let targetDistance = CLLocationDistance(progress) * totalDistance
-        let index = nearestReplayCoordinateIndex(for: targetDistance)
+        let targetDistance = min(max(CLLocationDistance(progress), 0), 1) * totalDistance
+        let upperIndex = replayCoordinateIndex(atOrAfter: targetDistance)
+        guard upperIndex > 0 else {
+            return replayState(at: 0)
+        }
+        guard upperIndex < replayCoordinates.count else {
+            return replayState(at: replayCoordinates.count - 1)
+        }
+        let lowerIndex = upperIndex - 1
+        if replaySegmentStartIndices.contains(upperIndex) {
+            let lowerDelta = targetDistance - replayDistances[lowerIndex]
+            let upperDelta = replayDistances[upperIndex] - targetDistance
+            return replayState(at: lowerDelta <= upperDelta ? lowerIndex : upperIndex)
+        }
+
+        let distanceSpan = replayDistances[upperIndex] - replayDistances[lowerIndex]
+        guard distanceSpan > 0 else {
+            return replayState(at: upperIndex)
+        }
+        let interpolation = min(
+            max((targetDistance - replayDistances[lowerIndex]) / distanceSpan, 0),
+            1
+        )
+        let lowerCoordinate = replayCoordinates[lowerIndex]
+        let upperCoordinate = replayCoordinates[upperIndex]
+        return ReplayState(
+            coordinate: CLLocationCoordinate2D(
+                latitude: lowerCoordinate.latitude
+                    + (upperCoordinate.latitude - lowerCoordinate.latitude) * interpolation,
+                longitude: lowerCoordinate.longitude
+                    + (upperCoordinate.longitude - lowerCoordinate.longitude) * interpolation
+            ),
+            distanceMeters: targetDistance,
+            altitudeMeters: interpolatedReplayValue(
+                replayAltitude(at: lowerIndex),
+                replayAltitude(at: upperIndex),
+                progress: interpolation
+            ),
+            heartRateBeatsPerMinute: interpolatedReplayValue(
+                replayHeartRate(at: lowerIndex),
+                replayHeartRate(at: upperIndex),
+                progress: interpolation
+            ),
+            powerWatts: interpolatedReplayValue(
+                replayPower(at: lowerIndex),
+                replayPower(at: upperIndex),
+                progress: interpolation
+            ),
+            temperatureCelsius: interpolatedReplayValue(
+                replayTemperature(at: lowerIndex),
+                replayTemperature(at: upperIndex),
+                progress: interpolation
+            ),
+            gradeRatio: interpolatedReplayValue(
+                replayGradeRatio(at: lowerIndex),
+                replayGradeRatio(at: upperIndex),
+                progress: interpolation
+            ),
+            isFacingLeft: upperCoordinate.longitude - lowerCoordinate.longitude < 0
+        )
+    }
+
+    private func replayState(at index: Int) -> ReplayState? {
+        guard replayCoordinates.indices.contains(index),
+              replayDistances.indices.contains(index) else {
+            return nil
+        }
         return ReplayState(
             coordinate: replayCoordinates[index],
             distanceMeters: replayDistances[index],
@@ -1855,13 +2905,16 @@ final class WorkoutRouteDetailViewController: UIViewController {
             heartRateBeatsPerMinute: replayHeartRate(at: index),
             powerWatts: replayPower(at: index),
             temperatureCelsius: replayTemperature(at: index),
+            gradeRatio: replayGradeRatio(at: index),
             isFacingLeft: replayFacingLeft(at: index)
         )
     }
 
-    private func nearestReplayCoordinateIndex(for targetDistance: CLLocationDistance) -> Int {
+    private func replayCoordinateIndex(
+        atOrAfter targetDistance: CLLocationDistance
+    ) -> Int {
         var lowerBound = 0
-        var upperBound = replayDistances.count - 1
+        var upperBound = replayDistances.count
 
         while lowerBound < upperBound {
             let middle = (lowerBound + upperBound) / 2
@@ -1871,15 +2924,31 @@ final class WorkoutRouteDetailViewController: UIViewController {
                 upperBound = middle
             }
         }
+        return lowerBound
+    }
 
-        guard lowerBound > 0 else {
-            return 0
+    private func replayGradeRatio(at index: Int) -> Double? {
+        guard replayGradeRatios.indices.contains(index) else {
+            return nil
         }
+        return replayGradeRatios[index]
+    }
 
-        let previousIndex = lowerBound - 1
-        let previousDelta = abs(replayDistances[previousIndex] - targetDistance)
-        let currentDelta = abs(replayDistances[lowerBound] - targetDistance)
-        return previousDelta <= currentDelta ? previousIndex : lowerBound
+    private func interpolatedReplayValue(
+        _ lowerValue: Double?,
+        _ upperValue: Double?,
+        progress: Double
+    ) -> Double? {
+        switch (lowerValue, upperValue) {
+        case let (lowerValue?, upperValue?):
+            return lowerValue + (upperValue - lowerValue) * progress
+        case let (lowerValue?, nil):
+            return progress < 0.5 ? lowerValue : nil
+        case let (nil, upperValue?):
+            return progress < 0.5 ? nil : upperValue
+        case (nil, nil):
+            return nil
+        }
     }
 
     private func removeReplayAnnotation() {
@@ -1924,8 +2993,12 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return true
         }
 
-        let previousIndex = max(index - 1, 0)
-        let nextIndex = min(index + 1, replayCoordinates.count - 1)
+        let previousIndex = replaySegmentStartIndices.contains(index)
+            ? index
+            : max(index - 1, 0)
+        let nextIndex = replaySegmentStartIndices.contains(index + 1)
+            ? index
+            : min(index + 1, replayCoordinates.count - 1)
         guard previousIndex != nextIndex else {
             return true
         }
@@ -1936,119 +3009,277 @@ final class WorkoutRouteDetailViewController: UIViewController {
         return longitudeDelta < 0
     }
 
-    private func routeElevationSamples() -> [RouteElevationSample] {
-        Self.routeElevationSamples(
-            distances: replayDistances,
-            altitudes: replayAltitudes,
-            heartRates: replayHeartRates,
-            powers: replayPowers,
-            temperatures: replayTemperatures,
-            maximumCount: maximumElevationSampleCount
-        )
-    }
-
-    private static func routeElevationSamples(
-        distances: [CLLocationDistance],
-        routeCoordinates: [RouteCoordinate],
-        maximumCount: Int
-    ) -> [RouteElevationSample] {
-        guard distances.count == routeCoordinates.count else {
-            return []
-        }
-
-        return routeElevationSamples(
-            distances: distances,
-            altitudes: routeCoordinates.map(\.altitudeMeters),
-            heartRates: routeCoordinates.map(\.heartRateBeatsPerMinute),
-            powers: routeCoordinates.map(\.powerWatts),
-            temperatures: routeCoordinates.map(\.temperatureCelsius),
-            maximumCount: maximumCount
-        )
-    }
-
     private static func routeElevationSamples(
         distances: [CLLocationDistance],
         altitudes: [Double?],
-        heartRates: [Double?] = [],
-        powers: [Double?] = [],
-        temperatures: [Double?] = [],
-        maximumCount: Int
-    ) -> [RouteElevationSample] {
-        guard distances.count == altitudes.count else {
-            return []
+        heartRates: [Double?],
+        powers: [Double?],
+        temperatures: [Double?],
+        seriesBreakIndices: Set<Int>,
+        maximumCount: Int,
+        isCancelled: @Sendable () -> Bool
+    ) -> [RouteElevationSample]? {
+        guard distances.count == altitudes.count,
+              !isCancelled() else {
+            return nil
         }
 
         let hasHeartRates = heartRates.count == distances.count
         let hasPowers = powers.count == distances.count
         let hasTemperatures = temperatures.count == distances.count
-        let samples = altitudes.enumerated().compactMap { index, altitude -> RouteElevationSample? in
-            guard let altitude else {
+        var samples: [RouteElevationSample] = []
+        samples.reserveCapacity(min(altitudes.count, maximumCount * 2))
+        var seriesIdentifier = 0
+        var previousValidIndex: Int?
+        for index in altitudes.indices {
+            if index.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            guard let altitude = altitudes[index], altitude.isFinite else {
+                continue
+            }
+            if let previousValidIndex,
+               index != previousValidIndex + 1 || seriesBreakIndices.contains(index) {
+                seriesIdentifier += 1
+            }
+            samples.append(RouteElevationSample(
+                distanceMeters: distances[index],
+                altitudeMeters: altitude,
+                heartRateBeatsPerMinute: hasHeartRates ? heartRates[index] : nil,
+                powerWatts: hasPowers ? powers[index] : nil,
+                temperatureCelsius: hasTemperatures ? temperatures[index] : nil,
+                seriesIdentifier: seriesIdentifier
+            ))
+            previousValidIndex = index
+        }
+
+        return RouteElevationSampler.downsample(
+            samples,
+            maximumCount: maximumCount,
+            isCancelled: isCancelled
+        )
+    }
+
+    private static func routeElevationGlobalPeakSamples(
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        heartRates: [Double?],
+        powers: [Double?],
+        temperatures: [Double?],
+        steepestUphill: RouteSlopePeak?,
+        seriesBreakIndices: Set<Int>,
+        elevationSamples: [RouteElevationSample],
+        isCancelled: @Sendable () -> Bool
+    ) -> ElevationProfileView.PeakSamples? {
+        guard distances.count == altitudes.count,
+              heartRates.count == distances.count,
+              powers.count == distances.count,
+              temperatures.count == distances.count,
+              !isCancelled() else {
+            return nil
+        }
+
+        let altitudePeak = elevationSamples.max(by: {
+            $0.altitudeMeters < $1.altitudeMeters
+        })
+        let heartRatePeakIndex = metricPeakIndex(
+            in: heartRates,
+            requiresPositiveValue: true
+        )
+        let powerPeakIndex = metricPeakIndex(
+            in: powers,
+            requiresPositiveValue: true
+        )
+        let temperaturePeakIndex = metricPeakIndex(
+            in: temperatures,
+            requiresPositiveValue: false
+        )
+
+        func peakSample(at index: Int?) -> RouteElevationSample? {
+            guard let index else {
+                return nil
+            }
+            if isCancelled() {
+                return nil
+            }
+            guard let altitude = interpolatedPeakAltitude(
+                at: index,
+                distances: distances,
+                altitudes: altitudes,
+                seriesBreakIndices: seriesBreakIndices
+            ) else {
                 return nil
             }
             return RouteElevationSample(
                 distanceMeters: distances[index],
                 altitudeMeters: altitude,
-                heartRateBeatsPerMinute: hasHeartRates ? heartRates[index] : nil,
-                powerWatts: hasPowers ? powers[index] : nil,
-                temperatureCelsius: hasTemperatures ? temperatures[index] : nil
+                heartRateBeatsPerMinute: heartRates[index],
+                powerWatts: powers[index],
+                temperatureCelsius: temperatures[index]
             )
         }
-
-        return downsampleElevationSamples(samples, maximumCount: maximumCount)
+        let slopePeak: RouteElevationSample?
+        if let steepestUphill,
+           steepestUphill.distanceMeters.isFinite,
+           steepestUphill.gradeRatio.isFinite,
+           steepestUphill.gradeRatio > 0,
+           let altitude = interpolatedPeakAltitude(
+               atDistance: steepestUphill.distanceMeters,
+               distances: distances,
+               altitudes: altitudes,
+               seriesBreakIndices: seriesBreakIndices
+           ) ?? steepestUphill.altitudeMeters {
+            slopePeak = RouteElevationSample(
+                distanceMeters: steepestUphill.distanceMeters,
+                altitudeMeters: altitude
+            )
+        } else {
+            slopePeak = nil
+        }
+        let heartRatePeak = peakSample(at: heartRatePeakIndex)
+        let powerPeak = peakSample(at: powerPeakIndex)
+        let temperaturePeak = peakSample(at: temperaturePeakIndex)
+        guard !isCancelled() else {
+            return nil
+        }
+        return ElevationProfileView.PeakSamples(
+            altitude: altitudePeak,
+            slope: slopePeak,
+            heartRate: heartRatePeak,
+            power: powerPeak,
+            temperature: temperaturePeak
+        )
     }
 
-    private static func downsampleElevationSamples(
-        _ samples: [RouteElevationSample],
-        maximumCount: Int
-    ) -> [RouteElevationSample] {
-        guard samples.count > maximumCount, maximumCount > 2 else {
-            return samples
-        }
-
-        let step = Double(samples.count - 1) / Double(maximumCount - 1)
-        var selectedIndices = Set<Int>()
-        for index in 0..<maximumCount {
-            selectedIndices.insert(Int(round(Double(index) * step)))
-        }
-
-        selectedIndices.formUnion(peakSampleIndices(in: samples))
-        return selectedIndices.sorted().map { index in
-            samples[index]
-        }
-    }
-
-    private static func peakSampleIndices(in samples: [RouteElevationSample]) -> Set<Int> {
-        var indices = Set<Int>()
-        if let altitudePeak = samples.indices.max(by: { samples[$0].altitudeMeters < samples[$1].altitudeMeters }) {
-            indices.insert(altitudePeak)
-        }
-        if let heartRatePeak = peakSampleIndex(in: samples, requiresPositiveValue: true, value: \.heartRateBeatsPerMinute) {
-            indices.insert(heartRatePeak)
-        }
-        if let powerPeak = peakSampleIndex(in: samples, requiresPositiveValue: true, value: \.powerWatts) {
-            indices.insert(powerPeak)
-        }
-        if let temperaturePeak = peakSampleIndex(in: samples, requiresPositiveValue: false, value: \.temperatureCelsius) {
-            indices.insert(temperaturePeak)
-        }
-        return indices
-    }
-
-    private static func peakSampleIndex(
-        in samples: [RouteElevationSample],
-        requiresPositiveValue: Bool,
-        value: KeyPath<RouteElevationSample, Double?>
+    private static func metricPeakIndex(
+        in values: [Double?],
+        requiresPositiveValue: Bool
     ) -> Int? {
-        samples.indices
-            .compactMap { index -> (index: Int, value: Double)? in
-                guard let sampleValue = samples[index][keyPath: value],
-                      sampleValue.isFinite,
-                      !requiresPositiveValue || sampleValue > 0 else {
-                    return nil
-                }
-                return (index, sampleValue)
+        var peak: (index: Int, value: Double)?
+        for index in values.indices {
+            guard let value = values[index],
+                  value.isFinite,
+                  !requiresPositiveValue || value > 0 else {
+                continue
             }
-            .max { lhs, rhs in lhs.value < rhs.value }?.index
+            if peak == nil || value > (peak?.value ?? -.greatestFiniteMagnitude) {
+                peak = (index, value)
+            }
+        }
+        return peak?.index
+    }
+
+    private static func interpolatedPeakAltitude(
+        atDistance targetDistance: CLLocationDistance,
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        seriesBreakIndices: Set<Int>
+    ) -> Double? {
+        guard distances.count == altitudes.count,
+              !distances.isEmpty,
+              targetDistance.isFinite else {
+            return nil
+        }
+        var lowerBound = 0
+        var upperBound = distances.count
+        while lowerBound < upperBound {
+            let middleIndex = (lowerBound + upperBound) / 2
+            if distances[middleIndex] < targetDistance {
+                lowerBound = middleIndex + 1
+            } else {
+                upperBound = middleIndex
+            }
+        }
+        guard lowerBound < distances.count else {
+            guard let altitude = altitudes.last ?? nil,
+                  altitude.isFinite else {
+                return nil
+            }
+            return altitude
+        }
+        if abs(distances[lowerBound] - targetDistance) < 0.000_001 {
+            guard let altitude = altitudes[lowerBound],
+                  altitude.isFinite else {
+                return nil
+            }
+            return altitude
+        }
+        guard lowerBound > 0,
+              !seriesBreakIndices.contains(lowerBound),
+              let lowerAltitude = altitudes[lowerBound - 1],
+              lowerAltitude.isFinite,
+              let upperAltitude = altitudes[lowerBound],
+              upperAltitude.isFinite else {
+            return nil
+        }
+        let distanceSpan = distances[lowerBound] - distances[lowerBound - 1]
+        guard distanceSpan > 0 else {
+            return lowerAltitude
+        }
+        let progress = min(
+            max((targetDistance - distances[lowerBound - 1]) / distanceSpan, 0),
+            1
+        )
+        return lowerAltitude + (upperAltitude - lowerAltitude) * progress
+    }
+
+    private static func interpolatedPeakAltitude(
+        at index: Int,
+        distances: [CLLocationDistance],
+        altitudes: [Double?],
+        seriesBreakIndices: Set<Int>
+    ) -> Double? {
+        if let altitude = altitudes[index], altitude.isFinite {
+            return altitude
+        }
+
+        let orderedBreaks = seriesBreakIndices
+            .filter { $0 > 0 && $0 < altitudes.count }
+            .sorted()
+        let lowerBoundary = orderedBreaks.last(where: { $0 <= index }) ?? 0
+        let upperBoundary = orderedBreaks.first(where: { $0 > index }) ?? altitudes.count
+
+        var lowerIndex: Int?
+        if index > lowerBoundary {
+            for candidate in stride(from: index - 1, through: lowerBoundary, by: -1) {
+                if let altitude = altitudes[candidate], altitude.isFinite {
+                    lowerIndex = candidate
+                    break
+                }
+            }
+        }
+        var upperIndex: Int?
+        if index + 1 < upperBoundary {
+            for candidate in (index + 1)..<upperBoundary {
+                if let altitude = altitudes[candidate], altitude.isFinite {
+                    upperIndex = candidate
+                    break
+                }
+            }
+        }
+
+        switch (lowerIndex, upperIndex) {
+        case let (lowerIndex?, upperIndex?):
+            guard let lowerAltitude = altitudes[lowerIndex],
+                  let upperAltitude = altitudes[upperIndex] else {
+                return nil
+            }
+            let distanceSpan = distances[upperIndex] - distances[lowerIndex]
+            guard distanceSpan > 0 else {
+                return lowerAltitude
+            }
+            let progress = min(
+                max((distances[index] - distances[lowerIndex]) / distanceSpan, 0),
+                1
+            )
+            return lowerAltitude + (upperAltitude - lowerAltitude) * progress
+        case let (lowerIndex?, nil):
+            return altitudes[lowerIndex]
+        case let (nil, upperIndex?):
+            return altitudes[upperIndex]
+        case (nil, nil):
+            return nil
+        }
     }
 
     private var replayEmoji: String {
@@ -2137,15 +3368,13 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func replayStatusText(for state: ReplayState) -> String {
-        let distanceText: String
-        if state.distanceMeters >= 1000 {
-            distanceText = String(format: "%.2f km", state.distanceMeters / 1000)
-        } else {
-            distanceText = String(format: "%.0f m", max(state.distanceMeters, 0))
-        }
-
-        let altitudeText = state.altitudeMeters.map { "\(Int(round($0))) m" } ?? "-- m"
-        let primaryText = "\(distanceText) · \(altitudeText)"
+        let distanceText = replayDistanceText(state.distanceMeters)
+        let altitudeText = state.altitudeMeters.map { "\(Int(round($0)))m" } ?? "--m"
+        let gradeText = state.gradeRatio.map {
+            "\(Int(round($0 * 100)))%"
+        } ?? "--%"
+        let primaryText = [distanceText, altitudeText, gradeText]
+            .joined(separator: "·")
         let metricText = replayMetricStatusText(for: state)
         guard !metricText.isEmpty else {
             return primaryText
@@ -2156,16 +3385,27 @@ final class WorkoutRouteDetailViewController: UIViewController {
 
     private func replayMetricStatusText(for state: ReplayState) -> String {
         var parts: [String] = []
-        if let heartRate = roundedPositiveInt(state.heartRateBeatsPerMinute) {
-            parts.append("❤️\(heartRate)")
-        }
         if let power = roundedPositiveInt(state.powerWatts) {
-            parts.append("⚡️\(power)W")
+            parts.append("\(power)w")
+        }
+        if let heartRate = roundedPositiveInt(state.heartRateBeatsPerMinute) {
+            parts.append("\(heartRate)bpm")
         }
         if let temperature = roundedFiniteInt(state.temperatureCelsius) {
-            parts.append("☀️\(temperature)°")
+            parts.append("\(temperature)℃")
         }
-        return parts.joined(separator: "  ")
+        return parts.joined(separator: "·")
+    }
+
+    private func replayDistanceText(_ distanceMeters: CLLocationDistance) -> String {
+        var value = String(format: "%.2f", max(distanceMeters, 0) / 1_000)
+        while value.last == "0" {
+            value.removeLast()
+        }
+        if value.last == "." {
+            value.removeLast()
+        }
+        return "\(value)km"
     }
 
     private func roundedPositiveInt(_ value: Double?) -> Int? {

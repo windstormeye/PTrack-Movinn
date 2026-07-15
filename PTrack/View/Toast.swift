@@ -14,13 +14,14 @@ enum Toast {
     static func show(
         _ message: String,
         in view: UIView? = nil,
-        duration: TimeInterval = 2.0
+        duration: TimeInterval = 2.0,
+        bottomInset: CGFloat = 24
     ) {
         if Thread.isMainThread {
-            showOnMain(message, in: view, duration: duration)
+            showOnMain(message, in: view, duration: duration, bottomInset: bottomInset)
         } else {
             DispatchQueue.main.async {
-                showOnMain(message, in: view, duration: duration)
+                showOnMain(message, in: view, duration: duration, bottomInset: bottomInset)
             }
         }
     }
@@ -28,7 +29,8 @@ enum Toast {
     private static func showOnMain(
         _ message: String,
         in view: UIView?,
-        duration: TimeInterval
+        duration: TimeInterval,
+        bottomInset: CGFloat
     ) {
         guard let containerView = view ?? activeWindow else {
             return
@@ -66,7 +68,10 @@ enum Toast {
             toastView.centerXAnchor.constraint(equalTo: containerView.centerXAnchor),
             toastView.leadingAnchor.constraint(greaterThanOrEqualTo: containerView.leadingAnchor, constant: 24),
             toastView.trailingAnchor.constraint(lessThanOrEqualTo: containerView.trailingAnchor, constant: -24),
-            toastView.bottomAnchor.constraint(equalTo: containerView.safeAreaLayoutGuide.bottomAnchor, constant: -24)
+            toastView.bottomAnchor.constraint(
+                equalTo: containerView.safeAreaLayoutGuide.bottomAnchor,
+                constant: -max(bottomInset, 0)
+            )
         ])
 
         currentToastView = toastView

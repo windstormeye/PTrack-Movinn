@@ -9,8 +9,16 @@ import UIKit
 
 enum PeakMarkerKind {
     case altitude
+    case slope
     case heartRate
     case power
+    case temperature
+}
+
+enum WorkoutRouteReplayRulerLayout {
+    // Keep every marker centered on its data position without clipping the
+    // widest (30 pt) marker at either end of the profile.
+    static let horizontalPadding: CGFloat = 15
 }
 
 struct PeakHit {

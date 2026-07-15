@@ -18,7 +18,7 @@ final class RouteReplayAnnotationView: MKAnnotationView {
         static let pinCenterOffset = CGPoint(x: 0, y: -40)
         static let pinMetricsCenterOffset = CGPoint(x: 0, y: -48)
         static let pinEmoji = "📍"
-        static let compactBounds = CGRect(x: 0, y: 0, width: 150, height: 80)
+        static let compactBounds = CGRect(x: 0, y: 0, width: 190, height: 80)
         static let metricsBounds = CGRect(x: 0, y: 0, width: 190, height: 98)
         static let compactStatusHeight: CGFloat = 26
         static let metricsStatusHeight: CGFloat = 42

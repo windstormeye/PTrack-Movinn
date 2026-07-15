@@ -492,6 +492,7 @@ enum SharedRouteImportInbox {
             sourceURL: fileURL,
             importedAt: appMetadata?.importedAt ?? importedAt,
             coordinates: parsedRoute.coordinates,
+            segmentCoordinateCounts: parsedRoute.segmentCoordinateCounts,
             distanceMeters: appMetadata?.distanceMeters,
             durationSeconds: appMetadata?.durationSeconds,
             startDate: appMetadata?.startDate,
@@ -530,12 +531,15 @@ enum SharedRouteImportInbox {
 extension TrackedWorkout {
     nonisolated static let routeCollectionImportSourceName = "GPX"
     nonisolated static let routeCollectionMergeSourceName = "Route Merge"
+    nonisolated static let routeCollectionSegmentCoordinateCountsMetadataKey =
+        "routeCollection.segmentCoordinateCounts"
     nonisolated static let routeCollectionCanonicalMetadataKeys: Set<String> = [
         "routeCollection.id",
         "routeCollection.title",
         "routeCollection.sourceName",
         "routeCollection.sourceURL",
-        "routeCollection.importedAt"
+        "routeCollection.importedAt",
+        routeCollectionSegmentCoordinateCountsMetadataKey
     ]
 
     nonisolated init(
@@ -545,6 +549,7 @@ extension TrackedWorkout {
         sourceURL: URL?,
         importedAt: Date,
         coordinates rawCoordinates: [RouteCoordinate],
+        segmentCoordinateCounts rawSegmentCoordinateCounts: [Int]? = nil,
         distanceMeters distanceMetersOverride: Double? = nil,
         durationSeconds durationSecondsOverride: TimeInterval? = nil,
         startDate startDateOverride: Date? = nil,
@@ -552,12 +557,22 @@ extension TrackedWorkout {
         additionalMetadata: [String: TrackedMetadataValue] = [:]
     ) {
         let sampledCoordinates = RouteSampler.downsample(rawCoordinates, limit: 1_200)
+        let segmentCoordinateCounts = Self.validatedRouteCollectionSegmentCoordinateCounts(
+            rawSegmentCoordinateCounts,
+            coordinateCount: rawCoordinates.count
+        )
+        let segmentStartIndices = Self.routeCollectionSegmentStartIndices(
+            from: segmentCoordinateCounts
+        )
         let startDate = startDateOverride ?? rawCoordinates.first?.timestamp ?? importedAt
         let computedEndDate = rawCoordinates.last?.timestamp
         let computedDurationSeconds = computedEndDate.map { max($0.timeIntervalSince(startDate), 0) }
         let durationSeconds = durationSecondsOverride ?? computedDurationSeconds
         let endDate = durationSeconds.map { startDate.addingTimeInterval($0) } ?? computedEndDate
-        let distanceMeters = distanceMetersOverride ?? Self.routeCollectionDistanceMeters(for: rawCoordinates)
+        let distanceMeters = distanceMetersOverride ?? Self.routeCollectionDistanceMeters(
+            for: rawCoordinates,
+            segmentStartIndices: segmentStartIndices
+        )
         var metadata = Self.routeCollectionMetadata(
             id: routeCollectionID,
             title: title,
@@ -568,6 +583,12 @@ extension TrackedWorkout {
         metadata.merge(
             additionalMetadata.filter { !Self.routeCollectionCanonicalMetadataKeys.contains($0.key) }
         ) { _, newValue in newValue }
+        if let segmentCoordinateCounts, segmentCoordinateCounts.count > 1 {
+            metadata[Self.routeCollectionSegmentCoordinateCountsMetadataKey] = TrackedMetadataValue(
+                type: "numberArray",
+                numberArrayValue: segmentCoordinateCounts.map(Double.init)
+            )
+        }
 
         id = "route-collection-\(routeCollectionID)"
         healthDataVersion = Self.currentHealthDataVersion
@@ -585,7 +606,8 @@ extension TrackedWorkout {
         routeSummary = TrackedRouteSummary(
             routeCollectionCoordinates: rawCoordinates,
             sampledCoordinateCount: sampledCoordinates.count,
-            measuredDistanceMeters: distanceMeters
+            measuredDistanceMeters: distanceMeters,
+            segmentStartIndices: segmentStartIndices
         )
         quantityMetrics = nil
         coordinates = sampledCoordinates
@@ -595,12 +617,12 @@ extension TrackedWorkout {
         )
     }
 
-    var isRouteCollectionSource: Bool {
+    nonisolated var isRouteCollectionSource: Bool {
         metadata?["routeCollection.id"]?.stringValue != nil
             || sourceRevision?.bundleIdentifier == "studio.pj.app.PTrack.routeCollection"
     }
 
-    var isMergedRouteCollectionSource: Bool {
+    nonisolated var isMergedRouteCollectionSource: Bool {
         routeCollectionSourceName == Self.routeCollectionMergeSourceName
     }
 
@@ -642,7 +664,7 @@ extension TrackedWorkout {
         )
     }
 
-    var routeCollectionMergePhotoDateRanges: [(start: Date, end: Date)] {
+    nonisolated var routeCollectionMergePhotoDateRanges: [(start: Date, end: Date)] {
         guard isMergedRouteCollectionSource,
               let startValues = metadata?["routeCollection.merge.segmentStartDates"]?.numberArrayValue,
               let endValues = metadata?["routeCollection.merge.segmentEndDates"]?.numberArrayValue else {
@@ -658,6 +680,150 @@ extension TrackedWorkout {
 
             return (startDate, endDate)
         }
+    }
+
+    nonisolated var routeCollectionMergeSegmentStartIndices: Set<Int> {
+        guard routeCollectionSourceName == Self.routeCollectionMergeSourceName else {
+            return []
+        }
+
+        let coordinates = routeDetailCoordinates
+        guard coordinates.count > 1 else {
+            return []
+        }
+
+        if let rawCounts = metadata?["routeCollection.merge.segmentCoordinateCounts"]?.numberArrayValue {
+            let counts = rawCounts.compactMap { value -> Int? in
+                guard value.isFinite,
+                      value > 0,
+                      let count = Int(exactly: value),
+                      count > 0 else {
+                    return nil
+                }
+                return count
+            }
+            var runningCount = 0
+            var countsAreValid = counts.count == rawCounts.count
+            if countsAreValid {
+                for count in counts {
+                    let (sum, overflowed) = runningCount.addingReportingOverflow(count)
+                    guard !overflowed, sum <= coordinates.count else {
+                        countsAreValid = false
+                        break
+                    }
+                    runningCount = sum
+                }
+                countsAreValid = runningCount == coordinates.count
+            }
+            if countsAreValid {
+                var starts = Set<Int>()
+                runningCount = 0
+                for count in counts.dropLast() {
+                    runningCount += count
+                    starts.insert(runningCount)
+                }
+                return starts
+            }
+        }
+
+        let segmentCount = metadata?["routeCollection.merge.segmentStartDates"]?
+            .numberArrayValue?.count ?? 0
+        let expectedBoundaryCount = max(segmentCount - 1, 0)
+        guard expectedBoundaryCount > 0 else {
+            return []
+        }
+
+        let candidates = (1..<coordinates.count).compactMap { index -> Int? in
+            guard coordinates[index].timestamp <= coordinates[index - 1].timestamp else {
+                return nil
+            }
+            return index
+        }
+        guard candidates.count >= expectedBoundaryCount else {
+            return []
+        }
+        // Legacy nested merges only recorded their top-level source count, but
+        // retained every inner merge's equal timestamp boundary. Keeping all
+        // non-increasing boundaries is safer than reconnecting those known
+        // discontinuities; ordinary duplicate-timestamp samples merely split a
+        // continuous series without inventing distance or elevation gain.
+        return Set(candidates)
+    }
+
+    nonisolated var routeDetailSegmentStartIndices: Set<Int> {
+        if let storedSegmentStartIndices = routeCollectionStoredSegmentStartIndices {
+            return storedSegmentStartIndices
+        }
+
+        if routeCollectionSourceName == Self.routeCollectionMergeSourceName {
+            return routeCollectionMergeSegmentStartIndices
+        }
+
+        // Version 2 HealthKit caches globally sorted all route locations by
+        // timestamp, so routeSegments.locationCount did not describe contiguous
+        // coordinate slices. Treat them as a single legacy route until HealthKit
+        // refreshes the workout using the current grouped-coordinate schema.
+        guard healthDataVersion == Self.currentHealthDataVersion else {
+            return []
+        }
+
+        guard let routeSegments,
+              routeSegments.count > 1 else {
+            return []
+        }
+
+        let coordinateCount = routeDetailCoordinates.count
+        guard coordinateCount > 1 else {
+            return []
+        }
+
+        var runningCount = 0
+        var starts = Set<Int>()
+        for segment in routeSegments {
+            guard segment.locationCount >= 0 else {
+                return []
+            }
+            let (nextCount, overflowed) = runningCount.addingReportingOverflow(
+                segment.locationCount
+            )
+            guard !overflowed, nextCount <= coordinateCount else {
+                return []
+            }
+            runningCount = nextCount
+            if runningCount > 0, runningCount < coordinateCount {
+                starts.insert(runningCount)
+            }
+        }
+
+        guard runningCount == coordinateCount else {
+            return []
+        }
+        return starts
+    }
+
+    private nonisolated var routeCollectionStoredSegmentStartIndices: Set<Int>? {
+        guard let rawCounts = metadata?[Self.routeCollectionSegmentCoordinateCountsMetadataKey]?
+                .numberArrayValue else {
+            return nil
+        }
+
+        let counts = rawCounts.compactMap { value -> Int? in
+            guard value.isFinite,
+                  value > 0,
+                  let count = Int(exactly: value) else {
+                return nil
+            }
+            return count
+        }
+        guard counts.count == rawCounts.count,
+              let validatedCounts = Self.validatedRouteCollectionSegmentCoordinateCounts(
+                counts,
+                coordinateCount: routeDetailCoordinates.count
+              ) else {
+            return nil
+        }
+
+        return Self.routeCollectionSegmentStartIndices(from: validatedCounts)
     }
 
     private nonisolated static func routeCollectionMetadata(
@@ -701,23 +867,64 @@ extension TrackedWorkout {
         return coordinate
     }
 
-    private nonisolated static func routeCollectionDistanceMeters(for coordinates: [RouteCoordinate]) -> Double {
+    private nonisolated static func validatedRouteCollectionSegmentCoordinateCounts(
+        _ counts: [Int]?,
+        coordinateCount: Int
+    ) -> [Int]? {
+        guard let counts, !counts.isEmpty, coordinateCount > 0 else {
+            return nil
+        }
+
+        var totalCount = 0
+        for count in counts {
+            guard count > 0 else {
+                return nil
+            }
+            let (nextCount, overflowed) = totalCount.addingReportingOverflow(count)
+            guard !overflowed, nextCount <= coordinateCount else {
+                return nil
+            }
+            totalCount = nextCount
+        }
+
+        return totalCount == coordinateCount ? counts : nil
+    }
+
+    private nonisolated static func routeCollectionSegmentStartIndices(
+        from segmentCoordinateCounts: [Int]?
+    ) -> Set<Int> {
+        guard let segmentCoordinateCounts, segmentCoordinateCounts.count > 1 else {
+            return []
+        }
+
+        var starts = Set<Int>()
+        var runningCount = 0
+        for count in segmentCoordinateCounts.dropLast() {
+            runningCount += count
+            starts.insert(runningCount)
+        }
+        return starts
+    }
+
+    private nonisolated static func routeCollectionDistanceMeters(
+        for coordinates: [RouteCoordinate],
+        segmentStartIndices: Set<Int>
+    ) -> Double {
         guard coordinates.count > 1 else {
             return 0
         }
 
         var totalDistance: CLLocationDistance = 0
-        var previousLocation = CLLocation(
-            latitude: coordinates[0].latitude,
-            longitude: coordinates[0].longitude
-        )
+        var previousLocation: CLLocation?
 
-        for coordinate in coordinates.dropFirst() {
+        for (index, coordinate) in coordinates.enumerated() {
             let location = CLLocation(
                 latitude: coordinate.latitude,
                 longitude: coordinate.longitude
             )
-            totalDistance += location.distance(from: previousLocation)
+            if let previousLocation, !segmentStartIndices.contains(index) {
+                totalDistance += location.distance(from: previousLocation)
+            }
             previousLocation = location
         }
 
@@ -739,7 +946,8 @@ extension TrackedRouteSummary {
     nonisolated init(
         routeCollectionCoordinates coordinates: [RouteCoordinate],
         sampledCoordinateCount: Int,
-        measuredDistanceMeters: Double?
+        measuredDistanceMeters: Double?,
+        segmentStartIndices: Set<Int> = []
     ) {
         rawLocationCount = coordinates.count
         self.sampledCoordinateCount = sampledCoordinateCount
@@ -749,33 +957,45 @@ extension TrackedRouteSummary {
         minimumAltitudeMeters = altitudes.min()
         maximumAltitudeMeters = altitudes.max()
 
-        let elevationChange = Self.routeCollectionElevationChange(for: altitudes)
+        let elevationChange = Self.routeCollectionElevationChange(
+            for: coordinates,
+            segmentStartIndices: segmentStartIndices
+        )
         elevationGainMeters = elevationChange.gain
         elevationLossMeters = elevationChange.loss
         averageSpeedMetersPerSecond = nil
         maximumSpeedMetersPerSecond = nil
     }
 
-    private nonisolated static func routeCollectionElevationChange(for altitudes: [Double]) -> (gain: Double?, loss: Double?) {
-        guard altitudes.count > 1 else {
-            return (nil, nil)
-        }
-
+    private nonisolated static func routeCollectionElevationChange(
+        for coordinates: [RouteCoordinate],
+        segmentStartIndices: Set<Int>
+    ) -> (gain: Double?, loss: Double?) {
         var gain: Double = 0
         var loss: Double = 0
-        var previousAltitude = altitudes[0]
+        var previousAltitude: Double?
+        var comparisonCount = 0
 
-        for altitude in altitudes.dropFirst() {
-            let delta = altitude - previousAltitude
-            if delta > 0 {
-                gain += delta
-            } else {
-                loss += abs(delta)
+        for (index, coordinate) in coordinates.enumerated() {
+            if segmentStartIndices.contains(index) {
+                previousAltitude = nil
+            }
+            guard let altitude = coordinate.altitudeMeters, altitude.isFinite else {
+                continue
+            }
+            if let previousAltitude {
+                let delta = altitude - previousAltitude
+                if delta > 0 {
+                    gain += delta
+                } else {
+                    loss += abs(delta)
+                }
+                comparisonCount += 1
             }
             previousAltitude = altitude
         }
 
-        return (gain, loss)
+        return comparisonCount > 0 ? (gain, loss) : (nil, nil)
     }
 }
 

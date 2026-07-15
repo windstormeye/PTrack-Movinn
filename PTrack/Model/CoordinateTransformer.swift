@@ -52,6 +52,51 @@ enum CoordinateTransformer {
         }
     }
 
+    static func displayCoordinates(
+        for coordinates: [CLLocationCoordinate2D],
+        mapDatum: DisplayMapDatum = currentDisplayMapDatum,
+        isCancelled: @Sendable () -> Bool
+    ) -> [CLLocationCoordinate2D]? {
+        guard !isCancelled() else {
+            return nil
+        }
+
+        var routeStartCoordinate: CLLocationCoordinate2D?
+        if mapDatum == .gcj02 {
+            for (index, coordinate) in coordinates.enumerated() {
+                if index.isMultiple(of: 256), isCancelled() {
+                    return nil
+                }
+                if CLLocationCoordinate2DIsValid(coordinate) {
+                    routeStartCoordinate = coordinate
+                    break
+                }
+            }
+        }
+        let routeNeedsTransform = routeStartCoordinate.map {
+            CoordinateRegionManager.shared.isCoordinateInMainlandChina($0)
+        } ?? false
+
+        var displayCoordinates: [CLLocationCoordinate2D] = []
+        displayCoordinates.reserveCapacity(coordinates.count)
+        for (index, coordinate) in coordinates.enumerated() {
+            if index.isMultiple(of: 256), isCancelled() {
+                return nil
+            }
+            displayCoordinates.append(
+                displayCoordinate(
+                    for: coordinate,
+                    mapDatum: mapDatum,
+                    routeNeedsTransform: routeNeedsTransform
+                )
+            )
+        }
+        guard !isCancelled() else {
+            return nil
+        }
+        return displayCoordinates
+    }
+
     private static func displayCoordinate(
         for coordinate: CLLocationCoordinate2D,
         mapDatum: DisplayMapDatum,

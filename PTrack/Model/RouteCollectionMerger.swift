@@ -33,6 +33,7 @@ enum RouteCollectionMerger {
 
         let orderedWorkouts = orderedWorkouts(from: workouts)
         let mergedCoordinates = normalizedMergedCoordinates(from: orderedWorkouts)
+        let mergedSegmentCoordinateCounts = orderedWorkouts.flatMap(segmentCoordinateCounts)
 
         guard !mergedCoordinates.isEmpty else {
             throw RouteCollectionMergerError.noRoutePoints
@@ -45,6 +46,7 @@ enum RouteCollectionMerger {
             sourceURL: nil,
             importedAt: importedAt,
             coordinates: mergedCoordinates,
+            segmentCoordinateCounts: mergedSegmentCoordinateCounts,
             distanceMeters: totalDistanceMeters(for: orderedWorkouts),
             durationSeconds: totalDurationSeconds(for: orderedWorkouts),
             startDate: orderedWorkouts.first?.startDate,
@@ -91,11 +93,14 @@ enum RouteCollectionMerger {
 
     private static func totalDistanceMeters(for workouts: [TrackedWorkout]) -> Double {
         workouts.reduce(0) { total, workout in
-            if workout.distanceMeters > 0 {
+            // Recompute collection routes from their canonical segment
+            // boundaries. Older merged/GPX caches may contain a summary that
+            // accidentally included the jump between segments.
+            if !workout.isRouteCollectionSource, workout.distanceMeters > 0 {
                 return total + workout.distanceMeters
             }
 
-            return total + distanceMeters(for: workout.routeDetailCoordinates)
+            return total + distanceMeters(for: workout)
         }
     }
 
@@ -114,20 +119,25 @@ enum RouteCollectionMerger {
         }
     }
 
-    private static func distanceMeters(for coordinates: [RouteCoordinate]) -> Double {
+    private static func distanceMeters(for workout: TrackedWorkout) -> Double {
+        let coordinates = workout.routeDetailCoordinates
         guard coordinates.count > 1 else {
             return 0
         }
 
+        let segmentStartIndices = workout.routeDetailSegmentStartIndices
         var totalDistance: CLLocationDistance = 0
         var previousLocation = CLLocation(
             latitude: coordinates[0].latitude,
             longitude: coordinates[0].longitude
         )
 
-        for coordinate in coordinates.dropFirst() {
+        for index in 1..<coordinates.count {
+            let coordinate = coordinates[index]
             let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            totalDistance += location.distance(from: previousLocation)
+            if !segmentStartIndices.contains(index) {
+                totalDistance += location.distance(from: previousLocation)
+            }
             previousLocation = location
         }
 
@@ -159,14 +169,9 @@ enum RouteCollectionMerger {
             )
         }
 
-        let segmentStartDates = workouts.map { workout in
-            workout.startDate.timeIntervalSince1970
-        }
-        let segmentEndDates = workouts.map { workout in
-            let endDate = workout.endDate
-                ?? workout.startDate.addingTimeInterval(workout.durationSeconds ?? 0)
-            return endDate.timeIntervalSince1970
-        }
+        let photoDateRanges = workouts.flatMap(originalPhotoDateRanges)
+        let segmentStartDates = photoDateRanges.map { $0.start.timeIntervalSince1970 }
+        let segmentEndDates = photoDateRanges.map { $0.end.timeIntervalSince1970 }
 
         metadata["routeCollection.merge.segmentStartDates"] = TrackedMetadataValue(
             type: "numberArray",
@@ -176,9 +181,16 @@ enum RouteCollectionMerger {
             type: "numberArray",
             numberArrayValue: segmentEndDates
         )
+        metadata["routeCollection.merge.segmentCoordinateCounts"] = TrackedMetadataValue(
+            type: "numberArray",
+            numberArrayValue: workouts.flatMap(segmentCoordinateCounts).map(Double.init)
+        )
 
         let mergedElevationGainMeters = workouts.reduce(0) { total, workout in
-            total + (workout.displayElevationGainMeters ?? elevationGainMeters(for: workout.routeDetailCoordinates))
+            if workout.isRouteCollectionSource {
+                return total + elevationGainMeters(for: workout)
+            }
+            return total + (workout.displayElevationGainMeters ?? elevationGainMeters(for: workout))
         }
         if mergedElevationGainMeters > 0 {
             metadata["routeCollection.merge.elevationGainMeters"] = TrackedMetadataValue(
@@ -190,18 +202,64 @@ enum RouteCollectionMerger {
         return metadata
     }
 
-    private static func elevationGainMeters(for coordinates: [RouteCoordinate]) -> Double {
-        let altitudes = coordinates.compactMap(\.altitudeMeters)
-        guard altitudes.count > 1 else {
+    private nonisolated static func originalPhotoDateRanges(
+        for workout: TrackedWorkout
+    ) -> [(start: Date, end: Date)] {
+        let nestedDateRanges = workout.routeCollectionMergePhotoDateRanges
+        if workout.isMergedRouteCollectionSource, !nestedDateRanges.isEmpty {
+            return nestedDateRanges
+        }
+
+        let startDate = workout.startDate
+        let candidateEndDate = workout.endDate
+            ?? startDate.addingTimeInterval(max(workout.durationSeconds ?? 0, 0))
+        return [(startDate, max(candidateEndDate, startDate))]
+    }
+
+    private nonisolated static func segmentCoordinateCounts(
+        for workout: TrackedWorkout
+    ) -> [Int] {
+        let coordinateCount = workout.routeDetailCoordinates.count
+        guard coordinateCount > 0 else {
+            return []
+        }
+
+        let boundaries = [0] + workout.routeDetailSegmentStartIndices
+            .filter { $0 > 0 && $0 < coordinateCount }
+            .sorted() + [coordinateCount]
+        return zip(boundaries, boundaries.dropFirst()).compactMap {
+            lowerBound, upperBound in
+            let count = upperBound - lowerBound
+            return count > 0 ? count : nil
+        }
+    }
+
+    private static func elevationGainMeters(for workout: TrackedWorkout) -> Double {
+        let coordinates = workout.routeDetailCoordinates
+        guard coordinates.count > 1 else {
             return 0
         }
 
+        let segmentStartIndices = workout.routeDetailSegmentStartIndices
         var gain: Double = 0
-        var previousAltitude = altitudes[0]
-        for altitude in altitudes.dropFirst() {
-            let delta = altitude - previousAltitude
-            if delta > 0 {
-                gain += delta
+        var previousAltitude: Double?
+
+        for (index, coordinate) in coordinates.enumerated() {
+            if segmentStartIndices.contains(index) {
+                previousAltitude = nil
+            }
+
+            guard let altitude = coordinate.altitudeMeters,
+                  altitude.isFinite else {
+                previousAltitude = nil
+                continue
+            }
+
+            if let previousAltitude {
+                let delta = altitude - previousAltitude
+                if delta > 0 {
+                    gain += delta
+                }
             }
             previousAltitude = altitude
         }
@@ -219,9 +277,11 @@ private extension RouteCoordinate {
             latitude: latitude,
             longitude: longitude,
             timestamp: timestamp,
+            sourceDistanceMeters: sourceDistanceMeters,
             horizontalAccuracyMeters: horizontalAccuracyMeters,
             altitudeMeters: altitudeMeters,
             verticalAccuracyMeters: verticalAccuracyMeters,
+            gradeRatio: gradeRatio,
             speedMetersPerSecond: speedMetersPerSecond,
             speedAccuracyMetersPerSecond: speedAccuracyMetersPerSecond,
             courseDegrees: courseDegrees,

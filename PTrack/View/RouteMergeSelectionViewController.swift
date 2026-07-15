@@ -336,16 +336,72 @@ final class RouteMergeSelectionViewController: UIViewController {
         sourceWorkoutsByID: [String: TrackedWorkout]
     ) -> [TrackedWorkout] {
         let cacheStore = WorkoutCacheStore()
+        let routeCollectionStore = RouteCollectionStore()
         return selectedWorkouts.map { workout in
+            let inMemoryWorkout: TrackedWorkout
             if workout.id == currentWorkoutID {
-                return currentWorkout
-            }
-            if let sourceWorkout = sourceWorkoutsByID[workout.id] {
-                return sourceWorkout
+                inMemoryWorkout = currentWorkout
+            } else {
+                inMemoryWorkout = sourceWorkoutsByID[workout.id] ?? workout
             }
 
-            return cacheStore.loadWorkout(id: workout.id) ?? workout
+            let storedWorkout: TrackedWorkout?
+            if inMemoryWorkout.isRouteCollectionSource {
+                storedWorkout = routeCollectionStore.loadRoute(id: workout.id)
+                    ?? cacheStore.loadWorkout(id: workout.id)
+            } else {
+                storedWorkout = cacheStore.loadWorkout(id: workout.id)
+                    ?? routeCollectionStore.loadRoute(id: workout.id)
+            }
+
+            guard let storedWorkout else {
+                return inMemoryWorkout
+            }
+
+            let inMemoryCoordinateCount = inMemoryWorkout.routeDetailCoordinates.count
+            let storedCoordinateCount = storedWorkout.routeDetailCoordinates.count
+            let inMemoryHasCompleteGeometry = Self.hasCompleteRouteGeometry(inMemoryWorkout)
+            let storedHasCompleteGeometry = Self.hasCompleteRouteGeometry(storedWorkout)
+            if inMemoryHasCompleteGeometry != storedHasCompleteGeometry {
+                return inMemoryHasCompleteGeometry
+                    ? inMemoryWorkout
+                    : storedWorkout
+            }
+
+            if inMemoryHasCompleteGeometry, storedHasCompleteGeometry {
+                let inMemoryVersion = inMemoryWorkout.healthDataVersion ?? 0
+                let storedVersion = storedWorkout.healthDataVersion ?? 0
+                if inMemoryVersion != storedVersion {
+                    return inMemoryVersion > storedVersion
+                        ? inMemoryWorkout
+                        : storedWorkout
+                }
+            }
+
+            let inMemoryHasRouteSegments = inMemoryWorkout.routeSegments?.isEmpty == false
+            let storedHasRouteSegments = storedWorkout.routeSegments?.isEmpty == false
+            if inMemoryHasRouteSegments != storedHasRouteSegments {
+                return inMemoryHasRouteSegments ? inMemoryWorkout : storedWorkout
+            }
+            if inMemoryCoordinateCount != storedCoordinateCount {
+                return inMemoryCoordinateCount > storedCoordinateCount
+                    ? inMemoryWorkout
+                    : storedWorkout
+            }
+            return storedWorkout
         }
+    }
+
+    /// Home and merge grids retain the source summary while replacing route
+    /// geometry with a small preview. Older cache records may not have a summary;
+    /// do not classify those records as incomplete solely because that signal is
+    /// unavailable.
+    private static func hasCompleteRouteGeometry(_ workout: TrackedWorkout) -> Bool {
+        guard let rawLocationCount = workout.routeSummary?.rawLocationCount,
+              rawLocationCount > 0 else {
+            return true
+        }
+        return workout.routeDetailCoordinates.count >= rawLocationCount
     }
 
     private func setLoadingVisible(_ isVisible: Bool) {

@@ -51,7 +51,34 @@ nonisolated struct GPXRouteAppMetadata: Codable {
 nonisolated struct GPXParsedRoute {
     let title: String?
     let coordinates: [RouteCoordinate]
+    let segmentCoordinateCounts: [Int]
     let appMetadata: GPXRouteAppMetadata?
+}
+
+/// Movinn-owned point extensions. Keeping validation here gives imports and
+/// exports the same contract while leaving ordinary third-party GPX untouched.
+nonisolated enum GPXRoutePointExtensions {
+    static let sourceDistanceElementName = "sourcedistancemeters"
+    static let gradeRatioElementName = "graderatio"
+    private static let maximumSourceDistanceMeters = 100_000_000.0
+
+    static func validatedSourceDistanceMeters(_ value: Double?) -> Double? {
+        guard let value,
+              value.isFinite,
+              (0...maximumSourceDistanceMeters).contains(value) else {
+            return nil
+        }
+        return value
+    }
+
+    static func validatedGradeRatio(_ value: Double?) -> Double? {
+        guard let value,
+              value.isFinite,
+              (-1.0...1.0).contains(value) else {
+            return nil
+        }
+        return value
+    }
 }
 
 enum GPXRouteIdentity {
@@ -115,6 +142,7 @@ enum GPXRouteParser {
         return GPXParsedRoute(
             title: delegate.title,
             coordinates: coordinates,
+            segmentCoordinateCounts: delegate.segmentCoordinateCounts(),
             appMetadata: delegate.appMetadata
         )
     }
@@ -126,6 +154,8 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
         let longitude: Double
         var timestamp: Date?
         var altitude: Double?
+        var sourceDistanceMeters: Double?
+        var gradeRatio: Double?
     }
 
     private let fallbackDate: Date
@@ -134,7 +164,13 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
     private var elementStack: [String] = []
     private var textBuffer = ""
     private var currentPoint: MutablePoint?
-    private var parsedPoints: [MutablePoint] = []
+    private var currentPointSegmentID: Int?
+    private var parsedPoints: [(point: MutablePoint, segmentID: Int)] = []
+    private var nextSegmentID = 0
+    private var activeTrackSegmentID: Int?
+    private var implicitTrackSegmentID: Int?
+    private var activeRouteSegmentID: Int?
+    private var loosePointSegmentID: Int?
 
     private(set) var title: String?
     private(set) var appMetadata: GPXRouteAppMetadata?
@@ -158,6 +194,18 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
         elementStack.append(name)
         textBuffer = ""
 
+        switch name {
+        case "trk":
+            implicitTrackSegmentID = nil
+        case "trkseg":
+            implicitTrackSegmentID = nil
+            activeTrackSegmentID = makeSegmentID()
+        case "rte":
+            activeRouteSegmentID = makeSegmentID()
+        default:
+            break
+        }
+
         guard name == "trkpt" || name == "rtept" else {
             return
         }
@@ -166,14 +214,18 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
               let longitude = Self.coordinateValue(from: attributeDict["lon"] ?? attributeDict["lng"]),
               CLLocationCoordinate2DIsValid(CLLocationCoordinate2D(latitude: latitude, longitude: longitude)) else {
             currentPoint = nil
+            currentPointSegmentID = nil
             return
         }
 
+        currentPointSegmentID = segmentID(forPointElement: name)
         currentPoint = MutablePoint(
             latitude: latitude,
             longitude: longitude,
             timestamp: nil,
-            altitude: nil
+            altitude: nil,
+            sourceDistanceMeters: nil,
+            gradeRatio: nil
         )
     }
 
@@ -207,6 +259,18 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
             if let date = date(from: value) {
                 currentPoint?.timestamp = date
             }
+        case GPXRoutePointExtensions.sourceDistanceElementName:
+            guard isMovinnPointExtension(namespaceURI: namespaceURI) else {
+                break
+            }
+            currentPoint?.sourceDistanceMeters = GPXRoutePointExtensions.validatedSourceDistanceMeters(
+                Double(value)
+            )
+        case GPXRoutePointExtensions.gradeRatioElementName:
+            guard isMovinnPointExtension(namespaceURI: namespaceURI) else {
+                break
+            }
+            currentPoint?.gradeRatio = GPXRoutePointExtensions.validatedGradeRatio(Double(value))
         case "routedata":
             let ancestors = elementStack.dropLast()
             let isMetadataExtension = ancestors.count >= 2
@@ -225,10 +289,19 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
                 hasInvalidAppMetadata = true
             }
         case "trkpt", "rtept":
-            if let currentPoint {
-                parsedPoints.append(currentPoint)
+            if let currentPoint, let currentPointSegmentID {
+                parsedPoints.append((currentPoint, currentPointSegmentID))
             }
             currentPoint = nil
+            currentPointSegmentID = nil
+        case "trkseg":
+            activeTrackSegmentID = nil
+            implicitTrackSegmentID = nil
+        case "trk":
+            activeTrackSegmentID = nil
+            implicitTrackSegmentID = nil
+        case "rte":
+            activeRouteSegmentID = nil
         default:
             break
         }
@@ -240,18 +313,83 @@ private nonisolated final class GPXRouteParserDelegate: NSObject, XMLParserDeleg
     }
 
     func resolvedCoordinates() -> [RouteCoordinate] {
-        parsedPoints.enumerated().map { index, point in
-            RouteCoordinate(
+        parsedPoints.enumerated().map { index, entry in
+            let point = entry.point
+            return RouteCoordinate(
                 latitude: point.latitude,
                 longitude: point.longitude,
                 timestamp: point.timestamp ?? fallbackDate.addingTimeInterval(TimeInterval(index)),
-                altitudeMeters: point.altitude
+                sourceDistanceMeters: point.sourceDistanceMeters,
+                altitudeMeters: point.altitude,
+                gradeRatio: point.gradeRatio
             )
         }
     }
 
+    func segmentCoordinateCounts() -> [Int] {
+        var counts: [Int] = []
+        var currentSegmentID: Int?
+
+        for entry in parsedPoints {
+            if entry.segmentID == currentSegmentID {
+                counts[counts.count - 1] += 1
+            } else {
+                currentSegmentID = entry.segmentID
+                counts.append(1)
+            }
+        }
+
+        return counts
+    }
+
+    private func segmentID(forPointElement name: String) -> Int {
+        if name == "rtept", let activeRouteSegmentID {
+            return activeRouteSegmentID
+        }
+
+        if name == "trkpt" {
+            if let activeTrackSegmentID {
+                return activeTrackSegmentID
+            }
+            if elementStack.dropLast().contains("trk") {
+                if let implicitTrackSegmentID {
+                    return implicitTrackSegmentID
+                }
+                let segmentID = makeSegmentID()
+                implicitTrackSegmentID = segmentID
+                return segmentID
+            }
+        }
+
+        if let loosePointSegmentID {
+            return loosePointSegmentID
+        }
+        let segmentID = makeSegmentID()
+        loosePointSegmentID = segmentID
+        return segmentID
+    }
+
+    private func makeSegmentID() -> Int {
+        defer { nextSegmentID += 1 }
+        return nextSegmentID
+    }
+
     private func normalizedElementName(_ name: String) -> String {
         (name.split(separator: ":").last.map(String.init) ?? name).lowercased()
+    }
+
+    private func isMovinnPointExtension(namespaceURI: String?) -> Bool {
+        guard namespaceURI == GPXRouteAppMetadata.namespaceURI else {
+            return false
+        }
+
+        let ancestors = elementStack.dropLast()
+        guard ancestors.count >= 2,
+              ancestors.last == "extensions" else {
+            return false
+        }
+        let pointElement = ancestors[ancestors.index(ancestors.endIndex, offsetBy: -2)]
+        return pointElement == "trkpt" || pointElement == "rtept"
     }
 
     private func date(from string: String) -> Date? {
