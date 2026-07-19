@@ -10,6 +10,15 @@ import MapKit
 import UIKit
 
 enum AppMapStyle {
+    static let routeLineWidth: CGFloat = 1.3
+    static let slopeReferenceRouteLineWidth: CGFloat = 1.5
+
+    // A custom MKOverlayRenderer stroke composites at roughly 5/8 of the
+    // visible coverage of MKPolylineRenderer for the same configured width.
+    // Compensate here so callers can pass the native route's line width and
+    // receive a visually identical slope stroke.
+    private static let customSlopeLineWidthScale: CGFloat = 1.6
+
     private struct SlopeColorStop {
         let location: Double
         let red: CGFloat
@@ -89,20 +98,19 @@ enum AppMapStyle {
     static func makeSlopeRenderer(
         for polyline: MKPolyline,
         gradient: RouteSlopeGradient,
-        lineWidth: CGFloat
-    ) -> MKGradientPolylineRenderer {
-        let renderer = MKGradientPolylineRenderer(polyline: polyline)
+        matchingNativeLineWidth nativeLineWidth: CGFloat
+    ) -> MKOverlayRenderer {
         var colors: [UIColor] = []
         colors.reserveCapacity(gradient.normalizedSlopes.count)
         for normalizedSlope in gradient.normalizedSlopes {
             colors.append(slopeColor(for: normalizedSlope))
         }
-        let locations = gradient.locations.map { CGFloat($0) }
-        renderer.setColors(colors, locations: locations)
-        renderer.lineWidth = lineWidth
-        renderer.lineJoin = .round
-        renderer.lineCap = .round
-        return renderer
+        return RouteSlopePolylineRenderer(
+            polyline: polyline,
+            colors: colors,
+            locations: gradient.locations,
+            screenLineWidth: nativeLineWidth * customSlopeLineWidthScale
+        )
     }
 
     static func renderer(for overlay: MKOverlay) -> MKOverlayRenderer? {

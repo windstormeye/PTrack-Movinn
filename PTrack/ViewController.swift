@@ -71,6 +71,14 @@ class ViewController: UIViewController {
         let sourceIndices: [Int]
     }
 
+    private nonisolated struct PreparedRouteBookSlopeSegment: Sendable {
+        let segmentIndex: Int
+        let coordinates: [CLLocationCoordinate2D]
+        let sourceLocations: [Double]
+        let gradient: RouteSlopeGradient
+        let totalDistance: CLLocationDistance
+    }
+
     private struct PreparedRouteBook {
         let coordinates: [CLLocationCoordinate2D]
         let boundingMapRect: MKMapRect
@@ -78,6 +86,7 @@ class ViewController: UIViewController {
         let replayAltitudes: [Double?]
         let segmentStartIndices: Set<Int>
         let elevationSamples: [RouteElevationSample]
+        let slopeSegments: [PreparedRouteBookSlopeSegment]
         let viewportGeometry: RouteViewportDistanceResolver.PreparedGeometry
         let displayGeometry: RouteViewportDistanceResolver.PreparedGeometry
         let matchingGeometry: RouteBookMatchingGeometry
@@ -149,6 +158,8 @@ class ViewController: UIViewController {
     private var totalDistanceTrailingToMoreConstraint: Constraint?
     private let routeBookLocateButton = UIButton(type: .system)
     private let routeBookMapStyleButton = UIButton(type: .system)
+    private let routeBookSlopeVisibilityButton = UIButton(type: .system)
+    private let routeBookSlopeVisibilityIconView = UIImageView()
     private let routeBookPanelSheetViewController = RouteBookPanelSheetViewController()
     private let routeBookPanelView = UIVisualEffectView(effect: ViewController.makeRouteBookPanelGlassEffect())
     private let routeBookPanelMetricsStackView = UIStackView()
@@ -178,6 +189,11 @@ class ViewController: UIViewController {
     private let routeBookPanelMinimumPrimaryContentScale: CGFloat = 0.88
     private let routeBookLocateButtonPanelSpacing: CGFloat = 18
     private let routeBookMaximumElevationSampleCount = 24_000
+    private let routeBookMaximumSlopeRenderingCoordinateCount = 1_200
+    private let routeBookMaximumSlopeSegmentCount = 8
+    private let routeBookSlopeGeometrySimplificationToleranceMeters: CLLocationDistance = 4
+    private let routeBookPreferredSlopeOverlayChunkDistance: CLLocationDistance = 15_000
+    private let routeBookMaximumSlopeOverlayChunkCount = 8
     private let routeBookBaseMatchDistance: CLLocationDistance = 100
     private let routeBookMaximumLocationAccuracy: CLLocationAccuracy = 200
     private let routeBookMaximumLocationAge: TimeInterval = 120
@@ -192,6 +208,12 @@ class ViewController: UIViewController {
     private var routeBookDisplayPolylines: [MKPolyline] = []
     private var routeBookDirectionIndicatorPolylines: [MKPolyline] = []
     private var routeBookDirectionIndicatorBudgets: [ObjectIdentifier: Int] = [:]
+    private var routeBookSlopePolylines: [MKPolyline] = []
+    private var routeBookSlopeGradients: [ObjectIdentifier: RouteSlopeGradient] = [:]
+    private var routeBookSlopeDirectionPolylines: [MKPolyline] = []
+    private var routeBookSlopeDirectionPolylineIdentifiers = Set<ObjectIdentifier>()
+    private var areRouteBookSlopeDirectionOverlaysSuspendedForMapChange = false
+    private var isRouteBookSlopeVisible = false
     private var routeBookEndpointAnnotations: [RouteEndpointAnnotation] = []
     private var routeBookReplayAnnotation: RouteReplayAnnotation?
     private var routeBookReplayCoordinates: [CLLocationCoordinate2D] = []
@@ -450,6 +472,7 @@ class ViewController: UIViewController {
 
         configureRouteBookPanelView()
         configureRouteBookLocateButton()
+        configureRouteBookSlopeVisibilityButton()
         configureRouteBookMapStyleButton()
     }
 
@@ -563,8 +586,43 @@ class ViewController: UIViewController {
 
         routeBookMapStyleButton.snp.makeConstraints { make in
             make.trailing.equalTo(routeBookLocateButton)
+            make.bottom.equalTo(routeBookSlopeVisibilityButton.snp.top).offset(-12)
+            make.size.equalTo(48)
+        }
+    }
+
+    private func configureRouteBookSlopeVisibilityButton() {
+        var configuration = routeBookFloatingButtonConfiguration(systemName: "mountain.2.fill")
+        configuration.image = nil
+        routeBookSlopeVisibilityButton.configuration = configuration
+        routeBookSlopeVisibilityButton.isHidden = true
+        routeBookSlopeVisibilityButton.isEnabled = false
+        routeBookSlopeVisibilityButton.accessibilityLabel = AppLocalization.text(.routeSlope)
+        routeBookSlopeVisibilityIconView.isUserInteractionEnabled = false
+        routeBookSlopeVisibilityIconView.contentMode = .scaleAspectFit
+        routeBookSlopeVisibilityIconView.image = UIImage(
+            systemName: "mountain.2.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        )?.withRenderingMode(.alwaysTemplate)
+        routeBookSlopeVisibilityButton.addTarget(
+            self,
+            action: #selector(handleRouteBookSlopeVisibilityButtonTap),
+            for: .touchUpInside
+        )
+        applyRouteBookFloatingButtonShadow(to: routeBookSlopeVisibilityButton)
+
+        view.addSubview(routeBookSlopeVisibilityButton)
+        routeBookSlopeVisibilityButton.addSubview(routeBookSlopeVisibilityIconView)
+
+        routeBookSlopeVisibilityButton.snp.makeConstraints { make in
+            make.trailing.equalTo(routeBookLocateButton)
             make.bottom.equalTo(routeBookLocateButton.snp.top).offset(-12)
             make.size.equalTo(48)
+        }
+
+        routeBookSlopeVisibilityIconView.snp.makeConstraints { make in
+            make.center.equalToSuperview()
+            make.size.equalTo(22)
         }
     }
 
@@ -614,6 +672,116 @@ class ViewController: UIViewController {
         refreshRouteBookOverlayStrokeColor()
     }
 
+    @objc private func handleRouteBookSlopeVisibilityButtonTap() {
+        guard !routeBookSlopePolylines.isEmpty else {
+            return
+        }
+
+        if isRouteBookSlopeVisible {
+            setRouteBookSlopeVisible(false)
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self, isRouteBookModeActive else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.ensureAccessResolved()
+            guard ProSubscriptionManager.shared.isProUser else {
+                routeBookModalPresentationHost.presentProPaywall { [weak self] in
+                    self?.setRouteBookSlopeVisible(true)
+                }
+                return
+            }
+
+            setRouteBookSlopeVisible(true)
+        }
+    }
+
+    private func setRouteBookSlopeVisible(_ isVisible: Bool) {
+        guard isRouteBookModeActive,
+              !routeBookSlopePolylines.isEmpty,
+              isRouteBookSlopeVisible != isVisible else {
+            return
+        }
+
+        isRouteBookSlopeVisible = isVisible
+        replaceRouteBookOverlaysForSlopeVisibility()
+        if isVisible {
+            showRouteBookSlopeColorHint()
+        }
+        updateRouteBookSlopeVisibilityButtonAppearance()
+    }
+
+    private func replaceRouteBookOverlaysForSlopeVisibility() {
+        guard routeBookBoundingMapRect != nil else {
+            return
+        }
+
+        let visibleOverlayIdentifiers = Set(
+            routeBookMapView.overlays.map { ObjectIdentifier($0 as AnyObject) }
+        )
+        let visibleDirectionPolylines = routeBookSlopeDirectionPolylines.filter {
+            visibleOverlayIdentifiers.contains(ObjectIdentifier($0))
+        }
+        if !visibleDirectionPolylines.isEmpty {
+            routeBookMapView.removeOverlays(visibleDirectionPolylines)
+        }
+        let visibleRoutePolylines = routeBookDisplayPolylines.filter {
+            visibleOverlayIdentifiers.contains(ObjectIdentifier($0))
+        }
+        if !visibleRoutePolylines.isEmpty {
+            routeBookMapView.removeOverlays(visibleRoutePolylines)
+        }
+        let visibleSlopePolylines = routeBookSlopePolylines.filter {
+            visibleOverlayIdentifiers.contains(ObjectIdentifier($0))
+        }
+        if !visibleSlopePolylines.isEmpty {
+            routeBookMapView.removeOverlays(visibleSlopePolylines)
+        }
+
+        if isRouteBookSlopeVisible, !routeBookSlopePolylines.isEmpty {
+            routeBookMapView.addOverlays(routeBookSlopePolylines, level: .aboveLabels)
+            addRouteBookSlopeDirectionOverlayIfNeeded()
+        } else {
+            routeBookMapView.addOverlays(routeBookDisplayPolylines, level: .aboveLabels)
+        }
+    }
+
+    private func addRouteBookSlopeDirectionOverlayIfNeeded() {
+        guard isRouteBookSlopeVisible,
+              !areRouteBookSlopeDirectionOverlaysSuspendedForMapChange,
+              !isRouteBookMapRegionChanging else {
+            return
+        }
+        let visibleOverlayIdentifiers = Set(
+            routeBookMapView.overlays.map { ObjectIdentifier($0 as AnyObject) }
+        )
+        let missingDirectionPolylines = routeBookSlopeDirectionPolylines.filter {
+            !visibleOverlayIdentifiers.contains(ObjectIdentifier($0))
+        }
+        if !missingDirectionPolylines.isEmpty {
+            routeBookMapView.addOverlays(missingDirectionPolylines, level: .aboveLabels)
+        }
+    }
+
+    private func showRouteBookSlopeColorHint() {
+        guard let window = view.window,
+              RouteSlopeColorHintStore.consumeShouldShow() else {
+            return
+        }
+
+        let message = AppLocalization.text(.routeSlopeColorHint)
+        Toast.show(
+            message,
+            in: window,
+            duration: 2.4,
+            bottomInset: routeBookPresentedPanelHeight + routeBookLocateButtonPanelSpacing
+        )
+        UIAccessibility.post(notification: .announcement, argument: message)
+    }
+
     private var routeBookRouteStrokeColor: UIColor {
         switch selectedRouteBookMapStyle {
         case .dark, .satellite:
@@ -632,6 +800,14 @@ class ViewController: UIViewController {
             if let directionRenderer = renderer as? RouteDirectionPolylineRenderer {
                 directionRenderer.directionIndicatorColor = routeBookRouteStrokeColor
             }
+            renderer.setNeedsDisplay()
+        }
+        for directionPolyline in routeBookSlopeDirectionPolylines {
+            guard let renderer = routeBookMapView.renderer(for: directionPolyline)
+                    as? RouteDirectionPolylineRenderer else {
+                continue
+            }
+            renderer.directionIndicatorColor = routeBookRouteStrokeColor
             renderer.setNeedsDisplay()
         }
     }
@@ -807,6 +983,31 @@ class ViewController: UIViewController {
         mapStyleConfiguration.baseForegroundColor = .label
         mapStyleConfiguration.baseBackgroundColor = AppColors.background(alpha: 0.92)
         routeBookMapStyleButton.configuration = mapStyleConfiguration
+
+        updateRouteBookSlopeVisibilityButtonAppearance()
+    }
+
+    private func updateRouteBookSlopeVisibilityButtonAppearance() {
+        let isAvailable = !routeBookSlopePolylines.isEmpty
+        routeBookSlopeVisibilityButton.isEnabled = isAvailable
+        guard var configuration = routeBookSlopeVisibilityButton.configuration else {
+            return
+        }
+
+        configuration.baseForegroundColor = isRouteBookSlopeVisible
+            ? AppColors.movinnGreen
+            : UIColor.label.withAlphaComponent(isAvailable ? 1 : 0.38)
+        configuration.baseBackgroundColor = AppColors.background(alpha: 0.92)
+        routeBookSlopeVisibilityButton.configuration = configuration
+        routeBookSlopeVisibilityIconView.tintColor = configuration.baseForegroundColor
+        if isRouteBookSlopeVisible {
+            routeBookSlopeVisibilityButton.accessibilityTraits.insert(.selected)
+        } else {
+            routeBookSlopeVisibilityButton.accessibilityTraits.remove(.selected)
+        }
+        routeBookSlopeVisibilityButton.accessibilityHint = isAvailable
+            ? AppLocalization.text(isRouteBookSlopeVisible ? .disable : .enable)
+            : nil
     }
 
     private func updateRouteBookPanelAppearanceColors() {
@@ -1582,6 +1783,7 @@ class ViewController: UIViewController {
         emptyDataSourceView.updateLocalizedText()
         routeBookMapStyleButton.menu = makeRouteBookMapStyleMenu()
         routeBookMapStyleButton.accessibilityLabel = AppLocalization.text(.mapStyle)
+        routeBookSlopeVisibilityButton.accessibilityLabel = AppLocalization.text(.routeSlope)
         scrollDateFormatter = Self.makeHomeScrollDateFormatter()
         lastScrollDateIndicatorText = nil
         _ = updateScrollDateIndicatorTextForVisibleWorkout()
@@ -3157,10 +3359,23 @@ class ViewController: UIViewController {
         if !routeBookDisplayPolylines.isEmpty {
             routeBookMapView.removeOverlays(routeBookDisplayPolylines)
         }
+        if !routeBookSlopePolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookSlopePolylines)
+        }
+        if !routeBookSlopeDirectionPolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookSlopeDirectionPolylines)
+        }
         routeBookBoundingMapRect = nil
         routeBookDisplayPolylines = []
         routeBookDirectionIndicatorPolylines = []
         routeBookDirectionIndicatorBudgets = [:]
+        routeBookSlopePolylines = []
+        routeBookSlopeGradients = [:]
+        routeBookSlopeDirectionPolylines = []
+        routeBookSlopeDirectionPolylineIdentifiers = []
+        areRouteBookSlopeDirectionOverlaysSuspendedForMapChange = false
+        isRouteBookSlopeVisible = false
+        updateRouteBookSlopeVisibilityButtonAppearance()
         isRouteBookMapRegionChanging = false
         removeRouteBookEndpointAnnotations()
         routeBookReplayRulerView.configure(
@@ -3174,10 +3389,18 @@ class ViewController: UIViewController {
         routeBookReplayRulerView.setIndicatorVisible(false)
 
         let maximumElevationSampleCount = routeBookMaximumElevationSampleCount
+        let maximumSlopeRenderingCoordinateCount = routeBookMaximumSlopeRenderingCoordinateCount
+        let maximumSlopeSegmentCount = routeBookMaximumSlopeSegmentCount
+        let slopeGeometrySimplificationToleranceMeters =
+            routeBookSlopeGeometrySimplificationToleranceMeters
         routeBookPreparationQueue.async { [weak self] in
             let preparedRouteBook = Self.prepareRouteBook(
                 for: workout,
                 maximumElevationSampleCount: maximumElevationSampleCount,
+                maximumSlopeRenderingCoordinateCount: maximumSlopeRenderingCoordinateCount,
+                maximumSlopeSegmentCount: maximumSlopeSegmentCount,
+                slopeGeometrySimplificationToleranceMeters:
+                    slopeGeometrySimplificationToleranceMeters,
                 cancellationToken: cancellationToken
             )
             DispatchQueue.main.async { [weak self] in
@@ -3201,6 +3424,9 @@ class ViewController: UIViewController {
     private static func prepareRouteBook(
         for workout: TrackedWorkout,
         maximumElevationSampleCount: Int,
+        maximumSlopeRenderingCoordinateCount: Int,
+        maximumSlopeSegmentCount: Int,
+        slopeGeometrySimplificationToleranceMeters: CLLocationDistance,
         cancellationToken: RouteSlopePreparationCancellationToken
     ) -> PreparedRouteBook? {
         guard !cancellationToken.isCancelled else {
@@ -3213,14 +3439,30 @@ class ViewController: UIViewController {
         }
         var sourceCoordinates: [CLLocationCoordinate2D] = []
         var replayAltitudes: [Double?] = []
+        var slopeAltitudes: [Double?] = []
+        var sourceDistances: [CLLocationDistance?] = []
+        var sourceGradeRatios: [Double?] = []
         sourceCoordinates.reserveCapacity(routeCoordinates.count)
         replayAltitudes.reserveCapacity(routeCoordinates.count)
+        slopeAltitudes.reserveCapacity(routeCoordinates.count)
+        sourceDistances.reserveCapacity(routeCoordinates.count)
+        sourceGradeRatios.reserveCapacity(routeCoordinates.count)
         for (index, routeCoordinate) in routeCoordinates.enumerated() {
             if index.isMultiple(of: 256), cancellationToken.isCancelled {
                 return nil
             }
             sourceCoordinates.append(routeCoordinate.coordinate)
             replayAltitudes.append(routeCoordinate.altitudeMeters)
+            sourceDistances.append(routeCoordinate.sourceDistanceMeters)
+            sourceGradeRatios.append(routeCoordinate.gradeRatio)
+            if let verticalAccuracy = routeCoordinate.verticalAccuracyMeters,
+               (!verticalAccuracy.isFinite
+                || verticalAccuracy < 0
+                || verticalAccuracy > 15) {
+                slopeAltitudes.append(nil)
+            } else {
+                slopeAltitudes.append(routeCoordinate.altitudeMeters)
+            }
         }
         guard let coordinates = CoordinateTransformer.displayCoordinates(
             for: sourceCoordinates,
@@ -3237,6 +3479,18 @@ class ViewController: UIViewController {
             seriesBreakIndices: segmentStartIndices,
             maximumCount: maximumElevationSampleCount,
             isCancelled: { cancellationToken.isCancelled }
+        ),
+        let slopeSegments = prepareRouteBookSlopeSegments(
+            coordinates: coordinates,
+            cumulativeDistances: replayDistances,
+            altitudes: slopeAltitudes,
+            sourceDistances: sourceDistances,
+            sourceGradeRatios: sourceGradeRatios,
+            segmentStartIndices: segmentStartIndices,
+            maximumRenderingCoordinateCount: maximumSlopeRenderingCoordinateCount,
+            maximumSegmentCount: maximumSlopeSegmentCount,
+            simplificationToleranceMeters: slopeGeometrySimplificationToleranceMeters,
+            cancellationToken: cancellationToken
         ) else {
             return nil
         }
@@ -3275,10 +3529,171 @@ class ViewController: UIViewController {
             replayAltitudes: replayAltitudes,
             segmentStartIndices: segmentStartIndices,
             elevationSamples: elevationSamples,
+            slopeSegments: slopeSegments,
             viewportGeometry: viewportGeometry,
             displayGeometry: displayGeometry,
             matchingGeometry: matchingGeometry
         )
+    }
+
+    private nonisolated static func prepareRouteBookSlopeSegments(
+        coordinates: [CLLocationCoordinate2D],
+        cumulativeDistances: [CLLocationDistance],
+        altitudes: [Double?],
+        sourceDistances: [CLLocationDistance?],
+        sourceGradeRatios: [Double?],
+        segmentStartIndices: Set<Int>,
+        maximumRenderingCoordinateCount: Int,
+        maximumSegmentCount: Int,
+        simplificationToleranceMeters: CLLocationDistance,
+        cancellationToken: RouteSlopePreparationCancellationToken
+    ) -> [PreparedRouteBookSlopeSegment]? {
+        guard coordinates.count == cumulativeDistances.count,
+              coordinates.count == altitudes.count,
+              coordinates.count == sourceDistances.count,
+              coordinates.count == sourceGradeRatios.count,
+              maximumRenderingCoordinateCount > 1 else {
+            return []
+        }
+
+        let segmentStarts = segmentStartIndices
+            .filter { $0 > 0 && $0 < coordinates.count }
+            .sorted()
+        let boundaries = [0] + segmentStarts + [coordinates.count]
+        let allSegmentRanges = zip(boundaries, boundaries.dropFirst())
+            .enumerated()
+            .compactMap { segmentIndex, bounds -> (
+                segmentIndex: Int,
+                lowerBound: Int,
+                upperBound: Int
+            )? in
+                bounds.1 - bounds.0 > 1
+                    ? (segmentIndex, bounds.0, bounds.1)
+                    : nil
+            }
+        let segmentLimit = min(
+            max(maximumSegmentCount, 1),
+            max(maximumRenderingCoordinateCount / 2, 1)
+        )
+        var candidates: [(
+            segmentIndex: Int,
+            lowerBound: Int,
+            upperBound: Int,
+            totalDistance: CLLocationDistance,
+            gradient: RouteSlopeGradient
+        )] = []
+        candidates.reserveCapacity(min(allSegmentRanges.count, segmentLimit * 2))
+        for segmentRange in allSegmentRanges {
+            if cancellationToken.isCancelled {
+                return nil
+            }
+            let baseDistance = cumulativeDistances[segmentRange.lowerBound]
+            let segmentDistances = cumulativeDistances[
+                segmentRange.lowerBound..<segmentRange.upperBound
+            ].map { $0 - baseDistance }
+            guard let totalDistance = segmentDistances.last,
+                  totalDistance >= 20,
+                  let gradient = RouteSlopeGradient.make(
+                      distances: segmentDistances,
+                      altitudes: Array(
+                          altitudes[segmentRange.lowerBound..<segmentRange.upperBound]
+                      ),
+                      sourceGradeRatios: Array(
+                          sourceGradeRatios[
+                              segmentRange.lowerBound..<segmentRange.upperBound
+                          ]
+                      ),
+                      sourceCumulativeDistances: Array(
+                          sourceDistances[
+                              segmentRange.lowerBound..<segmentRange.upperBound
+                          ]
+                      ),
+                      isCancelled: { cancellationToken.isCancelled }
+                  ) else {
+                continue
+            }
+            candidates.append((
+                segmentIndex: segmentRange.segmentIndex,
+                lowerBound: segmentRange.lowerBound,
+                upperBound: segmentRange.upperBound,
+                totalDistance: totalDistance,
+                gradient: gradient
+            ))
+        }
+
+        let selectedCandidates = candidates
+            .sorted { lhs, rhs in
+                if lhs.totalDistance != rhs.totalDistance {
+                    return lhs.totalDistance > rhs.totalDistance
+                }
+                return lhs.lowerBound < rhs.lowerBound
+            }
+            .prefix(segmentLimit)
+            .sorted { $0.lowerBound < $1.lowerBound }
+        let totalPointCount = selectedCandidates.reduce(0) {
+            $0 + ($1.upperBound - $1.lowerBound)
+        }
+        guard totalPointCount > 1 else {
+            return []
+        }
+
+        var result: [PreparedRouteBookSlopeSegment] = []
+        result.reserveCapacity(selectedCandidates.count)
+        var remainingRenderingBudget = maximumRenderingCoordinateCount
+        var remainingPointCount = totalPointCount
+        for (segmentOffset, segmentRange) in selectedCandidates.enumerated() {
+            if cancellationToken.isCancelled {
+                return nil
+            }
+            let pointCount = segmentRange.upperBound - segmentRange.lowerBound
+            let minimumRemainingCount = max(
+                (selectedCandidates.count - segmentOffset - 1) * 2,
+                0
+            )
+            let proportionalCount = Int(round(
+                Double(remainingRenderingBudget) * Double(pointCount)
+                    / Double(max(remainingPointCount, 1))
+            ))
+            let segmentMaximumCount = min(
+                pointCount,
+                max(
+                    2,
+                    min(
+                        proportionalCount,
+                        remainingRenderingBudget - minimumRemainingCount
+                    )
+                )
+            )
+            remainingRenderingBudget -= segmentMaximumCount
+            remainingPointCount -= pointCount
+
+            let baseDistance = cumulativeDistances[segmentRange.lowerBound]
+            let segmentDistances = cumulativeDistances[
+                segmentRange.lowerBound..<segmentRange.upperBound
+            ].map { $0 - baseDistance }
+            guard let geometry = RouteSlopeGeometryPreparer.prepare(
+                coordinates: Array(
+                    coordinates[segmentRange.lowerBound..<segmentRange.upperBound]
+                ),
+                cumulativeDistances: segmentDistances,
+                toleranceMeters: simplificationToleranceMeters,
+                maximumCount: segmentMaximumCount,
+                cancellationToken: cancellationToken
+            ) else {
+                if cancellationToken.isCancelled {
+                    return nil
+                }
+                continue
+            }
+            result.append(PreparedRouteBookSlopeSegment(
+                segmentIndex: segmentRange.segmentIndex,
+                coordinates: geometry.coordinates,
+                sourceLocations: geometry.sourceLocations,
+                gradient: segmentRange.gradient,
+                totalDistance: segmentRange.totalDistance
+            ))
+        }
+        return cancellationToken.isCancelled ? nil : result
     }
 
     private nonisolated static func prepareRouteBookMatchingGeometry(
@@ -3418,6 +3833,10 @@ class ViewController: UIViewController {
         routeBookMatchingGeometry = preparedRouteBook.matchingGeometry
         routeBookMatchCache = nil
         removeRouteBookReplayAnnotation()
+        configureRouteBookSlopeOverlays(
+            preparedRouteBook.slopeSegments,
+            displayGeometry: preparedRouteBook.displayGeometry
+        )
         drawRouteBookRoute(preparedRouteBook, for: workout)
         updateRouteBookReplayRulerVisibleRange()
         if selectedRouteBookPanelDetent == .medium {
@@ -3518,19 +3937,25 @@ class ViewController: UIViewController {
     }
 
     private func restoreRouteBookDirectionIndicatorsAfterMapChange() {
-        for routePolyline in routeBookDirectionIndicatorPolylines {
-            guard let renderer = routeBookMapView.renderer(for: routePolyline)
-                    as? RouteDirectionPolylineRenderer else {
-                continue
+        if !isRouteBookSlopeVisible {
+            for routePolyline in routeBookDirectionIndicatorPolylines {
+                guard let renderer = routeBookMapView.renderer(for: routePolyline)
+                        as? RouteDirectionPolylineRenderer else {
+                    continue
+                }
+                let budget = routeBookDirectionIndicatorBudgets[
+                    ObjectIdentifier(routePolyline)
+                ] ?? 0
+                guard renderer.maximumIndicatorCount != budget else {
+                    continue
+                }
+                renderer.maximumIndicatorCount = budget
+                renderer.setNeedsDisplay()
             }
-            let budget = routeBookDirectionIndicatorBudgets[
-                ObjectIdentifier(routePolyline)
-            ] ?? 0
-            guard renderer.maximumIndicatorCount != budget else {
-                continue
-            }
-            renderer.maximumIndicatorCount = budget
-            renderer.setNeedsDisplay()
+        }
+        areRouteBookSlopeDirectionOverlaysSuspendedForMapChange = false
+        if isRouteBookSlopeVisible {
+            addRouteBookSlopeDirectionOverlayIfNeeded()
         }
     }
 
@@ -3538,6 +3963,19 @@ class ViewController: UIViewController {
         isRouteBookMapRegionChanging = true
         routeBookViewportUpdateWorkItem?.cancel()
         routeBookViewportUpdateWorkItem = nil
+        if isRouteBookSlopeVisible {
+            let visibleOverlayIdentifiers = Set(
+                routeBookMapView.overlays.map { ObjectIdentifier($0 as AnyObject) }
+            )
+            let visibleDirectionPolylines = routeBookSlopeDirectionPolylines.filter {
+                visibleOverlayIdentifiers.contains(ObjectIdentifier($0))
+            }
+            if !visibleDirectionPolylines.isEmpty {
+                areRouteBookSlopeDirectionOverlaysSuspendedForMapChange = true
+                routeBookMapView.removeOverlays(visibleDirectionPolylines)
+            }
+            return
+        }
         for routePolyline in routeBookDirectionIndicatorPolylines {
             guard let renderer = routeBookMapView.renderer(for: routePolyline)
                     as? RouteDirectionPolylineRenderer,
@@ -4098,6 +4536,87 @@ class ViewController: UIViewController {
         )
     }
 
+    private func configureRouteBookSlopeOverlays(
+        _ slopeSegments: [PreparedRouteBookSlopeSegment],
+        displayGeometry: RouteViewportDistanceResolver.PreparedGeometry
+    ) {
+        if !routeBookSlopePolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookSlopePolylines)
+        }
+        if !routeBookSlopeDirectionPolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookSlopeDirectionPolylines)
+        }
+        routeBookSlopePolylines = []
+        routeBookSlopeGradients = [:]
+        routeBookSlopeDirectionPolylines = []
+        routeBookSlopeDirectionPolylineIdentifiers = []
+        areRouteBookSlopeDirectionOverlaysSuspendedForMapChange = false
+        isRouteBookSlopeVisible = false
+
+        var remainingChunkCount = routeBookMaximumSlopeOverlayChunkCount
+        var renderedSlopeSegmentIndices = Set<Int>()
+        for (index, slopeSegment) in slopeSegments.enumerated() {
+            guard remainingChunkCount > 0 else {
+                break
+            }
+            let remainingSegmentCount = slopeSegments.count - index
+            let segmentChunkLimit = max(
+                1,
+                remainingChunkCount / max(remainingSegmentCount, 1)
+            )
+            let chunks = RouteSlopeOverlayFactory.makeChunks(
+                coordinates: slopeSegment.coordinates,
+                sourceLocations: slopeSegment.sourceLocations,
+                gradient: slopeSegment.gradient,
+                totalDistance: slopeSegment.totalDistance,
+                preferredChunkDistance: routeBookPreferredSlopeOverlayChunkDistance,
+                maximumChunkCount: segmentChunkLimit
+            )
+            guard !chunks.isEmpty else {
+                continue
+            }
+            renderedSlopeSegmentIndices.insert(slopeSegment.segmentIndex)
+            for chunk in chunks {
+                routeBookSlopePolylines.append(chunk.polyline)
+                routeBookSlopeGradients[ObjectIdentifier(chunk.polyline)] = chunk.gradient
+            }
+            remainingChunkCount -= chunks.count
+            routeBookSlopeDirectionPolylines.append(MKPolyline(
+                coordinates: slopeSegment.coordinates,
+                count: slopeSegment.coordinates.count
+            ))
+        }
+
+        if !routeBookSlopePolylines.isEmpty {
+            let displaySegmentCount = displayGeometry.segmentStartIndices.count + 1
+            let displaySourceSegmentIndices = displayGeometry.sourceSegmentIndices.count
+                    == displaySegmentCount
+                ? displayGeometry.sourceSegmentIndices
+                : Array(0..<displaySegmentCount)
+            let uncoveredDisplaySegmentIndices = Set(
+                displaySourceSegmentIndices.enumerated().compactMap {
+                    renderedSlopeSegmentIndices.contains($0.element) ? nil : $0.offset
+                }
+            )
+            let uncoveredPolylines = RouteViewportDistanceResolver.displayPolylines(
+                coordinates: displayGeometry.coordinates,
+                segmentStartIndices: displayGeometry.segmentStartIndices,
+                includedSegmentIndices: uncoveredDisplaySegmentIndices
+            )
+            routeBookSlopePolylines.insert(contentsOf: uncoveredPolylines, at: 0)
+            for uncoveredPolyline in uncoveredPolylines {
+                routeBookSlopeGradients[ObjectIdentifier(uncoveredPolyline)] = .unavailable
+            }
+        } else {
+            routeBookSlopeGradients = [:]
+            routeBookSlopeDirectionPolylines = []
+        }
+        routeBookSlopeDirectionPolylineIdentifiers = Set(
+            routeBookSlopeDirectionPolylines.map(ObjectIdentifier.init)
+        )
+        updateRouteBookSlopeVisibilityButtonAppearance()
+    }
+
     private func configureRouteBookDirectionIndicatorSelection() {
         let maximumIndicatorCount = 80
         let selectedPolylineCount = min(
@@ -4341,10 +4860,23 @@ class ViewController: UIViewController {
         if !routeBookDisplayPolylines.isEmpty {
             routeBookMapView.removeOverlays(routeBookDisplayPolylines)
         }
+        if !routeBookSlopePolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookSlopePolylines)
+        }
+        if !routeBookSlopeDirectionPolylines.isEmpty {
+            routeBookMapView.removeOverlays(routeBookSlopeDirectionPolylines)
+        }
         routeBookBoundingMapRect = nil
         routeBookDisplayPolylines = []
         routeBookDirectionIndicatorPolylines = []
         routeBookDirectionIndicatorBudgets = [:]
+        routeBookSlopePolylines = []
+        routeBookSlopeGradients = [:]
+        routeBookSlopeDirectionPolylines = []
+        routeBookSlopeDirectionPolylineIdentifiers = []
+        areRouteBookSlopeDirectionOverlaysSuspendedForMapChange = false
+        isRouteBookSlopeVisible = false
+        updateRouteBookSlopeVisibilityButtonAppearance()
         routeBookLastFocusedDistance = nil
         isRouteBookMapRegionChanging = false
         updateRouteBookPanelText()
@@ -4364,6 +4896,7 @@ class ViewController: UIViewController {
         routeBookMapContainerView.isHidden = !isRouteBookModeActive
         routeBookLocateButton.isHidden = !isRouteBookModeActive
         routeBookMapStyleButton.isHidden = !isRouteBookModeActive
+        routeBookSlopeVisibilityButton.isHidden = !isRouteBookModeActive
         setRouteBookScaleViewVisible(isRouteBookModeActive)
         let hidesRouteGrid = isRouteBookModeActive || isSimulatingHomeEmptyData
         routeGridView.isHidden = hidesRouteGrid
@@ -4380,6 +4913,7 @@ class ViewController: UIViewController {
             view.bringSubviewToFront(headerView)
             view.bringSubviewToFront(routeBookScaleView)
             view.bringSubviewToFront(routeBookMapStyleButton)
+            view.bringSubviewToFront(routeBookSlopeVisibilityButton)
             view.bringSubviewToFront(routeBookLocateButton)
             presentRouteBookPanelSheetIfNeeded()
         } else {
@@ -4534,15 +5068,36 @@ extension ViewController: MKMapViewDelegate {
             return MKOverlayRenderer(overlay: overlay)
         }
 
+        let polylineIdentifier = ObjectIdentifier(polyline)
+        if routeBookSlopeDirectionPolylineIdentifiers.contains(polylineIdentifier) {
+            let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
+            renderer.drawsRouteStroke = false
+            renderer.strokeColor = .clear
+            renderer.directionIndicatorColor = routeBookRouteStrokeColor
+            renderer.directionIndicatorSpacing = 180
+            renderer.maximumIndicatorCount = isRouteBookMapRegionChanging
+                ? 0
+                : min(40, max(4, 48 / max(routeBookSlopeDirectionPolylines.count, 1)))
+            return renderer
+        }
+
+        if let gradient = routeBookSlopeGradients[polylineIdentifier] {
+            return AppMapStyle.makeSlopeRenderer(
+                for: polyline,
+                gradient: gradient,
+                matchingNativeLineWidth: AppMapStyle.slopeReferenceRouteLineWidth
+            )
+        }
+
         let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
         renderer.strokeColor = routeBookRouteStrokeColor
         renderer.directionIndicatorColor = routeBookRouteStrokeColor
-        renderer.lineWidth = 2.4
+        renderer.lineWidth = AppMapStyle.routeLineWidth
         renderer.lineJoin = .round
         renderer.lineCap = .round
         renderer.maximumIndicatorCount = isRouteBookMapRegionChanging
             ? 0
-            : routeBookDirectionIndicatorBudgets[ObjectIdentifier(polyline)] ?? 0
+            : routeBookDirectionIndicatorBudgets[polylineIdentifier] ?? 0
         return renderer
     }
 

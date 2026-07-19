@@ -69,6 +69,13 @@ struct RouteSlopeGradient: Sendable {
     let locations: [Double]
     let normalizedSlopes: [Double?]
 
+    /// Uses the same opaque gradient renderer as measured slope sections so
+    /// missing-data sections keep identical stroke coverage and antialiasing.
+    nonisolated static let unavailable = RouteSlopeGradient(
+        locations: [0, 1],
+        normalizedSlopes: [nil, nil]
+    )
+
     nonisolated static func make(
         distances: [CLLocationDistance],
         altitudes: [Double?],
