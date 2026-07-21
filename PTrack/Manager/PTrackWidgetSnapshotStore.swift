@@ -18,6 +18,27 @@ extension PTrackWidgetSettingsStore {
 }
 
 enum PTrackWidgetSnapshotStore {
+    private final class RefreshCoordinator: @unchecked Sendable {
+        let queue = DispatchQueue(label: "studio.pj.PTrack.widget-snapshot", qos: .utility)
+        private let lock = NSLock()
+        private var latestGeneration: UInt64 = 0
+
+        func nextGeneration() -> UInt64 {
+            lock.lock()
+            defer { lock.unlock() }
+            latestGeneration &+= 1
+            return latestGeneration
+        }
+
+        func isLatest(_ generation: UInt64) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return latestGeneration == generation
+        }
+    }
+
+    private static let refreshCoordinator = RefreshCoordinator()
+
     private struct DrawingBounds {
         let minLongitude: Double
         let minLatitude: Double
@@ -37,8 +58,9 @@ enum PTrackWidgetSnapshotStore {
         let snapshotWorkouts = workouts.map { $0.statisticsPreview() }
         let language = systemLanguage
         let goalDistanceMeters = PTrackWidgetSettingsStore.weeklyGoalDistanceMeters
+        let refreshGeneration = refreshCoordinator.nextGeneration()
 
-        DispatchQueue.global(qos: .utility).async {
+        refreshCoordinator.queue.async {
             guard let containerURL = FileManager.default.containerURL(
                 forSecurityApplicationGroupIdentifier: PTrackWidgetConstants.appGroupIdentifier
             ) else {
@@ -54,11 +76,17 @@ enum PTrackWidgetSnapshotStore {
 
             do {
                 let data = try JSONEncoder().encode(snapshot)
+                guard refreshCoordinator.isLatest(refreshGeneration) else {
+                    return
+                }
                 try data.write(
                     to: containerURL.appendingPathComponent(PTrackWidgetConstants.snapshotFileName),
                     options: [.atomic]
                 )
                 DispatchQueue.main.async {
+                    guard refreshCoordinator.isLatest(refreshGeneration) else {
+                        return
+                    }
                     WidgetCenter.shared.reloadAllTimelines()
                 }
             } catch {

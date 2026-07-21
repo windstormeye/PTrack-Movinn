@@ -126,7 +126,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private var routeDisplayIndicatorPolylines: [MKPolyline] = []
     private var routeDisplayIndicatorBudgets: [ObjectIdentifier: Int] = [:]
     private var routeSlopePolylines: [MKPolyline] = []
-    private var routeSlopeUncoveredMultiPolyline: MKMultiPolyline?
     private var routeSlopeGradients: [ObjectIdentifier: RouteSlopeGradient] = [:]
     private var routeSlopeDirectionPolylines: [MKPolyline] = []
     private var routeSlopeDirectionPolylineIdentifiers = Set<ObjectIdentifier>()
@@ -164,7 +163,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
     private let slopeGeometrySimplificationToleranceMeters: CLLocationDistance = 4
     private let preferredSlopeOverlayChunkDistance: CLLocationDistance = 15_000
     private let maximumSlopeOverlayChunkCount = 8
-    private let slopeRouteLineWidth: CGFloat = 3
     private static let minimumPanelDetentIdentifier = UISheetPresentationController.Detent.Identifier(
         "routeDetailMinimum"
     )
@@ -317,7 +315,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
         routeDisplayIndicatorPolylines.removeAll(keepingCapacity: false)
         routeDisplayIndicatorBudgets.removeAll(keepingCapacity: false)
         routeSlopePolylines.removeAll(keepingCapacity: false)
-        routeSlopeUncoveredMultiPolyline = nil
         routeSlopeGradients.removeAll(keepingCapacity: false)
         routeSlopeDirectionPolylines.removeAll(keepingCapacity: false)
         routeSlopeDirectionPolylineIdentifiers.removeAll(keepingCapacity: false)
@@ -1024,7 +1021,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     private func showRouteSlopeColorHint() {
-        guard let window = view.window else {
+        guard let window = view.window,
+              RouteSlopeColorHintStore.consumeShouldShow() else {
             return
         }
 
@@ -2083,7 +2081,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
         configureRouteDisplayOverlayCaches()
         routeSlopeGradient = nil
         routeSlopePolylines.removeAll(keepingCapacity: true)
-        routeSlopeUncoveredMultiPolyline = nil
         routeSlopeGradients.removeAll(keepingCapacity: true)
         routeSlopeDirectionPolylines.removeAll(keepingCapacity: true)
         routeSlopeDirectionPolylineIdentifiers.removeAll(keepingCapacity: true)
@@ -2139,8 +2136,11 @@ final class WorkoutRouteDetailViewController: UIViewController {
             segmentStartIndices: displayGeometry.segmentStartIndices,
             includedSegmentIndices: uncoveredDisplaySegmentIndices
         )
-        if !uncoveredPolylines.isEmpty {
-            routeSlopeUncoveredMultiPolyline = MKMultiPolyline(uncoveredPolylines)
+        if !routeSlopePolylines.isEmpty {
+            routeSlopePolylines.insert(contentsOf: uncoveredPolylines, at: 0)
+            for uncoveredPolyline in uncoveredPolylines {
+                routeSlopeGradients[ObjectIdentifier(uncoveredPolyline)] = .unavailable
+            }
         }
         routeSlopeDirectionPolylineIdentifiers = Set(
             routeSlopeDirectionPolylines.map(ObjectIdentifier.init)
@@ -2149,7 +2149,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
             routeSlopeGradient = nil
             routeSlopeDirectionPolylines.removeAll(keepingCapacity: true)
             routeSlopeDirectionPolylineIdentifiers.removeAll(keepingCapacity: true)
-            routeSlopeUncoveredMultiPolyline = nil
         }
         isRouteSlopeVisible = false
         updateRouteSlopeVisibilityButtonAppearance()
@@ -2236,16 +2235,6 @@ final class WorkoutRouteDetailViewController: UIViewController {
     }
 
     func routeOverlayRenderer(for overlay: MKOverlay) -> MKOverlayRenderer {
-        if let multiPolyline = overlay as? MKMultiPolyline,
-           multiPolyline === routeSlopeUncoveredMultiPolyline {
-            let renderer = MKMultiPolylineRenderer(multiPolyline: multiPolyline)
-            renderer.strokeColor = UIColor.systemGray.withAlphaComponent(0.58)
-            renderer.lineWidth = slopeRouteLineWidth
-            renderer.lineJoin = .round
-            renderer.lineCap = .round
-            return renderer
-        }
-
         guard let polyline = overlay as? MKPolyline else {
             return MKOverlayRenderer(overlay: overlay)
         }
@@ -2271,7 +2260,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
             return AppMapStyle.makeSlopeRenderer(
                 for: polyline,
                 gradient: routeSlopeGradient,
-                lineWidth: slopeRouteLineWidth
+                matchingNativeLineWidth: AppMapStyle.slopeReferenceRouteLineWidth
             )
         }
 
@@ -2288,7 +2277,7 @@ final class WorkoutRouteDetailViewController: UIViewController {
         for polyline: MKPolyline
     ) -> RouteDirectionPolylineRenderer {
         let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
-        renderer.lineWidth = 1.5
+        renderer.lineWidth = AppMapStyle.routeLineWidth
         renderer.directionIndicatorLength = 14.5
         renderer.directionIndicatorWidth = 17
         renderer.directionIndicatorStrokeWidth = 3.4
@@ -2323,15 +2312,8 @@ final class WorkoutRouteDetailViewController: UIViewController {
         if !visibleSlopePolylines.isEmpty {
             mapView.removeOverlays(visibleSlopePolylines)
         }
-        if let routeSlopeUncoveredMultiPolyline,
-           visibleOverlayIdentifiers.contains(ObjectIdentifier(routeSlopeUncoveredMultiPolyline)) {
-            mapView.removeOverlay(routeSlopeUncoveredMultiPolyline)
-        }
         if isRouteSlopeVisible,
            !routeSlopePolylines.isEmpty {
-            if let routeSlopeUncoveredMultiPolyline {
-                mapView.addOverlay(routeSlopeUncoveredMultiPolyline, level: .aboveLabels)
-            }
             mapView.addOverlays(routeSlopePolylines, level: .aboveLabels)
             addRouteSlopeDirectionOverlayIfNeeded()
         } else {

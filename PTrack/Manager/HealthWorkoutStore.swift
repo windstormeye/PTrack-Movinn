@@ -294,7 +294,7 @@ final class HealthWorkoutStore {
         after startDate: Date?,
         excludingIDs excludedIDs: Set<String>,
         onNewDataDetected: ((Int) -> Void)? = nil,
-        onTrackedWorkout: @escaping (TrackedWorkout) -> Void,
+        onTrackedWorkouts: @escaping ([TrackedWorkout]) -> Void,
         completion: @escaping (Result<LoadResult, Error>) -> Void
     ) {
         let types: [HKWorkoutActivityType] = [.cycling, .hiking, .walking, .running]
@@ -338,7 +338,7 @@ final class HealthWorkoutStore {
             self.progressHandler?("找到 \(workouts.count) 条运动记录，正在逐条读取轨迹...")
             self.loadRoutes(
                 for: workouts,
-                onTrackedWorkout: onTrackedWorkout,
+                onTrackedWorkouts: onTrackedWorkouts,
                 completion: completion
             )
         }
@@ -399,7 +399,7 @@ final class HealthWorkoutStore {
 
     private func loadRoutes(
         for workouts: [HKWorkout],
-        onTrackedWorkout: @escaping (TrackedWorkout) -> Void,
+        onTrackedWorkouts: @escaping ([TrackedWorkout]) -> Void,
         completion: @escaping (Result<LoadResult, Error>) -> Void
     ) {
         guard !workouts.isEmpty else {
@@ -410,9 +410,20 @@ final class HealthWorkoutStore {
         var trackedWorkoutCount = 0
         var failedRouteLoadCount = 0
         var firstError: Error?
+        var trackedWorkoutBatch: [TrackedWorkout] = []
+        trackedWorkoutBatch.reserveCapacity(20)
+
+        func flushTrackedWorkoutBatch() {
+            guard !trackedWorkoutBatch.isEmpty else {
+                return
+            }
+            onTrackedWorkouts(trackedWorkoutBatch)
+            trackedWorkoutBatch.removeAll(keepingCapacity: true)
+        }
 
         func loadNextWorkout(at index: Int) {
             guard index < workouts.count else {
+                flushTrackedWorkoutBatch()
                 if let firstError, trackedWorkoutCount == 0 {
                     completion(.failure(firstError))
                 } else {
@@ -450,12 +461,15 @@ final class HealthWorkoutStore {
                     self.progressHandler?("正在读取 \(workout.startDate) 的运动指标...")
                     self.loadQuantityMetrics(for: workout) { quantityMetrics in
                         trackedWorkoutCount += 1
-                        onTrackedWorkout(TrackedWorkout(
+                        trackedWorkoutBatch.append(TrackedWorkout(
                             workout: workout,
                             locations: routeDetails.locations,
                             routeSegments: routeDetails.segments,
                             quantityMetrics: quantityMetrics
                         ))
+                        if trackedWorkoutBatch.count >= 20 {
+                            flushTrackedWorkoutBatch()
+                        }
                         loadNextWorkout(at: index + 1)
                     }
                     return

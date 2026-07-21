@@ -77,7 +77,10 @@ struct TrackedWorkout: nonisolated Codable {
     /// Bump this when a newly requested stream needs to be backfilled into cached
     /// activities independently of HealthKit's cache schema.
     nonisolated static let currentStravaStreamDataVersion = 1
+    nonisolated static let stravaAthleteIDMetadataKey = "strava.athleteID"
     nonisolated static let stravaStreamDataVersionMetadataKey = "strava.streamDataVersion"
+    nonisolated static let stravaSummaryPlaceholderMetadataKey = "strava.summaryPlaceholder"
+    nonisolated static let stravaTerminalPlaceholderMetadataKey = "strava.terminalPlaceholder"
 
     let id: String
     let healthDataVersion: Int?
@@ -182,23 +185,12 @@ struct TrackedWorkout: nonisolated Codable {
         isHealthKitBackedSource && healthDataVersion != Self.currentHealthDataVersion
     }
 
-    var stravaStreamDataVersion: Int? {
-        guard let rawValue = metadata?[Self.stravaStreamDataVersionMetadataKey]?.doubleValue,
-              let version = Int(exactly: rawValue),
-              version >= 0 else {
-            return nil
-        }
-        return version
+    var isStravaSummaryPlaceholder: Bool {
+        metadata?[Self.stravaSummaryPlaceholderMetadataKey]?.boolValue == true
     }
 
-    var needsStravaStreamDataRefresh: Bool {
-        guard !isRouteCollectionSource, isDirectStravaImport else {
-            return false
-        }
-        guard let stravaStreamDataVersion else {
-            return true
-        }
-        return stravaStreamDataVersion < Self.currentStravaStreamDataVersion
+    var isStravaTerminalPlaceholder: Bool {
+        metadata?[Self.stravaTerminalPlaceholderMetadataKey]?.boolValue == true
     }
 
     /// Route collections and direct Strava imports share the cache model, but are
@@ -209,6 +201,17 @@ struct TrackedWorkout: nonisolated Codable {
 
     private var isDirectStravaImport: Bool {
         id.hasPrefix("strava-") || metadata?["strava.id"] != nil
+    }
+
+    /// Storage origin used for synchronization and deduplication. This differs
+    /// from `isStravaSource`: a HealthKit workout written by the Strava app is
+    /// still HealthKit-backed even though its user-facing source is Strava.
+    var isHealthKitSource: Bool {
+        isHealthKitBackedSource
+    }
+
+    var isDirectStravaSource: Bool {
+        isDirectStravaImport
     }
 
     var stravaActivityID: Int64? {
@@ -231,6 +234,13 @@ struct TrackedWorkout: nonisolated Codable {
         }
 
         return nil
+    }
+
+    var stravaAthleteID: Int64? {
+        guard let value = metadata?[Self.stravaAthleteIDMetadataKey]?.stringValue else {
+            return nil
+        }
+        return Int64(value)
     }
 
     var isStravaSource: Bool {

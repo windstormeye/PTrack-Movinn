@@ -9,6 +9,7 @@ import CoreLocation
 import Foundation
 import HealthKit
 import MapKit
+import OSLog
 
 struct HeatmapRouteCacheSnapshot {
     let routes: [HeatmapRoute]
@@ -59,7 +60,17 @@ final class HeatmapRouteCacheStore {
         )
 
         cacheLock.lock()
-        let routes = heatmapRoutesByID.values
+        let cachedRoutes = heatmapRoutesByID.values.filter {
+            currentWorkoutIDs?.contains($0.id) ?? true
+        }
+        let cachedStatisticWorkouts = statisticWorkoutsByID.values.filter {
+            currentWorkoutIDs?.contains($0.id) ?? true
+        }
+        let cachedStatisticWorkoutIDs = statisticWorkoutIDs
+        let cachedStatisticCacheComplete = isStatisticCacheComplete
+        cacheLock.unlock()
+
+        let routes = cachedRoutes
             .sorted { lhs, rhs in
                 let lhsOrder = manifestRouteOrder[lhs.id] ?? Int.max
                 let rhsOrder = manifestRouteOrder[rhs.id] ?? Int.max
@@ -70,9 +81,9 @@ final class HeatmapRouteCacheStore {
                 return lhs.id < rhs.id
         }
         let cachedRouteIDs = Set(routes.map(\.id))
-        let statisticWorkouts = statisticWorkoutsByID.values
+        let statisticWorkouts = cachedStatisticWorkouts
             .sorted { $0.startDate > $1.startDate }
-        cacheLock.unlock()
+        let cachedStatisticObjectIDs = Set(statisticWorkouts.map(\.id))
 
         let isRouteCacheComplete = Self.isManifestComplete(
             manifest,
@@ -80,8 +91,9 @@ final class HeatmapRouteCacheStore {
             cachedRouteIDs: cachedRouteIDs
         )
         let isStatisticCacheComplete = Self.isStatisticsComplete(
-            workoutIDs: statisticWorkoutIDs,
-            isComplete: isStatisticCacheComplete,
+            workoutIDs: cachedStatisticWorkoutIDs,
+            cachedStatisticObjectIDs: cachedStatisticObjectIDs,
+            isComplete: cachedStatisticCacheComplete,
             currentWorkoutIDs: currentWorkoutIDs
         )
         return HeatmapRouteCacheSnapshot(
@@ -96,7 +108,9 @@ final class HeatmapRouteCacheStore {
         samplingRatio: Double,
         maximumPointCount: Int
     ) -> HeatmapRoute? {
-        loadDiskCacheIfNeeded()
+        guard loadDiskCacheIfNeeded() else {
+            return nil
+        }
 
         let signature = HeatmapRouteSignature(
             workout: workout,
@@ -158,20 +172,11 @@ final class HeatmapRouteCacheStore {
         cacheLock.lock()
         cachedRoutesByID.removeValue(forKey: id)
         heatmapRoutesByID.removeValue(forKey: id)
-        statisticWorkoutsByID.removeValue(forKey: id)
-        let statisticWorkouts = sortedStatisticWorkouts()
-        let cachedStatisticWorkoutIDs = statisticWorkoutIDs
-        let isStatisticCacheComplete = isStatisticCacheComplete
         cacheLock.unlock()
 
         let fileURL = routeFileURL(for: id)
-        ioQueue.async { [statisticWorkouts, cachedStatisticWorkoutIDs, isStatisticCacheComplete] in
+        ioQueue.async {
             self.removeManifestIfNeeded()
-            self.writeStatistics(
-                statisticWorkouts,
-                workoutIDs: cachedStatisticWorkoutIDs,
-                isComplete: isStatisticCacheComplete
-            )
             guard FileManager.default.fileExists(atPath: fileURL.path) else {
                 return
             }
@@ -193,7 +198,9 @@ final class HeatmapRouteCacheStore {
             return
         }
 
-        loadDiskCacheIfNeeded()
+        guard loadDiskCacheIfNeeded() else {
+            return
+        }
 
         cacheLock.lock()
         for workout in workouts {
@@ -215,7 +222,9 @@ final class HeatmapRouteCacheStore {
     }
 
     func markStatisticWorkoutsComplete(workoutIDs: Set<String>) {
-        loadDiskCacheIfNeeded()
+        guard loadDiskCacheIfNeeded() else {
+            return
+        }
 
         cacheLock.lock()
         statisticWorkoutIDs.formUnion(workoutIDs)
@@ -242,7 +251,9 @@ final class HeatmapRouteCacheStore {
     }
 
     private func writeRouteSetManifest(workoutIDs: Set<String>, isComplete: Bool) {
-        loadDiskCacheIfNeeded()
+        guard loadDiskCacheIfNeeded() else {
+            return
+        }
 
         cacheLock.lock()
         let routeIDs = cachedRoutesByID.keys
@@ -329,6 +340,7 @@ final class HeatmapRouteCacheStore {
 
     private static func isStatisticsComplete(
         workoutIDs: Set<String>,
+        cachedStatisticObjectIDs: Set<String>,
         isComplete: Bool,
         currentWorkoutIDs: Set<String>?
     ) -> Bool {
@@ -338,17 +350,22 @@ final class HeatmapRouteCacheStore {
 
         guard let currentWorkoutIDs else {
             return !workoutIDs.isEmpty
+                && workoutIDs.isSubset(of: cachedStatisticObjectIDs)
         }
 
         return currentWorkoutIDs.isSubset(of: workoutIDs)
+            && currentWorkoutIDs.isSubset(of: cachedStatisticObjectIDs)
     }
 
     func pruneRoutes(keeping validWorkoutIDs: Set<String>) {
-        loadDiskCacheIfNeeded()
+        guard loadDiskCacheIfNeeded() else {
+            return
+        }
 
         cacheLock.lock()
         let staleIDs = Set(cachedRoutesByID.keys).subtracting(validWorkoutIDs)
         let staleStatisticIDs = Set(statisticWorkoutsByID.keys).subtracting(validWorkoutIDs)
+        let previousStatisticWorkoutIDs = statisticWorkoutIDs
         statisticWorkoutIDs = statisticWorkoutIDs.intersection(validWorkoutIDs)
         for routeID in staleIDs {
             cachedRoutesByID.removeValue(forKey: routeID)
@@ -362,11 +379,14 @@ final class HeatmapRouteCacheStore {
         let isStatisticCacheComplete = isStatisticCacheComplete
         cacheLock.unlock()
 
-        guard !staleIDs.isEmpty || !staleStatisticIDs.isEmpty else {
+        guard !staleIDs.isEmpty
+                || !staleStatisticIDs.isEmpty
+                || previousStatisticWorkoutIDs != cachedStatisticWorkoutIDs else {
             return
         }
 
         ioQueue.async { [staleIDs, statisticWorkouts, cachedStatisticWorkoutIDs, isStatisticCacheComplete] in
+            self.removeManifestIfNeeded()
             self.writeStatistics(
                 statisticWorkouts,
                 workoutIDs: cachedStatisticWorkoutIDs,
@@ -387,18 +407,35 @@ final class HeatmapRouteCacheStore {
         }
     }
 
-    private func loadDiskCacheIfNeeded() {
+    @discardableResult
+    private func loadDiskCacheIfNeeded() -> Bool {
         cacheLock.lock()
         guard !hasLoadedDiskCache else {
             cacheLock.unlock()
-            return
+            return true
         }
 
-        hasLoadedDiskCache = true
-        let fileURLs = existingRouteFileURLs()
+        let fileURLs: [URL]
+        let loadedStatistics: (
+            workoutsByID: [String: TrackedWorkout],
+            workoutIDs: Set<String>,
+            isComplete: Bool
+        )
+        do {
+            fileURLs = try existingRouteFileURLs()
+            loadedStatistics = try loadStatistics()
+        } catch {
+            // Leave the cache retryable. Treating a transient directory/file
+            // read as a durable empty cache can later overwrite valid data with
+            // a partial heatmap snapshot.
+            cacheLock.unlock()
+            PTrackLog.cache.debug("PTrack Heatmap Cache: disk inventory load failed and will be retried: \(error)")
+            return false
+        }
+
         var loadedCachedRoutes: [String: CachedHeatmapRoute] = [:]
         var loadedHeatmapRoutes: [String: HeatmapRoute] = [:]
-        let loadedStatistics = loadStatistics()
+        var didReadEveryRouteFile = true
         loadedCachedRoutes.reserveCapacity(fileURLs.count)
         loadedHeatmapRoutes.reserveCapacity(fileURLs.count)
 
@@ -414,6 +451,7 @@ final class HeatmapRouteCacheStore {
                 loadedCachedRoutes[cachedRoute.id] = cachedRoute
                 loadedHeatmapRoutes[cachedRoute.id] = heatmapRoute
             } catch {
+                didReadEveryRouteFile = false
                 print("PTrack Heatmap Cache: failed to decode route \(fileURL.lastPathComponent): \(error)")
             }
         }
@@ -423,38 +461,36 @@ final class HeatmapRouteCacheStore {
         statisticWorkoutsByID.merge(loadedStatistics.workoutsByID) { current, _ in current }
         statisticWorkoutIDs.formUnion(loadedStatistics.workoutIDs)
         isStatisticCacheComplete = loadedStatistics.isComplete
+        hasLoadedDiskCache = didReadEveryRouteFile
         cacheLock.unlock()
+        return didReadEveryRouteFile
     }
 
-    private func loadStatistics() -> (
+    private func loadStatistics() throws -> (
         workoutsByID: [String: TrackedWorkout],
         workoutIDs: Set<String>,
         isComplete: Bool
     ) {
-        guard let data = try? Data(contentsOf: statisticsFileURL) else {
+        guard FileManager.default.fileExists(atPath: statisticsFileURL.path) else {
             return ([:], [], false)
         }
 
-        do {
-            let statistics = try JSONDecoder().decode(CachedHeatmapStatistics.self, from: data)
-            guard statistics.version == cacheVersion else {
-                return ([:], [], false)
-            }
-
-            let workoutsByID = Dictionary(
-                statistics.workouts.map { ($0.id, $0) },
-                uniquingKeysWith: { current, _ in current }
-            )
-            let workoutIDs = Set(statistics.workoutIDs ?? Array(workoutsByID.keys))
-            return (
-                workoutsByID,
-                workoutIDs,
-                statistics.isComplete ?? false
-            )
-        } catch {
-            print("PTrack Heatmap Cache: failed to decode statistics: \(error)")
+        let data = try Data(contentsOf: statisticsFileURL)
+        let statistics = try JSONDecoder().decode(CachedHeatmapStatistics.self, from: data)
+        guard statistics.version == cacheVersion else {
             return ([:], [], false)
         }
+
+        let workoutsByID = Dictionary(
+            statistics.workouts.map { ($0.id, $0) },
+            uniquingKeysWith: { current, _ in current }
+        )
+        let workoutIDs = Set(statistics.workoutIDs ?? Array(workoutsByID.keys))
+        return (
+            workoutsByID,
+            workoutIDs,
+            statistics.isComplete ?? false
+        )
     }
 
     private func loadManifest() -> CachedHeatmapRouteManifest? {
@@ -482,14 +518,16 @@ final class HeatmapRouteCacheStore {
         }
     }
 
-    private func existingRouteFileURLs() -> [URL] {
-        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+    private func existingRouteFileURLs() throws -> [URL] {
+        try FileManager.default.createDirectory(
+            at: routesDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        let fileURLs = try FileManager.default.contentsOfDirectory(
             at: routesDirectoryURL,
             includingPropertiesForKeys: [.fileSizeKey],
             options: [.skipsHiddenFiles]
-        ) else {
-            return []
-        }
+        )
 
         return fileURLs
             .filter { $0.pathExtension == "json" }

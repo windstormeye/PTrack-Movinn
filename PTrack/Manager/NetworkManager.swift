@@ -142,7 +142,7 @@ struct EmptyNetworkResponse: Decodable {}
 struct NetworkResponse<Response> {
     let value: Response
     let statusCode: Int
-    let headers: [AnyHashable: Any]
+    let headers: [String: String]
     let data: Data
 }
 
@@ -188,12 +188,14 @@ final class NetworkManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.invalidResponse
         }
+        let responseHeaders = Self.normalizedHeaders(httpResponse.allHeaderFields)
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw NetworkError.httpStatus(
                 code: httpResponse.statusCode,
                 message: decodedErrorMessage(from: data),
-                data: data
+                data: data,
+                headers: responseHeaders
             )
         }
 
@@ -201,13 +203,14 @@ final class NetworkManager {
             Response.self,
             from: data,
             statusCode: httpResponse.statusCode,
+            headers: responseHeaders,
             decoder: customDecoder ?? defaultDecoder
         )
 
         return NetworkResponse(
             value: value,
             statusCode: httpResponse.statusCode,
-            headers: httpResponse.allHeaderFields,
+            headers: responseHeaders,
             data: data
         )
     }
@@ -225,19 +228,21 @@ final class NetworkManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.invalidResponse
         }
+        let responseHeaders = Self.normalizedHeaders(httpResponse.allHeaderFields)
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw NetworkError.httpStatus(
                 code: httpResponse.statusCode,
                 message: decodedErrorMessage(from: data),
-                data: data
+                data: data,
+                headers: responseHeaders
             )
         }
 
         return NetworkResponse(
             value: data,
             statusCode: httpResponse.statusCode,
-            headers: httpResponse.allHeaderFields,
+            headers: responseHeaders,
             data: data
         )
     }
@@ -290,6 +295,7 @@ final class NetworkManager {
         _ responseType: Response.Type,
         from data: Data,
         statusCode: Int,
+        headers: [String: String],
         decoder: JSONDecoder
     ) throws -> Response {
         if responseType == EmptyNetworkResponse.self, data.isEmpty {
@@ -302,7 +308,8 @@ final class NetworkManager {
             throw NetworkError.decodingFailed(
                 underlying: error,
                 statusCode: statusCode,
-                data: data
+                data: data,
+                headers: headers
             )
         }
     }
@@ -330,20 +337,38 @@ final class NetworkManager {
 
         return String(data: data, encoding: .utf8)
     }
+
+    private static func normalizedHeaders(
+        _ headers: [AnyHashable: Any]
+    ) -> [String: String] {
+        headers.reduce(into: [:]) { result, entry in
+            result[String(describing: entry.key).lowercased()] = String(describing: entry.value)
+        }
+    }
 }
 
 enum NetworkError: LocalizedError {
-    case decodingFailed(underlying: Error, statusCode: Int, data: Data)
-    case httpStatus(code: Int, message: String?, data: Data)
+    case decodingFailed(
+        underlying: Error,
+        statusCode: Int,
+        data: Data,
+        headers: [String: String]
+    )
+    case httpStatus(
+        code: Int,
+        message: String?,
+        data: Data,
+        headers: [String: String]
+    )
     case invalidResponse
     case invalidURL(String)
     case transportFailed(Error)
 
     var errorDescription: String? {
         switch self {
-        case .decodingFailed(let underlying, let statusCode, let data):
+        case .decodingFailed(let underlying, let statusCode, let data, _):
             return "Failed to decode response (\(statusCode)): \(underlying.localizedDescription). \(Self.preview(data))"
-        case .httpStatus(let code, let message, let data):
+        case .httpStatus(let code, let message, let data, _):
             return message ?? "Request failed with HTTP \(code). \(Self.preview(data))"
         case .invalidResponse:
             return "The server returned an invalid response."
@@ -356,10 +381,20 @@ enum NetworkError: LocalizedError {
 
     var statusCode: Int? {
         switch self {
-        case .httpStatus(let code, _, _), .decodingFailed(_, let code, _):
+        case .httpStatus(let code, _, _, _), .decodingFailed(_, let code, _, _):
             return code
         case .invalidResponse, .invalidURL, .transportFailed:
             return nil
+        }
+    }
+
+    var responseHeaders: [String: String] {
+        switch self {
+        case .httpStatus(_, _, _, let headers),
+             .decodingFailed(_, _, _, let headers):
+            return headers
+        case .invalidResponse, .invalidURL, .transportFailed:
+            return [:]
         }
     }
 
