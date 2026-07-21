@@ -687,7 +687,7 @@ enum RouteViewportDistanceResolver {
         return isValid(result) ? result : nil
     }
 
-    private static func wrappedMapPoint(
+    nonisolated private static func wrappedMapPoint(
         _ point: MKMapPoint,
         nearX referenceX: Double
     ) -> MKMapPoint {

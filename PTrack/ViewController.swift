@@ -8,6 +8,7 @@
 import AuthenticationServices
 import CoreLocation
 import MapKit
+import OSLog
 import SnapKit
 import HealthKit
 import UIKit
@@ -16,10 +17,15 @@ class ViewController: UIViewController {
     private enum DefaultsKey {
         static let healthHistoricalBackfillCompleted = "studio.pj.PTrack.health.historicalBackfillCompleted"
         static let healthHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.health.historicalBackfillCacheCommitCompleted"
+        static let healthCacheIntegrityRepairVersion = "studio.pj.PTrack.health.cacheIntegrityRepairVersion"
+        static let healthLastFullCoverageReconciliationDate = "studio.pj.PTrack.health.lastFullCoverageReconciliationDate"
+        static let healthImportInProgress = "studio.pj.PTrack.health.importInProgress"
         static let stravaHistoricalBackfillCompleted = "studio.pj.PTrack.strava.historicalBackfillCompleted"
         static let stravaHistoricalBackfillCacheCommitCompleted = "studio.pj.PTrack.strava.historicalBackfillCacheCommitCompleted"
-        static let stravaStreamDataMigrationVersion = "studio.pj.PTrack.strava.streamDataMigrationVersion"
-        static let stravaTerminalStreamMigrationState = "studio.pj.PTrack.strava.terminalStreamMigrationState"
+        static let stravaCacheIntegrityRepairVersion = "studio.pj.PTrack.strava.cacheIntegrityRepairVersion"
+        static let stravaLastFullCoverageReconciliationDate = "studio.pj.PTrack.strava.lastFullCoverageReconciliationDate"
+        static let stravaLastPlaceholderEnrichmentAttemptDate = "studio.pj.PTrack.strava.lastPlaceholderEnrichmentAttemptDate"
+        static let stravaImportInProgress = "studio.pj.PTrack.strava.importInProgress"
         static let homeRouteGridColumnCount = "studio.pj.PTrack.home.routeGridColumnCount"
     }
 
@@ -92,18 +98,11 @@ class ViewController: UIViewController {
         let matchingGeometry: RouteBookMatchingGeometry
     }
 
-    private struct PendingStravaSyncRequest {
-        let showsLoadingIndicator: Bool
-    }
-
-    private struct StravaTerminalStreamMigrationState: Codable {
-        let schemaVersion: Int
-        let activityIDs: [Int64]
-    }
-
     private let store = HealthWorkoutStore()
     private let cacheStore = WorkoutCacheStore()
     private let routeCollectionStore = RouteCollectionStore()
+    private let syncCoordinator = WorkoutSyncCoordinator()
+    private let syncStateStore = WorkoutSyncStateStore()
     let newWorkoutBadgeStore = NewWorkoutBadgeStore()
     private let cacheLoadQueue = DispatchQueue(label: "studio.pj.PTrack.cache-load", qos: .userInitiated)
     private let cacheSaveQueue = DispatchQueue(label: "studio.pj.PTrack.cache-save", qos: .utility)
@@ -111,6 +110,10 @@ class ViewController: UIViewController {
     private let routeBookPreparationQueue = DispatchQueue(label: "studio.pj.PTrack.route-book-prepare", qos: .userInitiated)
     var workouts: [TrackedWorkout] = []
     private var knownWorkoutIDs = Set<String>()
+    private var workoutIndexByID: [String: Int] = [:]
+    private var pendingWorkoutIndexByID: [String: Int] = [:]
+    private var directStravaWorkoutsByStartDate: [Date: [TrackedWorkout]] = [:]
+    private var healthWorkoutsByStartDate: [Date: [TrackedWorkout]] = [:]
     private var pendingWorkouts: [TrackedWorkout] = []
     private var pendingFlushWorkItem: DispatchWorkItem?
     private var pendingCacheSaveWorkItem: DispatchWorkItem?
@@ -119,17 +122,23 @@ class ViewController: UIViewController {
     private var deletedCacheWorkoutIDs = Set<String>()
     private var isCacheSaveInProgress = false
     private var needsCacheSaveAfterCurrentSave = false
+    private var consecutiveCacheSaveFailureCount = 0
+    private var backgroundCacheSaveTask: UIBackgroundTaskIdentifier = .invalid
     private var totalDistanceMeters: Double = 0
     private var cachedWorkoutSummary: WorkoutCacheSummary?
+    private var cachedManifestWorkoutIDs: Set<String>?
+    private var didDetectCacheIntegrityIssue = false
+    private var needsHealthCacheIntegrityRepair = false
+    private var needsStravaCacheIntegrityRepair = false
+    private var isCachePersistenceHealthy = true
     private var activeLoadingOperationCount = 0
     private var isCacheLoadInProgress = false
-    private var isHealthSyncInProgress = false
-    private var isStravaSyncInProgress = false
-    private var isHealthNewDataSyncInProgress = false
-    private var isStravaNewDataSyncInProgress = false
+    private var isAppInBackground = false
     private var isCacheLoadShowingLoadingIndicator = false
-    private var isHealthSyncShowingLoadingIndicator = false
-    private var isStravaSyncShowingLoadingIndicator = false
+    private var pendingDataSourceSyncRetryWorkItem: DispatchWorkItem?
+    private var pendingDataSourceSyncRetryNotBefore: Date?
+    private var pendingDataSourceSyncRetryAttempt = 0
+    private var pendingStravaEnrichmentRetryWorkItem: DispatchWorkItem?
     private var isPullRefreshArmedInCurrentDrag = false
     private var collectionView: UICollectionView!
     private let routeGridView = WorkoutRouteGridView()
@@ -176,9 +185,20 @@ class ViewController: UIViewController {
     private let pendingWorkoutFlushDelay: TimeInterval = 0.35
     private let activeScrollFlushDelay: TimeInterval = 0.45
     private let cacheSaveDebounceDelay: TimeInterval = 1.0
+    private let cacheSaveRetryMaximumDelay: TimeInterval = 30
+    private let cacheSaveMaximumAutomaticRetryCount = 5
     private let cacheLoadPreviewBatchSize = 32
     private let homePreviewCoordinateLimit = 240
+    private let currentCacheIntegrityRepairVersion = 1
+    private let stravaRequestLimitPerPass = 80
     private let stravaIncrementalLookback: TimeInterval = 7 * 24 * 60 * 60
+    private let healthFullCoverageReconciliationInterval: TimeInterval = 7 * 24 * 60 * 60
+    private let stravaFullCoverageReconciliationInterval: TimeInterval = 30 * 24 * 60 * 60
+    private let stravaPlaceholderEnrichmentInterval: TimeInterval = 6 * 60 * 60
+    private let stravaIncompleteRetryBaseDelay: TimeInterval = 15 * 60
+    private let stravaTransientRetryBaseDelay: TimeInterval = 60
+    private let stravaRetryMaximumDelay: TimeInterval = 24 * 60 * 60
+    private let stravaMaximumAutomaticUnchangedRetryCount = 6
     private let pullRefreshTriggerDistance: CGFloat = 86
     private let routeBookPanelHeight: CGFloat = 68
     private let routeBookPanelDetailContentTopSpacing: CGFloat = 24
@@ -235,8 +255,6 @@ class ViewController: UIViewController {
     private var selectedRouteBookMapStyle = AppMapDisplayStyleStore.shared.routeBookStyle()
     private var shouldClearRouteImportIndicatorsOnNextHomeAppear = false
     private var isHealthAuthorizationRecoveryCheckInProgress = false
-    private var isCurrentHealthHistoricalBackfill = false
-    private var pendingStravaSyncAfterHealth: PendingStravaSyncRequest?
     private var isScrollDateIndicatorVisible = false
     private var scrollDateIndicatorHideWorkItem: DispatchWorkItem?
     private var lastScrollDateIndicatorOffsetY: CGFloat?
@@ -249,6 +267,7 @@ class ViewController: UIViewController {
         routeBookViewportUpdateWorkItem?.cancel()
         pendingFlushWorkItem?.cancel()
         pendingCacheSaveWorkItem?.cancel()
+        endBackgroundCacheSaveTask()
         scrollDateIndicatorHideWorkItem?.cancel()
         stopRouteBookLocationAndHeadingUpdates()
         routeBookPanelSheetViewController.sheetPresentationController?.delegate = nil
@@ -280,14 +299,13 @@ class ViewController: UIViewController {
         configureDemoModeEntryButton()
         configureLoadingIndicator()
         registerLanguageObserver()
-        registerStravaImportObserver()
         registerRouteBookObserver()
         registerSharedRouteImportObserver()
-        registerAppForegroundObserver()
+        registerAppLifecycleObservers()
         registerHealthAuthorizationObserver()
         registerTraitChangeHandler()
         store.progressHandler = { message in
-            print("PTrack HealthKit: \(message)")
+            PTrackLog.synchronization.debug("PTrack HealthKit: \(message)")
         }
         importPendingSharedRoutesIfNeeded()
         restorePersistedRouteBookModeIfNeeded()
@@ -1374,43 +1392,25 @@ class ViewController: UIViewController {
     }
 
     private func showHealthSyncLoadingIndicatorIfNeeded() {
-        guard isHealthSyncInProgress, !isHealthSyncShowingLoadingIndicator else {
+        guard syncCoordinator.showLoadingIndicatorIfNeeded(.health) else {
             return
         }
-
-        isHealthSyncShowingLoadingIndicator = true
         beginLoadingOperation()
     }
 
     private func showStravaSyncLoadingIndicatorIfNeeded() {
-        guard isStravaSyncInProgress, !isStravaSyncShowingLoadingIndicator else {
+        guard syncCoordinator.showLoadingIndicatorIfNeeded(.strava) else {
             return
         }
-
-        isStravaSyncShowingLoadingIndicator = true
         beginLoadingOperation()
     }
 
     private var isNewDataSyncInProgress: Bool {
-        isHealthNewDataSyncInProgress || isStravaNewDataSyncInProgress
+        syncCoordinator.isNewDataSyncInProgress
     }
 
-    private func setHealthNewDataSyncInProgress(_ isInProgress: Bool) {
-        guard isHealthNewDataSyncInProgress != isInProgress else {
-            return
-        }
-
-        isHealthNewDataSyncInProgress = isInProgress
-        updateRouteGridPrefetchingState()
-        updateTotalDistanceText()
-    }
-
-    private func setStravaNewDataSyncInProgress(_ isInProgress: Bool) {
-        guard isStravaNewDataSyncInProgress != isInProgress else {
-            return
-        }
-
-        isStravaNewDataSyncInProgress = isInProgress
+    private func setNewDataSyncInProgress(_ isInProgress: Bool, for source: WorkoutSyncCoordinator.Source) {
+        syncCoordinator.setNewData(isInProgress, for: source)
         updateRouteGridPrefetchingState()
         updateTotalDistanceText()
     }
@@ -1526,6 +1526,23 @@ class ViewController: UIViewController {
     }
 
     func synchronizeDataSourcesForAppOpen(showsLoadingIndicator: Bool = true) {
+        guard !isCacheLoadInProgress,
+              !isAppInBackground,
+              !syncCoordinator.isInProgress(.health),
+              !syncCoordinator.isInProgress(.strava),
+              !isHealthAuthorizationRecoveryCheckInProgress else {
+            queueDataSourceSynchronization(showsLoadingIndicator: showsLoadingIndicator)
+            if showsLoadingIndicator, isCacheLoadInProgress {
+                showCacheLoadLoadingIndicatorIfNeeded()
+            } else if showsLoadingIndicator, syncCoordinator.isInProgress(.health) {
+                showHealthSyncLoadingIndicatorIfNeeded()
+            } else if showsLoadingIndicator, syncCoordinator.isInProgress(.strava) {
+                showStravaSyncLoadingIndicatorIfNeeded()
+            }
+            PTrackLog.synchronization.debug("PTrack Sync: coalesced data-source synchronization behind the active operation")
+            return
+        }
+
         updateHeaderReadAuthorizationState()
 
         switch store.authorizationState {
@@ -1533,11 +1550,11 @@ class ViewController: UIViewController {
             queueStravaSyncAfterHealthIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
             loadAuthorizedHealthWorkouts(showsLoadingIndicator: showsLoadingIndicator)
         case .needsAttention:
-            print("PTrack HealthKit: checking pending authorization on app open")
+            PTrackLog.synchronization.debug("PTrack HealthKit: checking pending authorization on app open")
             queueStravaSyncAfterHealthIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
             recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
         case .notDetermined:
-            print("PTrack HealthKit: skipped import, no stored authorization")
+            PTrackLog.synchronization.debug("PTrack HealthKit: skipped import, no stored authorization")
             loadAuthorizedStravaWorkouts(showsLoadingIndicator: showsLoadingIndicator)
         }
     }
@@ -1686,7 +1703,13 @@ class ViewController: UIViewController {
     }
 
     private var isDataSourceSyncInProgress: Bool {
-        isCacheLoadInProgress || isHealthSyncInProgress || isStravaSyncInProgress
+        isCacheLoadInProgress
+            || syncCoordinator.isInProgress(.health)
+            || syncCoordinator.isInProgress(.strava)
+    }
+
+    private var authoritativeWorkouts: [TrackedWorkout] {
+        workouts + pendingWorkouts
     }
 
     private func synchronizeDataSourcesForPullRefresh() {
@@ -1697,25 +1720,234 @@ class ViewController: UIViewController {
         synchronizeDataSourcesForAppOpen()
     }
 
+    private func queueDataSourceSynchronization(showsLoadingIndicator: Bool) {
+        syncCoordinator.queueDataSource(showsLoadingIndicator: showsLoadingIndicator)
+    }
+
+    @discardableResult
+    private func runPendingDataSourceSynchronizationIfNeeded() -> Bool {
+        guard syncCoordinator.pendingDataSourceRequest != nil,
+              pendingDataSourceSyncRetryNotBefore.map({ $0 <= Date() }) != false,
+              !isCacheLoadInProgress,
+              !isAppInBackground,
+              !syncCoordinator.isInProgress(.health),
+              !syncCoordinator.isInProgress(.strava),
+              !isHealthAuthorizationRecoveryCheckInProgress else {
+            return false
+        }
+
+        guard let request = syncCoordinator.takePendingDataSourceRequest() else {
+            return false
+        }
+        pendingDataSourceSyncRetryWorkItem?.cancel()
+        pendingDataSourceSyncRetryWorkItem = nil
+        pendingDataSourceSyncRetryNotBefore = nil
+        synchronizeDataSourcesForAppOpen(showsLoadingIndicator: request.showsLoadingIndicator)
+        return true
+    }
+
     private func queueStravaSyncAfterHealthIfNeeded(showsLoadingIndicator: Bool) {
         guard StravaManager.shared.hasStoredAuthorization else {
             return
         }
 
-        let shouldShowLoadingIndicator = showsLoadingIndicator
-            || pendingStravaSyncAfterHealth?.showsLoadingIndicator == true
-        pendingStravaSyncAfterHealth = PendingStravaSyncRequest(
-            showsLoadingIndicator: shouldShowLoadingIndicator
+        syncCoordinator.queueStrava(
+            showsLoadingIndicator: showsLoadingIndicator,
+            presentsErrors: false
         )
     }
 
-    private func runPendingStravaSyncAfterHealthIfNeeded() {
-        guard let request = pendingStravaSyncAfterHealth else {
+    private func queueStravaSync(
+        showsLoadingIndicator: Bool,
+        presentsErrors: Bool
+    ) {
+        guard StravaManager.shared.hasStoredAuthorization else {
             return
         }
 
-        pendingStravaSyncAfterHealth = nil
-        loadAuthorizedStravaWorkouts(showsLoadingIndicator: request.showsLoadingIndicator)
+        syncCoordinator.queueStrava(
+            showsLoadingIndicator: showsLoadingIndicator,
+            presentsErrors: presentsErrors
+        )
+    }
+
+    @discardableResult
+    private func runPendingStravaSyncAfterHealthIfNeeded() -> Bool {
+        guard syncCoordinator.pendingStravaRequest != nil,
+              pendingDataSourceSyncRetryNotBefore.map({ $0 <= Date() }) != false,
+              !isCacheLoadInProgress,
+              !isAppInBackground,
+              !syncCoordinator.isInProgress(.health),
+              !syncCoordinator.isInProgress(.strava) else {
+            return false
+        }
+
+        guard let request = syncCoordinator.takePendingStravaRequest() else {
+            return false
+        }
+        pendingDataSourceSyncRetryWorkItem?.cancel()
+        pendingDataSourceSyncRetryWorkItem = nil
+        pendingDataSourceSyncRetryNotBefore = nil
+        loadAuthorizedStravaWorkouts(
+            showsLoadingIndicator: request.showsLoadingIndicator,
+            presentsErrors: request.presentsErrors
+        )
+        return true
+    }
+
+    private func continueDataSourceSynchronizationAfterHealth() {
+        if syncCoordinator.needsHealthRepairAfterStrava,
+           runPendingHealthRepairAfterStravaIfNeeded(canConsumePendingFullRefresh: false) {
+            return
+        }
+        if !runPendingStravaSyncAfterHealthIfNeeded() {
+            _ = runPendingDataSourceSynchronizationIfNeeded()
+        }
+    }
+
+    private func continueDataSourceSynchronizationAfterStrava(
+        completion: WorkoutSyncCoordinator.StravaCompletion
+    ) {
+        let completedActivitySummary: Bool
+        let shouldContinuePendingWithoutStrava: Bool
+        switch completion {
+        case .summarySuccess:
+            completedActivitySummary = true
+            shouldContinuePendingWithoutStrava = false
+        case .partialSuccess:
+            completedActivitySummary = false
+            shouldContinuePendingWithoutStrava = false
+        case .failure(_, let retriesQueuedStravaImmediately, let schedulesPendingRetry):
+            completedActivitySummary = false
+            shouldContinuePendingWithoutStrava = !retriesQueuedStravaImmediately
+                && !schedulesPendingRetry
+        }
+
+        if case .partialSuccess(let retryAfter) = completion,
+           retryAfter != nil {
+            schedulePendingDataSourceSynchronizationRetryIfNeeded(retryAfter: retryAfter)
+        } else if case .failure(
+            let retryAfter,
+            let retriesQueuedStravaImmediately,
+            let schedulesPendingRetry
+        ) = completion,
+                  !retriesQueuedStravaImmediately,
+                  schedulesPendingRetry {
+            schedulePendingDataSourceSynchronizationRetryIfNeeded(retryAfter: retryAfter)
+        }
+
+        if case .summarySuccess(let detailRetryAfter) = completion,
+           detailRetryAfter != nil {
+            // The complete summary already satisfies a duplicate queued Strava
+            // refresh. Keep detail enrichment on its own delayed intent instead
+            // of immediately spending another stream-request budget.
+            syncCoordinator.clearPendingStravaRequest()
+        } else if shouldContinuePendingWithoutStrava {
+            // A non-retryable Strava failure must not strand the HealthKit half
+            // of a pull refresh, nor leave an impossible Strava retry queued.
+            syncCoordinator.clearPendingStravaRequest()
+        }
+
+        if runPendingHealthRepairAfterStravaIfNeeded(
+            canConsumePendingFullRefresh: completedActivitySummary
+                || shouldContinuePendingWithoutStrava
+        ) {
+            return
+        }
+
+        switch completion {
+        case .summarySuccess(let detailRetryAfter):
+            pendingDataSourceSyncRetryAttempt = 0
+            pendingDataSourceSyncRetryNotBefore = nil
+            guard detailRetryAfter == nil else {
+                return
+            }
+            if !runPendingDataSourceSynchronizationIfNeeded() {
+                _ = runPendingStravaSyncAfterHealthIfNeeded()
+            }
+        case .partialSuccess(let retryAfter):
+            guard retryAfter == nil else {
+                return
+            }
+            pendingDataSourceSyncRetryAttempt = 0
+            pendingDataSourceSyncRetryNotBefore = nil
+            if !runPendingDataSourceSynchronizationIfNeeded() {
+                _ = runPendingStravaSyncAfterHealthIfNeeded()
+            }
+        case .failure(_, let retriesQueuedStravaImmediately, _):
+            if retriesQueuedStravaImmediately,
+               runPendingStravaSyncAfterHealthIfNeeded() {
+                return
+            }
+        }
+    }
+
+    private func schedulePendingDataSourceSynchronizationRetryIfNeeded(retryAfter: Date?) {
+        guard syncCoordinator.pendingDataSourceRequest != nil
+                || syncCoordinator.pendingStravaRequest != nil else {
+            return
+        }
+
+        pendingDataSourceSyncRetryWorkItem?.cancel()
+        pendingDataSourceSyncRetryWorkItem = nil
+        pendingDataSourceSyncRetryAttempt += 1
+        let retryExponent = min(max(pendingDataSourceSyncRetryAttempt - 1, 0), 8)
+        let fallbackDelay = min(TimeInterval(5 * (1 << retryExponent)), 15 * 60)
+        let delay = max(retryAfter?.timeIntervalSinceNow ?? fallbackDelay, fallbackDelay)
+        pendingDataSourceSyncRetryNotBefore = Date().addingTimeInterval(delay)
+        guard syncStateStore.stravaDeferredRetryAttempt
+                <= stravaMaximumAutomaticUnchangedRetryCount else {
+            PTrackLog.synchronization.debug(
+                "PTrack Strava: stopped autonomous retries after \(self.syncStateStore.stravaDeferredRetryAttempt) unchanged attempt(s); a later app-open refresh remains gated until \(Self.debugDateString(self.pendingDataSourceSyncRetryNotBefore))"
+            )
+            return
+        }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+            self.pendingDataSourceSyncRetryWorkItem = nil
+            if !self.runPendingDataSourceSynchronizationIfNeeded() {
+                _ = self.runPendingStravaSyncAfterHealthIfNeeded()
+            }
+        }
+        pendingDataSourceSyncRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    @discardableResult
+    private func runPendingHealthRepairAfterStravaIfNeeded(
+        canConsumePendingFullRefresh: Bool
+    ) -> Bool {
+        let hasHealthOnlyWork = syncCoordinator.needsHealthRepairAfterStrava
+            || (canConsumePendingFullRefresh && syncCoordinator.pendingDataSourceRequest != nil)
+        guard hasHealthOnlyWork,
+              !isCacheLoadInProgress,
+              !isAppInBackground,
+              !syncCoordinator.isInProgress(.health),
+              !syncCoordinator.isInProgress(.strava),
+              !isHealthAuthorizationRecoveryCheckInProgress else {
+            return false
+        }
+
+        // The just-finished pass either satisfied the queued Strava refresh or
+        // reached a non-retryable Strava failure. Merge its loading preference
+        // into Health-only work so the other source is never stranded.
+        let showsLoadingIndicator = canConsumePendingFullRefresh
+            ? syncCoordinator.takePendingDataSourceRequest()?.showsLoadingIndicator == true
+            : false
+        syncCoordinator.consumeHealthRepairAfterStrava()
+
+        switch store.authorizationState {
+        case .authorized:
+            loadAuthorizedHealthWorkouts(showsLoadingIndicator: showsLoadingIndicator)
+            return true
+        case .needsAttention:
+            recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: showsLoadingIndicator)
+            return true
+        case .notDetermined:
+            return false
+        }
     }
 
     private func updateTotalDistanceText() {
@@ -1726,12 +1958,14 @@ class ViewController: UIViewController {
             return
         }
 
+        let authoritativeTotalDistanceMeters = totalDistanceMeters
+            + pendingWorkouts.reduce(0) { $0 + $1.distanceMeters }
         let displayedTotalDistanceMeters = isSimulatingHomeEmptyData
             ? 0
-            : (cachedWorkoutSummary?.totalDistanceMeters ?? totalDistanceMeters)
+            : (cachedWorkoutSummary?.totalDistanceMeters ?? authoritativeTotalDistanceMeters)
         let displayedWorkoutCount = isSimulatingHomeEmptyData
             ? 0
-            : (cachedWorkoutSummary?.workoutCount ?? workouts.count)
+            : (cachedWorkoutSummary?.workoutCount ?? authoritativeWorkouts.count)
         let totalKilometers = displayedTotalDistanceMeters / 1000
         let distanceText = AppLocalization.format(.totalDistanceFormat, Int(totalKilometers.rounded()))
         let activityCountText = AppLocalization.format(.totalActivityCountFormat, displayedWorkoutCount)
@@ -1746,8 +1980,10 @@ class ViewController: UIViewController {
             : store.authorizationState
         emptyDataSourceView.updateAuthorizationState(appleHealth: displayedAppleHealthAuthorizationState)
 
+        let hasDisplayedWorkouts = !authoritativeWorkouts.isEmpty
+            || (cachedWorkoutSummary?.workoutCount ?? 0) > 0
         guard !isRouteBookModeActive,
-              isSimulatingHomeEmptyData || workouts.isEmpty else {
+              isSimulatingHomeEmptyData || !hasDisplayedWorkouts else {
             emptyDataSourceView.isHidden = true
             return
         }
@@ -1791,15 +2027,6 @@ class ViewController: UIViewController {
         collectionView.reloadData()
     }
 
-    private func registerStravaImportObserver() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleStravaTrackedWorkoutsDidImport(_:)),
-            name: StravaManager.trackedWorkoutsDidImportNotification,
-            object: nil
-        )
-    }
-
     private func registerRouteBookObserver() {
         NotificationCenter.default.addObserver(
             self,
@@ -1824,11 +2051,17 @@ class ViewController: UIViewController {
         )
     }
 
-    private func registerAppForegroundObserver() {
+    private func registerAppLifecycleObservers() {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppWillEnterForeground),
             name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
     }
@@ -1853,10 +2086,67 @@ class ViewController: UIViewController {
     }
 
     @objc private func handleAppWillEnterForeground() {
+        isAppInBackground = false
         AppLanguageStore.shared.refreshFromSystemSettingsIfNeeded()
-        recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: false)
+        if !isCacheLoadInProgress,
+           (!dirtyCacheWorkoutIDs.isEmpty || !deletedCacheWorkoutIDs.isEmpty) {
+            scheduleCacheSave(delay: 0)
+        }
+        if !runPendingHealthRepairAfterStravaIfNeeded(canConsumePendingFullRefresh: false) {
+            recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: false)
+        }
         updateHeaderReadAuthorizationState()
         updateEmptyDataSourceVisibility()
+    }
+
+    @objc private func handleAppDidEnterBackground() {
+        isAppInBackground = true
+        _ = flushPendingWorkouts(force: true)
+
+        guard !isCacheLoadInProgress else {
+            PTrackLog.synchronization.debug("PTrack Cache: skipped background save while the complete cache snapshot is still loading")
+            return
+        }
+
+        guard isCacheSaveInProgress
+                || !dirtyCacheWorkoutIDs.isEmpty
+                || !deletedCacheWorkoutIDs.isEmpty else {
+            refreshWidgetSnapshot()
+            return
+        }
+
+        if beginBackgroundCacheSaveTaskIfNeeded() {
+            runAfterPendingCacheSave { [weak self] in
+                self?.endBackgroundCacheSaveTask()
+            }
+        }
+        scheduleCacheSave(delay: 0)
+    }
+
+    @discardableResult
+    private func beginBackgroundCacheSaveTaskIfNeeded() -> Bool {
+        guard backgroundCacheSaveTask == .invalid else {
+            return false
+        }
+
+        backgroundCacheSaveTask = UIApplication.shared.beginBackgroundTask(
+            withName: "PTrackWorkoutCacheSave"
+        ) { [weak self] in
+            DispatchQueue.main.async {
+                self?.endBackgroundCacheSaveTask()
+            }
+        }
+        return backgroundCacheSaveTask != .invalid
+    }
+
+    private func endBackgroundCacheSaveTask() {
+        guard backgroundCacheSaveTask != .invalid else {
+            return
+        }
+
+        let task = backgroundCacheSaveTask
+        backgroundCacheSaveTask = .invalid
+        UIApplication.shared.endBackgroundTask(task)
     }
 
     @objc private func handleHealthAuthorizationStateDidChange() {
@@ -1880,7 +2170,7 @@ class ViewController: UIViewController {
     private func importPendingSharedRoutesIfNeeded() {
         let importedRoutes = SharedRouteImportInbox.importPendingRoutes()
         if !importedRoutes.isEmpty {
-            print("PTrack Route Collection: imported \(importedRoutes.count) shared GPX routes")
+            PTrackLog.synchronization.debug("PTrack Route Collection: imported \(importedRoutes.count) shared GPX routes")
         }
         updateRouteCollectionBadgeVisibility()
     }
@@ -1939,21 +2229,22 @@ class ViewController: UIViewController {
         enterRouteBookMode(with: workout)
     }
 
-    @objc private func handleStravaTrackedWorkoutsDidImport(_ notification: Notification) {
-        guard let importedWorkouts = notification.object as? [TrackedWorkout],
-              !importedWorkouts.isEmpty else {
-            return
-        }
-
-        for workout in importedWorkouts {
-            upsertTrackedWorkout(workout)
-        }
-        flushPendingWorkouts(force: true)
-        scheduleCacheSave(delay: 0)
-    }
-
     private func loadCachedWorkoutSummary() {
-        cachedWorkoutSummary = cacheStore.loadSummary()
+        let startupState = cacheStore.loadStartupState()
+        let integrityStatus = startupState.integrityStatus
+        didDetectCacheIntegrityIssue = integrityStatus.requiresReconciliation
+        needsHealthCacheIntegrityRepair = integrityStatus.requiresReconciliation
+        needsStravaCacheIntegrityRepair = integrityStatus.requiresReconciliation
+        isCachePersistenceHealthy = !integrityStatus.requiresReconciliation
+        cachedWorkoutSummary = startupState.summary
+        cachedManifestWorkoutIDs = startupState.indexedWorkoutIDs
+        if integrityStatus.requiresReconciliation {
+            markHealthHistoricalBackfillRequired()
+            markStravaHistoricalBackfillRequired()
+            PTrackLog.synchronization.debug(
+                "PTrack Cache: startup reconciliation required, indexed: \(integrityStatus.indexedWorkoutCount), files: \(integrityStatus.existingWorkoutFileCount), orphaned: \(integrityStatus.orphanedWorkoutFileCount), missing: \(integrityStatus.missingIndexedWorkoutFileCount)"
+            )
+        }
     }
 
     private func loadCachedWorkoutsThenSynchronize() {
@@ -1972,7 +2263,7 @@ class ViewController: UIViewController {
                 return
             }
 
-            let loadedWorkoutCount = self.cacheStore.loadProgressively(
+            let cacheLoadResult = self.cacheStore.loadProgressively(
                 batchSize: self.cacheLoadPreviewBatchSize,
                 shouldContinue: { [weak self] in
                     self != nil
@@ -1996,21 +2287,74 @@ class ViewController: UIViewController {
                     return
                 }
 
+                let loadedWorkoutCount = cacheLoadResult.loadedWorkoutCount
                 let hadCachedSummary = self.cachedWorkoutSummary != nil
-                self.finishApplyingCachedWorkoutPreviews()
-                self.isCacheLoadInProgress = false
-                self.updateRouteGridPrefetchingState()
-                if self.isCacheLoadShowingLoadingIndicator {
-                    self.isCacheLoadShowingLoadingIndicator = false
-                    self.endLoadingOperation()
-                } else {
-                    self.updateHeaderReadAuthorizationState()
-                    self.updateEmptyDataSourceVisibility()
+                let loadedWorkoutIDs = Set(self.authoritativeWorkouts.map(\.id))
+                let didLoadEveryIndexedWorkout = self.cachedManifestWorkoutIDs.map {
+                    $0.isSubset(of: loadedWorkoutIDs)
+                } ?? true
+                let didLoadCompleteCacheSnapshot = cacheLoadResult.didFinishScanningWorkoutFiles
+                    && loadedWorkoutCount == cacheLoadResult.discoveredWorkoutFileCount
+                    && didLoadEveryIndexedWorkout
+                if !didLoadCompleteCacheSnapshot {
+                    self.didDetectCacheIntegrityIssue = true
+                    self.needsHealthCacheIntegrityRepair = true
+                    self.needsStravaCacheIntegrityRepair = true
+                    self.isCachePersistenceHealthy = false
+                    self.markHealthHistoricalBackfillRequired()
+                    self.markStravaHistoricalBackfillRequired()
+                    PTrackLog.synchronization.debug(
+                        "PTrack Cache: decoded \(loadedWorkoutCount)/\(cacheLoadResult.discoveredWorkoutFileCount) discovered workout file(s); scheduling source reconciliation for unreadable records"
+                    )
+                }
+                let manifestRebuildSnapshot = self.finishApplyingCachedWorkoutPreviews(
+                    canRebuildManifest: didLoadCompleteCacheSnapshot
+                )
+                guard let manifestRebuildSnapshot else {
+                    self.completeCachedWorkoutLoad(
+                        loadedWorkoutCount: loadedWorkoutCount,
+                        hadCachedSummary: hadCachedSummary
+                    )
+                    return
                 }
 
-                self.synchronizeDataSourcesForAppOpen(
-                    showsLoadingIndicator: loadedWorkoutCount == 0 && !hadCachedSummary
-                )
+                // Cache loading and all preview-batch applications are complete
+                // at this point. Keep the cache-load gate closed while the
+                // manifest transaction runs back on the serial load queue, so a
+                // save or source sync cannot race its directory moves.
+                self.cacheLoadQueue.async { [weak self, manifestRebuildSnapshot] in
+                    guard let self else {
+                        return
+                    }
+
+                    let rebuildResult = self.cacheStore.rebuildManifestAfterCompleteLoad(
+                        for: manifestRebuildSnapshot
+                    )
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else {
+                            return
+                        }
+
+                        self.isCachePersistenceHealthy = rebuildResult.didSucceed
+                        if rebuildResult.didSucceed {
+                            self.cachedWorkoutSummary = nil
+                            self.cachedManifestWorkoutIDs = Set(
+                                manifestRebuildSnapshot.map(\.id)
+                            )
+                            self.updateTotalDistanceText()
+                        } else {
+                            self.didDetectCacheIntegrityIssue = true
+                            self.needsHealthCacheIntegrityRepair = true
+                            self.needsStravaCacheIntegrityRepair = true
+                            self.markHealthHistoricalBackfillRequired()
+                            self.markStravaHistoricalBackfillRequired()
+                        }
+                        self.completeCachedWorkoutLoad(
+                            loadedWorkoutCount: loadedWorkoutCount,
+                            hadCachedSummary: hadCachedSummary
+                        )
+                    }
+                }
             }
         }
     }
@@ -2029,29 +2373,67 @@ class ViewController: UIViewController {
         restorePersistedRouteBookModeIfNeeded()
     }
 
-    private func finishApplyingCachedWorkoutPreviews() {
+    private func finishApplyingCachedWorkoutPreviews(
+        canRebuildManifest: Bool
+    ) -> [TrackedWorkout]? {
         let didRemoveCachedConflicts = removeCachedAppleHealthWorkoutsConflictingWithStrava()
         markHealthAuthorizationVerifiedFromCachedWorkoutsIfNeeded()
-        knownWorkoutIDs = Set(workouts.map(\.id))
+        knownWorkoutIDs = Set(authoritativeWorkouts.map(\.id))
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
-        let shouldBackfillCacheSummary = cachedWorkoutSummary == nil && !workouts.isEmpty
-        cachedWorkoutSummary = nil
+        let shouldRebuildCacheManifest = cachedWorkoutSummary == nil || didDetectCacheIntegrityIssue
+        // Keep the manifest-backed total visible if even one cache file failed
+        // to decode. A transient read must not replace a verified 1,500-item
+        // summary with whichever subset happened to load (for example 226).
+        if canRebuildManifest,
+           !shouldRebuildCacheManifest,
+           !didRemoveCachedConflicts {
+            cachedWorkoutSummary = nil
+        }
         updateTotalDistanceText()
         if didRemoveCachedConflicts {
             collectionView.reloadData()
         }
         prewarmInitialRouteSources()
         restorePersistedRouteBookModeIfNeeded()
-        refreshWidgetSnapshot()
-        if shouldBackfillCacheSummary {
-            cacheSaveQueue.async { [cacheStore = self.cacheStore, workouts] in
-                cacheStore.saveSummary(for: workouts)
-            }
+        if shouldRebuildCacheManifest, canRebuildManifest {
+            return authoritativeWorkouts
+        } else if shouldRebuildCacheManifest {
+            isCachePersistenceHealthy = false
+            PTrackLog.synchronization.debug("PTrack Cache: skipped manifest rebuild because the workout-file scan did not complete")
         }
+        return nil
+    }
+
+    private func completeCachedWorkoutLoad(
+        loadedWorkoutCount: Int,
+        hadCachedSummary: Bool
+    ) {
+        isCacheLoadInProgress = false
+        refreshWidgetSnapshot()
+        updateRouteGridPrefetchingState()
+        if isCacheLoadShowingLoadingIndicator {
+            isCacheLoadShowingLoadingIndicator = false
+            endLoadingOperation()
+        } else {
+            updateHeaderReadAuthorizationState()
+            updateEmptyDataSourceVisibility()
+        }
+
+        if needsCacheSaveAfterCurrentSave
+            || !dirtyCacheWorkoutIDs.isEmpty
+            || !deletedCacheWorkoutIDs.isEmpty {
+            needsCacheSaveAfterCurrentSave = false
+            scheduleCacheSave(delay: 0)
+        }
+
+        queueDataSourceSynchronization(
+            showsLoadingIndicator: loadedWorkoutCount == 0 && !hadCachedSummary
+        )
+        _ = runPendingDataSourceSynchronizationIfNeeded()
     }
 
     private func markHealthAuthorizationVerifiedFromCachedWorkoutsIfNeeded() {
-        guard workouts.contains(where: { !$0.isStravaSource && !$0.isRouteCollectionSource }) else {
+        guard workouts.contains(where: \.isHealthKitSource) else {
             return
         }
 
@@ -2060,11 +2442,11 @@ class ViewController: UIViewController {
 
     private func recoverHealthAuthorizationIfNeeded(showsLoadingIndicator: Bool) {
         guard store.authorizationState == .needsAttention else {
-            runPendingStravaSyncAfterHealthIfNeeded()
+            continueDataSourceSynchronizationAfterHealth()
             return
         }
 
-        guard !isHealthSyncInProgress else {
+        guard !syncCoordinator.isInProgress(.health) else {
             return
         }
 
@@ -2081,11 +2463,11 @@ class ViewController: UIViewController {
 
                 self.isHealthAuthorizationRecoveryCheckInProgress = false
                 guard self.store.authorizationState == .needsAttention else {
-                    self.runPendingStravaSyncAfterHealthIfNeeded()
+                    self.continueDataSourceSynchronizationAfterHealth()
                     return
                 }
 
-                guard !self.isHealthSyncInProgress else {
+                guard !self.syncCoordinator.isInProgress(.health) else {
                     return
                 }
 
@@ -2096,23 +2478,45 @@ class ViewController: UIViewController {
                 case .success(.canRequest), .failure:
                     self.updateHeaderReadAuthorizationState()
                     self.updateEmptyDataSourceVisibility()
-                    self.runPendingStravaSyncAfterHealthIfNeeded()
+                    self.continueDataSourceSynchronizationAfterHealth()
                 }
             }
         }
     }
 
     private func loadAuthorizedHealthWorkouts(showsLoadingIndicator: Bool = true) {
-        guard !isHealthSyncInProgress else {
+        guard !isAppInBackground else {
+            queueDataSourceSynchronization(showsLoadingIndicator: showsLoadingIndicator)
+            PTrackLog.synchronization.debug("PTrack HealthKit: queued import until the app returns to the foreground")
+            return
+        }
+
+        guard !isCacheLoadInProgress else {
+            queueDataSourceSynchronization(showsLoadingIndicator: showsLoadingIndicator)
+            if showsLoadingIndicator {
+                showCacheLoadLoadingIndicatorIfNeeded()
+            }
+            PTrackLog.synchronization.debug("PTrack HealthKit: deferred import until cached workouts finish loading")
+            return
+        }
+
+        guard !syncCoordinator.isInProgress(.strava) else {
+            queueDataSourceSynchronization(showsLoadingIndicator: showsLoadingIndicator)
+            if showsLoadingIndicator {
+                showStravaSyncLoadingIndicatorIfNeeded()
+            }
+            PTrackLog.synchronization.debug("PTrack HealthKit: queued import behind the active Strava sync")
+            return
+        }
+
+        guard !syncCoordinator.isInProgress(.health) else {
             if showsLoadingIndicator {
                 showHealthSyncLoadingIndicatorIfNeeded()
             }
             return
         }
 
-        isHealthSyncInProgress = true
-        setHealthNewDataSyncInProgress(false)
-        isHealthSyncShowingLoadingIndicator = showsLoadingIndicator
+        syncCoordinator.begin(.health, showsLoadingIndicator: showsLoadingIndicator)
         if showsLoadingIndicator {
             beginLoadingOperation()
         } else {
@@ -2123,49 +2527,66 @@ class ViewController: UIViewController {
     }
 
     private func requestHealthAuthorizationAndLoadWorkouts() {
-        guard !isHealthSyncInProgress else {
+        guard !syncCoordinator.isInProgress(.health) else {
             return
         }
 
-        isHealthSyncInProgress = true
+        syncCoordinator.begin(.health, showsLoadingIndicator: false)
         store.requestAuthorization { [weak self] authorizationResult in
             guard let self else { return }
             switch authorizationResult {
             case .success:
                 Task { @MainActor in
-                    self.setHealthNewDataSyncInProgress(false)
-                    self.isHealthSyncShowingLoadingIndicator = true
+                    guard !self.isAppInBackground,
+                          !self.isCacheLoadInProgress,
+                          !self.syncCoordinator.isInProgress(.strava) else {
+                        _ = self.syncCoordinator.finish(.health)
+                        self.queueDataSourceSynchronization(showsLoadingIndicator: true)
+                        self.updateHeaderReadAuthorizationState()
+                        self.updateEmptyDataSourceVisibility()
+                        PTrackLog.synchronization.debug("PTrack HealthKit: queued newly authorized import behind the active operation")
+                        return
+                    }
+
+                    _ = self.syncCoordinator.showLoadingIndicatorIfNeeded(.health)
                     self.beginLoadingOperation()
                     self.loadIncrementalHealthWorkouts()
                 }
             case .failure(let error):
-                print("PTrack HealthKit: authorization failed: \(error)")
+                PTrackLog.synchronization.debug("PTrack HealthKit: authorization failed: \(error)")
                 Task { @MainActor in
-                    self.isHealthSyncInProgress = false
-                    self.setHealthNewDataSyncInProgress(false)
+                    _ = self.syncCoordinator.finish(.health)
                     self.updateHeaderReadAuthorizationState()
                     self.updateEmptyDataSourceVisibility()
                     self.presentHealthAuthorizationError(error)
+                    self.continueDataSourceSynchronizationAfterHealth()
                 }
             }
         }
     }
 
-    private func loadAuthorizedStravaWorkouts(showsLoadingIndicator: Bool = true) {
+    private func loadAuthorizedStravaWorkouts(
+        showsLoadingIndicator: Bool = true,
+        presentsErrors: Bool = false
+    ) {
         guard StravaManager.shared.hasStoredAuthorization else {
-            print("PTrack Strava: skipped import, no stored authorization")
+            PTrackLog.synchronization.debug("PTrack Strava: skipped import, no stored authorization")
             updateHeaderReadAuthorizationState()
+            continueDataSourceSynchronizationAfterStrava(
+                completion: .partialSuccess(retryAfter: nil)
+            )
             return
         }
 
+        let cachedDirectStravaActivityIDs = directStravaActivityIDsInMemory()
         let latestStartDate = latestStravaStartDateForIncrementalSync()
-        print(
-            "PTrack Strava: authorized import requested, latest incremental start: \(Self.debugDateString(latestStartDate)), cached Strava activities: \(workouts.compactMap(\.stravaActivityID).count)"
+        PTrackLog.synchronization.debug(
+            "PTrack Strava: authorized import requested, latest incremental start: \(Self.debugDateString(latestStartDate)), cached direct Strava activities: \(cachedDirectStravaActivityIDs.count)"
         )
         loadStravaWorkouts(
-            excludingStravaActivityIDs: Set(workouts.compactMap(\.stravaActivityID)),
+            excludingStravaActivityIDs: cachedDirectStravaActivityIDs,
             after: latestStartDate,
-            presentsErrors: false,
+            presentsErrors: presentsErrors,
             showsLoadingIndicator: showsLoadingIndicator
         )
     }
@@ -2176,67 +2597,250 @@ class ViewController: UIViewController {
         presentsErrors: Bool,
         showsLoadingIndicator: Bool = true
     ) {
-        guard !isStravaSyncInProgress else {
-            if showsLoadingIndicator {
-                showStravaSyncLoadingIndicatorIfNeeded()
-            }
+        guard !isAppInBackground else {
+            queueStravaSync(
+                showsLoadingIndicator: showsLoadingIndicator,
+                presentsErrors: presentsErrors
+            )
+            PTrackLog.synchronization.debug("PTrack Strava: queued import until the app returns to the foreground")
             return
         }
 
-        // Every Strava entry point eventually reaches this method. During a stream
-        // schema migration, force a complete summary listing and allow only stale
-        // cached activities through the stream loader. This prevents settings and
-        // empty-state authorization flows from accidentally excluding every cache ID.
-        let allStaleStreamActivityIDs = staleStravaStreamActivityIDs()
-        let terminalStreamActivityIDs = terminalStravaStreamMigrationActivityIDs().intersection(
-            allStaleStreamActivityIDs
-        )
-        let unresolvedStaleStreamActivityIDs = allStaleStreamActivityIDs.subtracting(
-            terminalStreamActivityIDs
-        )
-        let shouldRunHistoricalBackfill = shouldRunStravaHistoricalBackfill(
-            unresolvedStaleActivityIDs: unresolvedStaleStreamActivityIDs
-        )
-        let effectiveStartDate = shouldRunHistoricalBackfill ? nil : startDate
-        let effectiveExcludedActivityIDs = shouldRunHistoricalBackfill
-            ? excludingStravaActivityIDs
-                .union(terminalStreamActivityIDs)
-                .subtracting(unresolvedStaleStreamActivityIDs)
-            : excludingStravaActivityIDs
+        guard !isCacheLoadInProgress else {
+            queueStravaSync(
+                showsLoadingIndicator: showsLoadingIndicator,
+                presentsErrors: presentsErrors
+            )
+            if showsLoadingIndicator {
+                showCacheLoadLoadingIndicatorIfNeeded()
+            }
+            PTrackLog.synchronization.debug("PTrack Strava: deferred import until cached workouts finish loading")
+            return
+        }
 
-        isStravaSyncInProgress = true
-        setStravaNewDataSyncInProgress(false)
-        isStravaSyncShowingLoadingIndicator = showsLoadingIndicator
+        guard !syncCoordinator.isInProgress(.health) else {
+            queueStravaSync(
+                showsLoadingIndicator: showsLoadingIndicator,
+                presentsErrors: presentsErrors
+            )
+            if showsLoadingIndicator {
+                showHealthSyncLoadingIndicatorIfNeeded()
+            }
+            PTrackLog.synchronization.debug("PTrack Strava: queued import behind the active HealthKit sync")
+            return
+        }
+
+        guard !syncCoordinator.isInProgress(.strava) else {
+            queueStravaSync(
+                showsLoadingIndicator: showsLoadingIndicator,
+                presentsErrors: presentsErrors
+            )
+            if showsLoadingIndicator {
+                showStravaSyncLoadingIndicatorIfNeeded()
+            }
+            PTrackLog.synchronization.debug("PTrack Strava: coalesced import behind the active Strava sync")
+            return
+        }
+
+        guard let syncAthleteIDValue = StravaManager.shared.storedAthleteID else {
+            markStravaHistoricalBackfillRequired()
+            updateHeaderReadAuthorizationState()
+            updateEmptyDataSourceVisibility()
+            continueDataSourceSynchronizationAfterStrava(
+                completion: .partialSuccess(retryAfter: nil)
+            )
+            PTrackLog.synchronization.debug("PTrack Strava: skipped import because the stored authorization has no athlete identity")
+            return
+        }
+        let syncAthleteID = String(syncAthleteIDValue)
+        let accountChange = confirmedStravaAthleteChange()
+
+        if let accountChange {
+            // A deferred date belongs to the previous account's import state.
+            // Never let it postpone establishing the newly authorized owner.
+            clearStravaDeferredRetryState()
+            syncCoordinator.clearPendingStravaRequest()
+            let currentAthleteActivityIDs = Set(
+                authoritativeWorkouts.compactMap { workout -> Int64? in
+                    guard workout.isDirectStravaSource,
+                          workout.stravaAthleteID.map(String.init) == syncAthleteID else {
+                        return nil
+                    }
+                    return workout.stravaActivityID
+                }
+            )
+            let removedWorkoutCount = reconcileDirectStravaWorkouts(
+                withAuthoritativeActivityIDs: currentAthleteActivityIDs
+            )
+            PTrackLog.synchronization.debug(
+                "PTrack Strava: athlete changed from \(accountChange.previous) to \(accountChange.current); removed \(removedWorkoutCount) direct cached workout(s) before synchronization"
+            )
+        } else {
+            // Tagged records from another athlete can only be leftovers from a
+            // previously interrupted migration. Legacy untagged records are
+            // provisionally owned by the current athlete until the first durable
+            // pass commits their owner.
+            let activityIDsAllowedForCurrentAthlete = Set(
+                authoritativeWorkouts.compactMap { workout -> Int64? in
+                    guard workout.isDirectStravaSource,
+                          workout.stravaAthleteID.map({ String($0) == syncAthleteID }) != false else {
+                        return nil
+                    }
+                    return workout.stravaActivityID
+                }
+            )
+            let foreignWorkoutCount = authoritativeWorkouts.lazy.filter {
+                $0.isDirectStravaSource
+                    && $0.stravaAthleteID.map({ String($0) != syncAthleteID }) == true
+            }.count
+            if foreignWorkoutCount > 0 {
+                _ = reconcileDirectStravaWorkouts(
+                    withAuthoritativeActivityIDs: activityIDsAllowedForCurrentAthlete
+                )
+            }
+        }
+
+        let placeholderActivityIDsNeedingEnrichment = Set(
+            authoritativeWorkouts.compactMap { workout -> Int64? in
+                guard workout.isDirectStravaSource,
+                      workout.isStravaSummaryPlaceholder,
+                      !workout.isStravaTerminalPlaceholder else {
+                    return nil
+                }
+                return workout.stravaActivityID
+            }
+        )
+        // Authoritative repair needs a complete summary immediately. Once that
+        // summary is durable, old placeholder detail is enriched on a cooldown;
+        // count correctness must not force an 80-stream full pass on every open.
+        let requiresHistoricalCoverageRepair = shouldRunStravaHistoricalBackfill()
+        if accountChange == nil,
+           requiresHistoricalCoverageRepair,
+           let retryDate = syncStateStore.stravaDeferredRetryDate,
+           retryDate > Date() {
+            // Preserve a server/local backoff across process restarts. Queueing
+            // the request before installing the coordinator timer also keeps a
+            // pull-to-refresh from bypassing the same quota gate.
+            queueStravaSync(
+                showsLoadingIndicator: showsLoadingIndicator,
+                presentsErrors: presentsErrors
+            )
+            pendingStravaEnrichmentRetryWorkItem?.cancel()
+            pendingStravaEnrichmentRetryWorkItem = nil
+            schedulePendingDataSourceSynchronizationRetryIfNeeded(
+                retryAfter: retryDate
+            )
+            PTrackLog.synchronization.debug(
+                "PTrack Strava: deferred historical repair until \(Self.debugDateString(retryDate))"
+            )
+            return
+        }
+
+        let deferredEnrichmentRetryDate = syncStateStore.stravaDeferredRetryDate
+        let isPlaceholderEnrichmentDue: Bool
+        if let deferredEnrichmentRetryDate {
+            // A persisted exponential/server backoff always wins over the
+            // routine six-hour maintenance cadence.
+            isPlaceholderEnrichmentDue = deferredEnrichmentRetryDate <= Date()
+        } else {
+            isPlaceholderEnrichmentDue = isFullCoverageReconciliationDue(
+                lastRunKey: DefaultsKey.stravaLastPlaceholderEnrichmentAttemptDate,
+                interval: stravaPlaceholderEnrichmentInterval
+            )
+        }
+        let shouldRunPlaceholderEnrichment = !requiresHistoricalCoverageRepair
+            && !placeholderActivityIDsNeedingEnrichment.isEmpty
+            && isPlaceholderEnrichmentDue
+        let shouldRunHistoricalBackfill = requiresHistoricalCoverageRepair
+            || shouldRunPlaceholderEnrichment
+        let effectiveStartDate = shouldRunHistoricalBackfill ? nil : startDate
+        let placeholderActivityIDsToEnrich = shouldRunHistoricalBackfill
+            ? placeholderActivityIDsNeedingEnrichment
+            : []
+        let effectiveExcludedActivityIDs = excludingStravaActivityIDs
+            .intersection(directStravaActivityIDsInMemory())
+            .subtracting(placeholderActivityIDsToEnrich)
+
+        let syncGeneration = syncCoordinator.beginStravaTransaction(
+            athleteID: syncAthleteID,
+            showsLoadingIndicator: showsLoadingIndicator,
+            workouts: workouts,
+            pendingWorkouts: pendingWorkouts
+        )
+        // A direct entry may start while an older gated request is still
+        // queued. This transaction subsumes that intent; requests arriving
+        // after this point remain queued for completion-time coordination.
+        syncCoordinator.clearPendingStravaRequest()
+        pendingStravaEnrichmentRetryWorkItem?.cancel()
+        pendingStravaEnrichmentRetryWorkItem = nil
+        pendingDataSourceSyncRetryWorkItem?.cancel()
+        pendingDataSourceSyncRetryWorkItem = nil
+        pendingDataSourceSyncRetryNotBefore = nil
+        // Stage ownership for every pass, including a legacy owner=nil cache.
+        // This closes the A -> B switch window even before the first full pass.
+        stageStravaCachedAthleteIDCommit(
+            syncAthleteID,
+            syncGeneration: syncGeneration
+        )
+
+        if shouldRunHistoricalBackfill {
+            // Keep an in-flight lease instead of clearing the persisted gate.
+            // If the process is killed before a result arrives, the next launch
+            // cannot immediately spend another full-history request budget.
+            let leaseAttempt = max(syncStateStore.stravaDeferredRetryAttempt, 1)
+            syncStateStore.stravaDeferredRetryDate = Date().addingTimeInterval(
+                stravaRetryDelay(
+                    baseDelay: stravaPersistedRetryBaseDelay(),
+                    attempt: leaseAttempt
+                )
+            )
+            UserDefaults.standard.set(
+                Date(),
+                forKey: DefaultsKey.stravaLastPlaceholderEnrichmentAttemptDate
+            )
+        }
+
+        UserDefaults.standard.set(true, forKey: DefaultsKey.stravaImportInProgress)
         if showsLoadingIndicator {
             beginLoadingOperation()
         } else {
             updateHeaderReadAuthorizationState()
             updateEmptyDataSourceVisibility()
         }
-        print(
-            "PTrack Strava: starting import, after: \(Self.debugDateString(effectiveStartDate)), excluding cached activities: \(effectiveExcludedActivityIDs.count), unresolved stale stream activities: \(unresolvedStaleStreamActivityIDs.count), terminal stale activities: \(terminalStreamActivityIDs.count), historical backfill: \(shouldRunHistoricalBackfill)"
+        PTrackLog.synchronization.debug(
+            "PTrack Strava: starting import, after: \(Self.debugDateString(effectiveStartDate)), excluding cached activities: \(effectiveExcludedActivityIDs.count), historical repair: \(requiresHistoricalCoverageRepair), placeholder enrichment: \(shouldRunPlaceholderEnrichment)"
         )
 
-        Task { [weak self] in
+        let requestLimit = stravaRequestLimitPerPass
+        Task { [weak self, requestLimit, syncGeneration, syncAthleteID] in
             do {
                 let importResult = try await StravaManager.shared.loadTrackedWorkoutResult(
                     after: effectiveStartDate,
                     excludingStravaActivityIDs: effectiveExcludedActivityIDs,
+                    requestLimit: requestLimit,
                     onNewDataDetected: { [weak self] _ in
                         await MainActor.run {
-                            self?.setStravaNewDataSyncInProgress(true)
+                            guard let self,
+                                  self.isCurrentStravaSync(
+                                      generation: syncGeneration,
+                                      athleteID: syncAthleteID
+                                  ) else {
+                                return
+                            }
+                            self.setNewDataSyncInProgress(true, for: .strava)
                         }
                     },
-                    onTrackedWorkout: { [weak self] workout in
+                    onTrackedWorkouts: { [weak self] importedBatch in
                         await MainActor.run {
-                            guard let self else {
+                            guard let self,
+                                  self.isCurrentStravaSync(
+                                      generation: syncGeneration,
+                                      athleteID: syncAthleteID
+                                  ) else {
                                 return
                             }
 
-                            self.upsertTrackedWorkout(workout)
-                            if self.flushPendingWorkouts() {
-                                print("PTrack Strava: streamed workout to home list: \(workout.id)")
-                            }
+                            self.upsertTrackedWorkouts(importedBatch)
                         }
                     }
                 )
@@ -2245,182 +2849,732 @@ class ViewController: UIViewController {
                 guard let self else {
                     return
                 }
+                guard self.isCurrentStravaSync(
+                    generation: syncGeneration,
+                    athleteID: syncAthleteID
+                ), String(importResult.athleteID) == syncAthleteID else {
+                    throw StravaManagerError.authorizationChangedDuringImport
+                }
+                let resultAthleteID = String(importResult.athleteID)
 
                 let didFlushPendingWorkouts = self.flushPendingWorkouts(force: true)
+                let removedStaleStravaWorkoutCount: Int
+                if importResult.didCompleteAuthoritativeSummary {
+                    let reconciliationDecision = self.stravaReconciliationDecision(
+                        after: importResult.reconciliationSnapshot
+                    )
+                    removedStaleStravaWorkoutCount = self.reconcileDirectStravaWorkouts(
+                        withAuthoritativeActivityIDs: reconciliationDecision.retainedActivityIDs
+                    )
+                    self.stageStravaReconciliationRecordCommit(
+                        importResult.reconciliationSnapshot,
+                        missingCandidateIDs: reconciliationDecision.missingCandidateIDs,
+                        syncGeneration: syncGeneration
+                    )
+                } else {
+                    removedStaleStravaWorkoutCount = 0
+                }
                 if !importedWorkouts.isEmpty {
                     self.scheduleCacheSave(delay: 0)
-                    print("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
+                    PTrackLog.synchronization.debug("PTrack Strava: scheduled cache save for imported routes: \(importedWorkouts.count)")
                 }
-                if shouldRunHistoricalBackfill {
-                    self.recordTerminalStravaStreamMigrationAttempts(
-                        staleActivityIDs: unresolvedStaleStreamActivityIDs,
-                        summaryActivityIDs: importResult.summaryActivityIDs,
-                        routeCandidateActivityIDs: importResult.routeCandidateActivityIDs
-                    )
+                if !importResult.didLoadCompleteActivitySummary {
+                    self.markStravaHistoricalBackfillRequired()
                 }
                 self.markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
                     didRunHistoricalBackfill: shouldRunHistoricalBackfill,
-                    didCompleteWithoutActivityFailures: importResult.didCompleteWithoutActivityFailures
+                    didCompleteAuthoritativeSummary: importResult.didCompleteAuthoritativeSummary,
+                    syncGeneration: syncGeneration,
+                    syncAthleteID: resultAthleteID
+                )
+                self.markStravaImportCompletedAfterCacheSaveIfNeeded(
+                    didCompleteActivitySummary: importResult.didLoadCompleteActivitySummary,
+                    syncGeneration: syncGeneration,
+                    syncAthleteID: resultAthleteID
                 )
 
-                print(
-                    "PTrack Strava: import completed, loaded routes: \(importedWorkouts.count), activity failures: \(importResult.failedActivityCount), flushed: \(didFlushPendingWorkouts)"
+                PTrackLog.synchronization.debug(
+                    "PTrack Strava: import completed, loaded routes: \(importedWorkouts.count), removed stale: \(removedStaleStravaWorkoutCount), summary complete: \(importResult.didLoadCompleteActivitySummary), complete scope: \(importResult.didUseCompleteActivityReadScope), activity failures: \(importResult.failedActivityCount), terminal: \(importResult.terminalActivityCount), deferred: \(importResult.deferredActivityCount), flushed: \(didFlushPendingWorkouts)"
                 )
-                self.isStravaSyncInProgress = false
-                self.setStravaNewDataSyncInProgress(false)
-                if self.isStravaSyncShowingLoadingIndicator {
-                    self.isStravaSyncShowingLoadingIndicator = false
+                _ = self.syncCoordinator.finish(.strava, generation: syncGeneration)
+                self.updateRouteGridPrefetchingState()
+                self.updateTotalDistanceText()
+                if self.syncCoordinator.consumeLoadingIndicator(.strava) {
                     self.endLoadingOperation()
                 } else {
                     self.updateHeaderReadAuthorizationState()
                     self.updateEmptyDataSourceVisibility()
                 }
+                let deferredRetryDate = self.scheduleDeferredStravaEnrichmentIfNeeded(
+                    importResult,
+                    didRunHistoricalPass: shouldRunHistoricalBackfill
+                )
+                let completion: WorkoutSyncCoordinator.StravaCompletion
+                if importResult.didLoadCompleteActivitySummary {
+                    completion = .summarySuccess(
+                        detailRetryAfter: deferredRetryDate
+                    )
+                } else if let deferredRetryDate {
+                    completion = .partialSuccess(retryAfter: deferredRetryDate)
+                } else {
+                    completion = .partialSuccess(retryAfter: nil)
+                }
+                self.continueDataSourceSynchronizationAfterStrava(completion: completion)
             } catch {
                 guard let self else {
                     return
                 }
+                guard self.syncCoordinator.isCurrent(.strava, generation: syncGeneration) else {
+                    return
+                }
 
-                print("PTrack Strava: import failed: \(error)")
-                self.isStravaSyncInProgress = false
-                self.setStravaNewDataSyncInProgress(false)
-                if self.isStravaSyncShowingLoadingIndicator {
-                    self.isStravaSyncShowingLoadingIndicator = false
+                PTrackLog.synchronization.debug("PTrack Strava: import failed: \(error)")
+                let authorizationChanged = (error as? StravaManagerError).map {
+                    if case .authorizationChangedDuringImport = $0 { return true }
+                    return false
+                } ?? false
+                let requiresReauthorization = StravaManager.requiresReauthorization(error)
+                let storedAthleteIDAfterFailure = StravaManager.shared.storedAthleteID
+                    .map(String.init)
+                // Only an actual A -> B credential handoff warrants one
+                // immediate restart. A refresh response that repeatedly
+                // disagrees with unchanged stored credentials must enter the
+                // finite persisted backoff instead of spinning forever.
+                let canRetryChangedAuthorizationImmediately = authorizationChanged
+                    && storedAthleteIDAfterFailure != nil
+                    && storedAthleteIDAfterFailure != syncAthleteID
+                let shouldRetryAuthorizationMismatch = authorizationChanged
+                    && storedAthleteIDAfterFailure == syncAthleteID
+                let shouldRetryTransientFailure = !requiresReauthorization
+                    && StravaManager.shared.hasStoredAuthorization
+                    && (shouldRetryAuthorizationMismatch
+                        || (!authorizationChanged
+                            && StravaManager.shouldRetryImport(after: error)))
+                var retryAfter = Self.stravaRetryDate(from: error)
+                let didFlushPendingWorkouts: Bool
+                if authorizationChanged {
+                    didFlushPendingWorkouts = false
+                    self.rollbackStravaTransaction(
+                        generation: syncGeneration,
+                        athleteID: syncAthleteID
+                    )
+                } else {
+                    didFlushPendingWorkouts = self.flushPendingWorkouts(force: true)
+                }
+                self.markStravaHistoricalBackfillRequired()
+                if didFlushPendingWorkouts
+                    || !self.dirtyCacheWorkoutIDs.isEmpty
+                    || !self.deletedCacheWorkoutIDs.isEmpty {
+                    self.scheduleCacheSave(delay: 0)
+                    PTrackLog.synchronization.debug("PTrack Strava: preserved partially imported routes for a durable retry")
+                }
+                _ = self.syncCoordinator.finish(.strava, generation: syncGeneration)
+                self.updateRouteGridPrefetchingState()
+                self.updateTotalDistanceText()
+                if self.syncCoordinator.consumeLoadingIndicator(.strava) {
                     self.endLoadingOperation()
                 } else {
                     self.updateHeaderReadAuthorizationState()
                     self.updateEmptyDataSourceVisibility()
                 }
-                if StravaManager.requiresReauthorization(error) {
+                if requiresReauthorization {
+                    self.clearStravaDeferredRetryState()
+                    self.syncCoordinator.clearPendingStravaRequest()
                     self.presentSimpleAlert(
                         title: AppLocalization.text(.strava),
                         message: AppLocalization.text(.stravaReauthorizationRequired)
                     )
+                } else if canRetryChangedAuthorizationImmediately {
+                    self.clearStravaDeferredRetryState()
+                    self.pendingDataSourceSyncRetryWorkItem?.cancel()
+                    self.pendingDataSourceSyncRetryWorkItem = nil
+                    self.pendingDataSourceSyncRetryAttempt = 0
+                    self.pendingDataSourceSyncRetryNotBefore = nil
+                    self.queueStravaSync(
+                        showsLoadingIndicator: showsLoadingIndicator,
+                        presentsErrors: presentsErrors
+                    )
+                } else if shouldRetryTransientFailure {
+                    let transientRetry = self.registerStravaTransientRetryProgress(
+                        for: error
+                    )
+                    retryAfter = max(
+                        retryAfter ?? .distantPast,
+                        transientRetry.0
+                    )
+                    self.pendingStravaEnrichmentRetryWorkItem?.cancel()
+                    self.pendingStravaEnrichmentRetryWorkItem = nil
+                    self.queueStravaSync(
+                        showsLoadingIndicator: showsLoadingIndicator,
+                        presentsErrors: presentsErrors
+                    )
                 } else if presentsErrors {
                     self.presentSimpleAlert(title: AppLocalization.text(.strava), message: error.localizedDescription)
                 }
+                self.continueDataSourceSynchronizationAfterStrava(
+                    completion: .failure(
+                        retryAfter: retryAfter,
+                        retriesQueuedStravaImmediately: canRetryChangedAuthorizationImmediately,
+                        schedulesPendingRetry: shouldRetryTransientFailure
+                    )
+                )
             }
         }
     }
 
-    private func latestStravaStartDateForIncrementalSync() -> Date? {
-        let unresolvedStaleActivityIDs = unresolvedStaleStravaStreamActivityIDs()
-        guard !shouldRunStravaHistoricalBackfill(
-            unresolvedStaleActivityIDs: unresolvedStaleActivityIDs
+    private func stravaReconciliationDecision(
+        after snapshot: StravaManager.ActivityReconciliationSnapshot
+    ) -> (retainedActivityIDs: Set<Int64>, missingCandidateIDs: Set<Int64>) {
+        let currentLocalActivityIDs = directStravaActivityIDsInMemory()
+        guard snapshot.isAuthoritative else {
+            return (currentLocalActivityIDs, [])
+        }
+
+        let missingCandidateIDs = currentLocalActivityIDs.subtracting(snapshot.activityIDs)
+        guard let previousSnapshot = syncStateStore.stravaReconciliationRecord,
+              previousSnapshot.athleteID == String(snapshot.athleteID),
+              let previousMissingCandidateIDs = previousSnapshot.missingCandidateIDs else {
+            // The first complete absence is only a tombstone candidate. Keep
+            // the local record until a second complete listing confirms it.
+            return (
+                currentLocalActivityIDs.union(snapshot.activityIDs),
+                missingCandidateIDs
+            )
+        }
+
+        let confirmedMissing = missingCandidateIDs.intersection(previousMissingCandidateIDs)
+        return (
+            currentLocalActivityIDs
+                .subtracting(confirmedMissing)
+                .union(snapshot.activityIDs),
+            missingCandidateIDs
+        )
+    }
+
+    private func stageStravaReconciliationRecordCommit(
+        _ snapshot: StravaManager.ActivityReconciliationSnapshot,
+        missingCandidateIDs: Set<Int64>,
+        syncGeneration: UInt64
+    ) {
+        guard snapshot.isAuthoritative else {
+            return
+        }
+
+        let athleteID = String(snapshot.athleteID)
+        runAfterPendingCacheSave { [weak self] in
+            guard let self,
+                  self.isCurrentStravaSync(
+                      generation: syncGeneration,
+                      athleteID: athleteID
+                  ),
+                  self.isCachePersistenceHealthy else {
+                return
+            }
+            self.syncStateStore.stravaReconciliationRecord = .init(
+                athleteID: athleteID,
+                activityIDs: snapshot.activityIDs,
+                missingCandidateIDs: missingCandidateIDs,
+                capturedAt: snapshot.capturedAt
+            )
+        }
+    }
+
+    private func rollbackStravaTransaction(generation: UInt64, athleteID: String) {
+        guard let snapshot = syncCoordinator.rollbackSnapshot(
+            generation: generation,
+            athleteID: athleteID
         ) else {
-            print("PTrack Strava: historical backfill not completed; requesting full activity history")
+            return
+        }
+
+        pendingFlushWorkItem?.cancel()
+        pendingFlushWorkItem = nil
+        let currentAuthoritativeWorkouts = authoritativeWorkouts
+        let currentWorkoutIDs = Set(currentAuthoritativeWorkouts.map(\.id))
+        let baselineWorkouts = snapshot.workouts + snapshot.pendingWorkouts
+        let baselineWorkoutIDs = Set(baselineWorkouts.map(\.id))
+        let newlyInsertedWorkoutIDs = currentWorkoutIDs.subtracting(baselineWorkoutIDs)
+        let removedBaselineHealthIDs = Set(
+            baselineWorkouts.lazy
+                .filter(\.isHealthKitSource)
+                .map(\.id)
+        ).subtracting(currentWorkoutIDs)
+
+        for workout in currentAuthoritativeWorkouts where newlyInsertedWorkoutIDs.contains(workout.id) {
+            newWorkoutBadgeStore.markSeen(workout)
+        }
+
+        workouts = snapshot.workouts
+        pendingWorkouts = snapshot.pendingWorkouts
+        knownWorkoutIDs = baselineWorkoutIDs
+        rebuildWorkoutIndexes()
+
+        // Direct records written before the authorization changed were still
+        // validated against this transaction's athlete, so their full on-disk
+        // form is safe to retain. Rewriting them from list-preview snapshots
+        // would discard route detail. Only restore HealthKit duplicates that
+        // the abandoned generation temporarily displaced.
+        for workoutID in removedBaselineHealthIDs
+            where cacheStore.loadWorkout(id: workoutID) == nil {
+            markCacheDirty(workoutID)
+        }
+        markCacheDeleted(newlyInsertedWorkoutIDs)
+        totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
+        updateTotalDistanceText()
+        collectionView.reloadData()
+        scheduleCacheSave(delay: 0)
+        PTrackLog.synchronization.debug(
+            "PTrack Strava: rolled back generation \(generation) after athlete authorization changed"
+        )
+    }
+
+    private func scheduleDeferredStravaEnrichmentIfNeeded(
+        _ result: StravaManager.LoadResult,
+        didRunHistoricalPass: Bool
+    ) -> Date? {
+        if result.needsDeferredRetry {
+            // An incomplete listing may not have produced a placeholder for
+            // activities on pages that were never reached. Retry it even when
+            // there is currently no local placeholder to inspect.
+            let retryAttempt = registerStravaDeferredRetryProgress(for: result)
+            let retryDelay = stravaRetryDelay(
+                baseDelay: stravaIncompleteRetryBaseDelay,
+                attempt: retryAttempt
+            )
+            let retryDate = max(
+                result.retryAfterDate ?? .distantPast,
+                Date().addingTimeInterval(retryDelay)
+            ).addingTimeInterval(2)
+            let hasCoordinatorRetry = !result.didLoadCompleteActivitySummary
+                && (syncCoordinator.pendingDataSourceRequest != nil
+                    || syncCoordinator.pendingStravaRequest != nil)
+            scheduleDeferredStravaEnrichmentRetry(
+                at: retryDate,
+                schedulesWorkItem: retryAttempt <= stravaMaximumAutomaticUnchangedRetryCount
+                    && !hasCoordinatorRetry
+            )
+            return retryDate
+        }
+
+        let hasPendingPlaceholderEnrichment = authoritativeWorkouts.contains { workout in
+            workout.isDirectStravaSource
+                && workout.isStravaSummaryPlaceholder
+                && !workout.isStravaTerminalPlaceholder
+        }
+
+        guard hasPendingPlaceholderEnrichment else {
+            clearStravaDeferredRetryState()
             return nil
         }
 
-        let latestStartDate = workouts
-            .filter { $0.stravaActivityID != nil }
+        let retryDate: Date
+        let schedulesWorkItem: Bool
+        if result.failedActivityCount > 0 {
+            // Retry schema/transport/404 failures with persistent exponential
+            // backoff. After repeated unchanged results, stop the autonomous
+            // timer; a later app open can still make one gated recovery pass.
+            let retryAttempt = registerStravaDeferredRetryProgress(for: result)
+            retryDate = Date().addingTimeInterval(
+                stravaRetryDelay(
+                    baseDelay: stravaPlaceholderEnrichmentInterval,
+                    attempt: retryAttempt
+                )
+            )
+            schedulesWorkItem = retryAttempt <= stravaMaximumAutomaticUnchangedRetryCount
+        } else if !didRunHistoricalPass,
+                  let persistedRetryDate = syncStateStore.stravaDeferredRetryDate {
+            // An ordinary incremental pass must not erase a future enrichment
+            // retry restored after relaunch.
+            retryDate = persistedRetryDate
+            schedulesWorkItem = syncStateStore.stravaDeferredRetryAttempt
+                <= stravaMaximumAutomaticUnchangedRetryCount
+        } else {
+            clearStravaDeferredRetryState()
+            return nil
+        }
+
+        let hasCoordinatorRetry = !result.didLoadCompleteActivitySummary
+            && (syncCoordinator.pendingDataSourceRequest != nil
+                || syncCoordinator.pendingStravaRequest != nil)
+        scheduleDeferredStravaEnrichmentRetry(
+            at: retryDate,
+            schedulesWorkItem: schedulesWorkItem && !hasCoordinatorRetry
+        )
+        return retryDate
+    }
+
+    private func scheduleDeferredStravaEnrichmentRetry(
+        at retryDate: Date,
+        schedulesWorkItem: Bool
+    ) {
+        syncStateStore.stravaDeferredRetryDate = retryDate
+        pendingStravaEnrichmentRetryWorkItem?.cancel()
+        pendingStravaEnrichmentRetryWorkItem = nil
+
+        guard schedulesWorkItem else {
+            return
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+            self.pendingStravaEnrichmentRetryWorkItem = nil
+            self.queueStravaSync(showsLoadingIndicator: false, presentsErrors: false)
+            _ = self.runPendingStravaSyncAfterHealthIfNeeded()
+        }
+        pendingStravaEnrichmentRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + max(retryDate.timeIntervalSinceNow, 1),
+            execute: workItem
+        )
+    }
+
+    private func registerStravaDeferredRetryProgress(
+        for result: StravaManager.LoadResult
+    ) -> Int {
+        let snapshot = result.reconciliationSnapshot
+        let progressKey = [
+            String(snapshot.athleteID),
+            snapshot.didReachNaturalEnd ? "complete" : "partial",
+            String(snapshot.activityIDs.count),
+            snapshot.activityIDs.min().map(String.init) ?? "none",
+            snapshot.activityIDs.max().map(String.init) ?? "none",
+            String(result.deferredActivityCount),
+            String(result.failedActivityCount)
+        ].joined(separator: "|")
+        let didMakeProgress = syncStateStore.stravaDeferredRetryProgressKey != progressKey
+        let retryAttempt = didMakeProgress
+            ? 1
+            : min(syncStateStore.stravaDeferredRetryAttempt + 1, 64)
+        syncStateStore.stravaDeferredRetryProgressKey = progressKey
+        syncStateStore.stravaDeferredRetryAttempt = retryAttempt
+        if didMakeProgress {
+            pendingDataSourceSyncRetryAttempt = 0
+        }
+        return retryAttempt
+    }
+
+    private func registerStravaTransientRetryProgress(for error: Error) -> (Date, Int) {
+        let progressKey = "transient|\(Self.stravaRetryCategory(for: error))"
+        let didChangeFailure = syncStateStore.stravaDeferredRetryProgressKey != progressKey
+        let retryAttempt = didChangeFailure
+            ? 1
+            : min(syncStateStore.stravaDeferredRetryAttempt + 1, 64)
+        syncStateStore.stravaDeferredRetryProgressKey = progressKey
+        syncStateStore.stravaDeferredRetryAttempt = retryAttempt
+        if didChangeFailure {
+            pendingDataSourceSyncRetryAttempt = 0
+        }
+        let retryDate = Date().addingTimeInterval(
+            stravaRetryDelay(
+                baseDelay: stravaTransientRetryBaseDelay,
+                attempt: retryAttempt
+            )
+        )
+        syncStateStore.stravaDeferredRetryDate = retryDate
+        return (retryDate, retryAttempt)
+    }
+
+    private func stravaRetryDelay(baseDelay: TimeInterval, attempt: Int) -> TimeInterval {
+        let exponent = min(max(attempt - 1, 0), 10)
+        return min(
+            baseDelay * TimeInterval(1 << exponent),
+            stravaRetryMaximumDelay
+        )
+    }
+
+    private func stravaPersistedRetryBaseDelay() -> TimeInterval {
+        guard let progressKey = syncStateStore.stravaDeferredRetryProgressKey else {
+            return stravaIncompleteRetryBaseDelay
+        }
+        if progressKey.hasPrefix("transient|") {
+            return stravaTransientRetryBaseDelay
+        }
+        if let failedCount = progressKey.split(separator: "|").last.flatMap({ Int($0) }),
+           failedCount > 0 {
+            return stravaPlaceholderEnrichmentInterval
+        }
+        return stravaIncompleteRetryBaseDelay
+    }
+
+    private func clearStravaDeferredRetryState() {
+        syncStateStore.stravaDeferredRetryDate = nil
+        syncStateStore.stravaDeferredRetryProgressKey = nil
+        syncStateStore.stravaDeferredRetryAttempt = 0
+        pendingStravaEnrichmentRetryWorkItem?.cancel()
+        pendingStravaEnrichmentRetryWorkItem = nil
+        pendingDataSourceSyncRetryWorkItem?.cancel()
+        pendingDataSourceSyncRetryWorkItem = nil
+        pendingDataSourceSyncRetryNotBefore = nil
+        pendingDataSourceSyncRetryAttempt = 0
+    }
+
+    private static func stravaRetryDate(from error: Error) -> Date? {
+        guard let managerError = error as? StravaManagerError,
+              case .requestBudgetExhausted(let retryAfter) = managerError else {
+            return nil
+        }
+        return retryAfter
+    }
+
+    private static func stravaRetryCategory(for error: Error) -> String {
+        if let managerError = error as? StravaManagerError {
+            if case .requestBudgetExhausted = managerError {
+                return "request-budget"
+            }
+            return "manager-\(String(describing: managerError))"
+        }
+        guard let networkError = error as? NetworkError else {
+            return String(describing: type(of: error))
+        }
+        switch networkError {
+        case .httpStatus(let statusCode, _, _, _):
+            return "http-\(statusCode)"
+        case .decodingFailed(_, let statusCode, _, _):
+            return "decode-\(statusCode)"
+        case .transportFailed(let underlying):
+            if let urlError = underlying as? URLError {
+                return "transport-\(urlError.code.rawValue)"
+            }
+            return "transport"
+        case .invalidResponse:
+            return "invalid-response"
+        case .invalidURL:
+            return "invalid-url"
+        }
+    }
+
+    private func latestStravaStartDateForIncrementalSync() -> Date? {
+        guard !shouldRunStravaHistoricalBackfill() else {
+            PTrackLog.synchronization.debug("PTrack Strava: historical backfill not completed; requesting full activity history")
+            return nil
+        }
+
+        let latestStartDate = authoritativeWorkouts
+            .filter(\.isDirectStravaSource)
             .map(\.startDate)
             .max()
 
         return latestStartDate?.addingTimeInterval(-stravaIncrementalLookback)
     }
 
-    private func shouldRunStravaHistoricalBackfill(
-        unresolvedStaleActivityIDs: Set<Int64>
-    ) -> Bool {
-        UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) == false
-            || UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) == false
-            || UserDefaults.standard.integer(forKey: DefaultsKey.stravaStreamDataMigrationVersion)
-                < TrackedWorkout.currentStravaStreamDataVersion
-            || !unresolvedStaleActivityIDs.isEmpty
-    }
-
-    private func staleStravaStreamActivityIDs() -> Set<Int64> {
+    private func directStravaActivityIDsInMemory() -> Set<Int64> {
         Set(
-            (workouts + pendingWorkouts)
-                .filter(\.needsStravaStreamDataRefresh)
+            authoritativeWorkouts
+                .filter(\.isDirectStravaSource)
                 .compactMap(\.stravaActivityID)
         )
     }
 
-    private func unresolvedStaleStravaStreamActivityIDs() -> Set<Int64> {
-        staleStravaStreamActivityIDs().subtracting(terminalStravaStreamMigrationActivityIDs())
-    }
+    @discardableResult
+    private func reconcileDirectStravaWorkouts(
+        withAuthoritativeActivityIDs activityIDs: Set<Int64>
+    ) -> Int {
+        var removedWorkouts: [TrackedWorkout] = []
+        workouts.removeAll { workout in
+            guard workout.isDirectStravaSource,
+                  workout.stravaActivityID.map({ !activityIDs.contains($0) }) ?? true else {
+                return false
+            }
 
-    private func terminalStravaStreamMigrationActivityIDs() -> Set<Int64> {
-        guard let data = UserDefaults.standard.data(forKey: DefaultsKey.stravaTerminalStreamMigrationState),
-              let state = try? JSONDecoder().decode(StravaTerminalStreamMigrationState.self, from: data),
-              state.schemaVersion == TrackedWorkout.currentStravaStreamDataVersion else {
-            return []
+            removedWorkouts.append(workout)
+            return true
         }
-        return Set(state.activityIDs)
+        pendingWorkouts.removeAll { workout in
+            guard workout.isDirectStravaSource,
+                  workout.stravaActivityID.map({ !activityIDs.contains($0) }) ?? true else {
+                return false
+            }
+
+            removedWorkouts.append(workout)
+            return true
+        }
+
+        guard !removedWorkouts.isEmpty else {
+            return 0
+        }
+
+        // A direct Strava record may previously have replaced its HealthKit
+        // duplicate. Once that direct record disappears (account switch or
+        // remote deletion), force a serialized HealthKit full pass so the
+        // fallback source cannot remain missing until the periodic repair.
+        // Invalidate any older Health cache-save completion before it can mark
+        // this newly-required repair as complete.
+        _ = syncCoordinator.beginGeneration(.health)
+        markHealthHistoricalBackfillRequired()
+        syncCoordinator.requireHealthRepairAfterStrava()
+
+        for workout in removedWorkouts {
+            knownWorkoutIDs.remove(workout.id)
+            newWorkoutBadgeStore.markSeen(workout)
+        }
+        markCacheDeleted(Set(removedWorkouts.map(\.id)))
+        rebuildWorkoutIndexes()
+        totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
+        updateTotalDistanceText()
+        collectionView.reloadData()
+        scheduleCacheSave(delay: 0)
+        PTrackLog.synchronization.debug(
+            "PTrack Strava: removed \(removedWorkouts.count) direct workout(s) absent from the complete current-athlete summary"
+        )
+        return removedWorkouts.count
     }
 
-    private func recordTerminalStravaStreamMigrationAttempts(
-        staleActivityIDs: Set<Int64>,
-        summaryActivityIDs: Set<Int64>,
-        routeCandidateActivityIDs: Set<Int64>
+    private func shouldRunStravaHistoricalBackfill() -> Bool {
+        needsStravaCacheIntegrityRepair
+            || UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted) == false
+            || UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted) == false
+            || UserDefaults.standard.integer(forKey: DefaultsKey.stravaCacheIntegrityRepairVersion)
+                < currentCacheIntegrityRepairVersion
+            || UserDefaults.standard.bool(forKey: DefaultsKey.stravaImportInProgress)
+            || hasStravaAthleteChangedSinceLastFullSync()
+            || isFullCoverageReconciliationDue(
+                lastRunKey: DefaultsKey.stravaLastFullCoverageReconciliationDate,
+                interval: stravaFullCoverageReconciliationInterval
+            )
+    }
+
+    private func markStravaHistoricalBackfillRequired() {
+        UserDefaults.standard.set(false, forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
+        UserDefaults.standard.set(false, forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
+    }
+
+    private func hasStravaAthleteChangedSinceLastFullSync() -> Bool {
+        guard let currentAthleteID = StravaManager.shared.storedAthleteID else {
+            return false
+        }
+
+        return syncStateStore.lastSynchronizedStravaAthleteID != String(currentAthleteID)
+    }
+
+    private func confirmedStravaAthleteChange() -> (previous: String, current: String)? {
+        guard let currentAthleteID = StravaManager.shared.storedAthleteID else {
+            return nil
+        }
+        let currentAthleteIDString = String(currentAthleteID)
+
+        if let previousAthleteID = effectiveStravaCachedAthleteID {
+            guard previousAthleteID != currentAthleteIDString else {
+                return nil
+            }
+            return (previousAthleteID, currentAthleteIDString)
+        }
+
+        // The migration release may see legacy direct records without either
+        // ownership key. Only an explicit durable OAuth A -> B handoff is safe
+        // evidence that those untagged records belong to another account.
+        guard let handoff = syncStateStore.stravaAuthorizationHandoff,
+              handoff.authorizedAthleteIDs.contains(currentAthleteIDString),
+              handoff.cacheOwnerAthleteID != currentAthleteIDString else {
+            return nil
+        }
+        return (handoff.cacheOwnerAthleteID, currentAthleteIDString)
+    }
+
+    private var effectiveStravaCachedAthleteID: String? {
+        syncCoordinator.pendingStravaCacheAthleteID
+            ?? syncStateStore.cachedStravaAthleteID
+            // Existing installs used the completed-full-sync value as the cache
+            // owner. Keep it as a migration fallback until the next durable save.
+            ?? syncStateStore.lastSynchronizedStravaAthleteID
+    }
+
+    private func isCurrentStravaSync(generation: UInt64, athleteID: String) -> Bool {
+        syncCoordinator.isCurrent(.strava, generation: generation)
+            && StravaManager.shared.storedAthleteID.map(String.init) == athleteID
+    }
+
+    private func stageStravaCachedAthleteIDCommit(
+        _ athleteID: String,
+        syncGeneration: UInt64
     ) {
-        guard !staleActivityIDs.isEmpty else {
-            return
-        }
+        syncCoordinator.stageStravaCacheOwner(athleteID)
+        runAfterPendingCacheSave { [weak self] in
+            guard let self,
+                  self.syncCoordinator.pendingStravaCacheAthleteID == athleteID,
+                  self.isCurrentStravaSync(
+                      generation: syncGeneration,
+                      athleteID: athleteID
+                  ),
+                  self.isCachePersistenceHealthy else {
+                return
+            }
 
-        let missingFromAuthoritativeSummary = staleActivityIDs.subtracting(summaryActivityIDs)
-        let presentButNotMigratable = staleActivityIDs
-            .intersection(summaryActivityIDs)
-            .subtracting(routeCandidateActivityIDs)
-        let terminalActivityIDs = missingFromAuthoritativeSummary.union(presentButNotMigratable)
-        guard !terminalActivityIDs.isEmpty else {
-            return
+            self.syncStateStore.cachedStravaAthleteID = athleteID
+            // Once a current owner is durable, any multi-hop authorization
+            // evidence is superseded by that stronger cache ownership record.
+            self.syncStateStore.stravaAuthorizationHandoff = nil
+            self.syncCoordinator.clearPendingStravaCacheOwner(ifMatching: athleteID)
+            PTrackLog.synchronization.debug("PTrack Strava: cache ownership committed for athlete \(athleteID)")
         }
-
-        let accumulatedActivityIDs = terminalStravaStreamMigrationActivityIDs().union(terminalActivityIDs)
-        let state = StravaTerminalStreamMigrationState(
-            schemaVersion: TrackedWorkout.currentStravaStreamDataVersion,
-            activityIDs: accumulatedActivityIDs.sorted()
-        )
-        guard let data = try? JSONEncoder().encode(state) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: DefaultsKey.stravaTerminalStreamMigrationState)
-        print(
-            "PTrack Strava: marked \(terminalActivityIDs.count) stale activities terminal for stream migration v\(TrackedWorkout.currentStravaStreamDataVersion) (missing: \(missingFromAuthoritativeSummary.count), unsupported/no route: \(presentButNotMigratable.count))"
-        )
     }
 
     private func markStravaHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
         didRunHistoricalBackfill: Bool,
-        didCompleteWithoutActivityFailures: Bool
+        didCompleteAuthoritativeSummary: Bool,
+        syncGeneration: UInt64,
+        syncAthleteID: String
     ) {
         guard didRunHistoricalBackfill,
-              didCompleteWithoutActivityFailures else {
+              didCompleteAuthoritativeSummary else {
             return
         }
 
         runAfterPendingCacheSave { [weak self] in
-            self?.markStravaHistoricalBackfillCompleted()
+            guard let self,
+                  self.isCurrentStravaSync(
+                      generation: syncGeneration,
+                      athleteID: syncAthleteID
+                  ) else {
+                return
+            }
+            self.markStravaHistoricalBackfillCompleted(athleteID: syncAthleteID)
         }
     }
 
-    private func markStravaHistoricalBackfillCompleted() {
-        let unresolvedStaleActivityIDs = unresolvedStaleStravaStreamActivityIDs()
-        guard unresolvedStaleActivityIDs.isEmpty else {
-            print(
-                "PTrack Strava: stream data migration remains pending because \(unresolvedStaleActivityIDs.count) retryable stale activities remain"
-            )
+    private func markStravaImportCompletedAfterCacheSaveIfNeeded(
+        didCompleteActivitySummary: Bool,
+        syncGeneration: UInt64,
+        syncAthleteID: String
+    ) {
+        guard didCompleteActivitySummary else {
             return
         }
 
-        guard !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
-                || !UserDefaults.standard.bool(forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
-                || UserDefaults.standard.integer(forKey: DefaultsKey.stravaStreamDataMigrationVersion)
-                    < TrackedWorkout.currentStravaStreamDataVersion else {
+        runAfterPendingCacheSave { [weak self] in
+            guard let self,
+                  self.isCurrentStravaSync(
+                      generation: syncGeneration,
+                      athleteID: syncAthleteID
+                  ) else {
+                return
+            }
+            UserDefaults.standard.set(false, forKey: DefaultsKey.stravaImportInProgress)
+        }
+    }
+
+    private func markStravaHistoricalBackfillCompleted(athleteID: String) {
+        guard isCachePersistenceHealthy else {
+            PTrackLog.synchronization.debug("PTrack Strava: kept historical coverage repair pending because the cache manifest is not durably committed")
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCompleted)
         UserDefaults.standard.set(true, forKey: DefaultsKey.stravaHistoricalBackfillCacheCommitCompleted)
         UserDefaults.standard.set(
-            TrackedWorkout.currentStravaStreamDataVersion,
-            forKey: DefaultsKey.stravaStreamDataMigrationVersion
+            currentCacheIntegrityRepairVersion,
+            forKey: DefaultsKey.stravaCacheIntegrityRepairVersion
         )
-        print(
-            "PTrack Strava: historical backfill and stream data migration v\(TrackedWorkout.currentStravaStreamDataVersion) marked completed after cache save"
+        UserDefaults.standard.set(
+            Date(),
+            forKey: DefaultsKey.stravaLastFullCoverageReconciliationDate
         )
+        UserDefaults.standard.set(false, forKey: DefaultsKey.stravaImportInProgress)
+        syncStateStore.cachedStravaAthleteID = athleteID
+        syncStateStore.lastSynchronizedStravaAthleteID = athleteID
+        needsStravaCacheIntegrityRepair = false
+        PTrackLog.synchronization.debug("PTrack Strava: historical coverage repair marked completed after cache save")
     }
 
     private static func debugDateString(_ date: Date?) -> String {
@@ -2431,183 +3585,273 @@ class ViewController: UIViewController {
         return ISO8601DateFormatter().string(from: date)
     }
 
+    private func isFullCoverageReconciliationDue(
+        lastRunKey: String,
+        interval: TimeInterval
+    ) -> Bool {
+        guard let lastRunDate = UserDefaults.standard.object(forKey: lastRunKey) as? Date else {
+            return true
+        }
+
+        return Date().timeIntervalSince(lastRunDate) >= interval
+    }
+
     private func loadIncrementalHealthWorkouts() {
         let cachedIDs = knownWorkoutIDs
         let staleWorkouts = workouts.filter(\.needsHealthDataRefresh)
         let staleWorkoutIDs = Set(staleWorkouts.map(\.id))
+        let cachedHealthWorkouts = workouts.filter {
+            $0.isHealthKitSource
+        }
         let shouldBackfillHistory = shouldRunHealthHistoricalBackfill()
+        let syncGeneration = syncCoordinator.beginGeneration(.health)
         let queryStartDate = shouldBackfillHistory
             ? nil
-            : staleWorkouts.map(\.startDate).min() ?? workouts.map(\.startDate).max()
+            : staleWorkouts.map(\.startDate).min() ?? cachedHealthWorkouts.map(\.startDate).max()
         let excludedIDs = cachedIDs.subtracting(staleWorkoutIDs)
-        isCurrentHealthHistoricalBackfill = shouldBackfillHistory
-
         if !staleWorkouts.isEmpty {
-            print("PTrack HealthKit: refreshing \(staleWorkouts.count) cached workouts for expanded health data")
+            PTrackLog.synchronization.debug("PTrack HealthKit: refreshing \(staleWorkouts.count) cached workouts for expanded health data")
         }
         if shouldBackfillHistory {
-            print("PTrack HealthKit: historical backfill not completed; requesting full workout history")
+            PTrackLog.synchronization.debug("PTrack HealthKit: historical backfill not completed; requesting full workout history")
         }
 
+        UserDefaults.standard.set(true, forKey: DefaultsKey.healthImportInProgress)
         store.loadTrackedWorkouts(
             after: queryStartDate,
             excludingIDs: excludedIDs,
             onNewDataDetected: { [weak self] _ in
-                Task { @MainActor in
-                    self?.setHealthNewDataSyncInProgress(true)
+                DispatchQueue.main.async {
+                    guard let self,
+                          self.syncCoordinator.isCurrent(.health, generation: syncGeneration) else {
+                        return
+                    }
+                    self.setNewDataSyncInProgress(true, for: .health)
                 }
             },
-            onTrackedWorkout: { [weak self] trackedWorkout in
-                Task { @MainActor in
-                    self?.upsertTrackedWorkout(trackedWorkout)
+            onTrackedWorkouts: { [weak self] trackedWorkouts in
+                DispatchQueue.main.async {
+                    guard let self,
+                          self.syncCoordinator.isCurrent(.health, generation: syncGeneration) else {
+                        return
+                    }
+                    self.upsertTrackedWorkouts(trackedWorkouts)
                 }
             },
             completion: { [weak self] loadResult in
-                Task { @MainActor in
-                    self?.handleLoadResult(loadResult)
+                // HealthWorkoutStore emits each workout and then completion in
+                // sequence. A single FIFO main queue preserves that ordering so
+                // completion cannot commit a backfill marker before the final
+                // workout has entered the authoritative model.
+                DispatchQueue.main.async {
+                    self?.handleLoadResult(
+                        loadResult,
+                        syncGeneration: syncGeneration,
+                        didRunHistoricalBackfill: shouldBackfillHistory
+                    )
                 }
             }
         )
     }
 
     private func shouldRunHealthHistoricalBackfill() -> Bool {
-        UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) == false
+        needsHealthCacheIntegrityRepair
+            || UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted) == false
             || UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted) == false
+            || UserDefaults.standard.integer(forKey: DefaultsKey.healthCacheIntegrityRepairVersion)
+                < currentCacheIntegrityRepairVersion
+            || UserDefaults.standard.bool(forKey: DefaultsKey.healthImportInProgress)
+            || isFullCoverageReconciliationDue(
+                lastRunKey: DefaultsKey.healthLastFullCoverageReconciliationDate,
+                interval: healthFullCoverageReconciliationInterval
+            )
     }
 
-    private func upsertTrackedWorkout(_ workout: TrackedWorkout) {
-        if shouldSkipForStravaPrecedence(workout) {
+    private func upsertTrackedWorkouts(_ incomingWorkouts: [TrackedWorkout]) {
+        guard !incomingWorkouts.isEmpty else {
             return
         }
 
-        removeAppleHealthConflictsIfNeeded(for: workout)
-
-        if let existingIndex = workouts.firstIndex(where: { $0.id == workout.id }) {
-            workouts[existingIndex] = workout
-            knownWorkoutIDs.insert(workout.id)
-            totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
-            updateTotalDistanceText()
-            markCacheDirty(workout.id)
-            scheduleCacheSave()
-            return
+        // Keep the final version of a repeated ID in this publication batch.
+        var orderedWorkoutIDs: [String] = []
+        var incomingByID: [String: TrackedWorkout] = [:]
+        incomingByID.reserveCapacity(incomingWorkouts.count)
+        for workout in incomingWorkouts {
+            if incomingByID.updateValue(workout, forKey: workout.id) == nil {
+                orderedWorkoutIDs.append(workout.id)
+            }
         }
 
-        appendTrackedWorkout(workout)
-    }
-
-    private func shouldSkipForStravaPrecedence(_ workout: TrackedWorkout) -> Bool {
-        guard !workout.isStravaSource,
-              let stravaWorkout = firstStravaConflict(for: workout) else {
-            return false
+        rebuildWorkoutIndexes()
+        var acceptedWorkouts: [TrackedWorkout] = []
+        acceptedWorkouts.reserveCapacity(orderedWorkoutIDs.count)
+        for workoutID in orderedWorkoutIDs {
+            guard let workout = incomingByID[workoutID] else {
+                continue
+            }
+            if let conflict = stravaConflict(for: workout) {
+                PTrackLog.synchronization.debug(
+                    "PTrack Sync: skipped Apple Health workout \(workout.id) because Strava workout \(conflict.id) has precedence"
+                )
+                continue
+            }
+            acceptedWorkouts.append(workout)
         }
 
-        print(
-            "PTrack Sync: skipped Apple Health workout \(workout.id) because Strava workout \(stravaWorkout.id) has precedence"
-        )
-        return true
-    }
-
-    private func firstStravaConflict(for workout: TrackedWorkout) -> TrackedWorkout? {
-        (workouts + pendingWorkouts).first { candidate in
-            candidate.isStravaSource && candidate.isSamePhysicalWorkout(as: workout)
-        }
-    }
-
-    private func removeAppleHealthConflictsIfNeeded(for workout: TrackedWorkout) {
-        guard workout.isStravaSource else {
+        guard !acceptedWorkouts.isEmpty else {
             return
         }
 
         let previousWorkouts = workouts
-        var removedWorkouts: [TrackedWorkout] = []
-        workouts.removeAll { candidate in
-            guard !candidate.isStravaSource,
-                  candidate.isSamePhysicalWorkout(as: workout) else {
-                return false
+        let previousPendingWorkouts = pendingWorkouts
+        let conflictingHealthWorkoutIDs = Set(
+            acceptedWorkouts
+                .filter(\.isDirectStravaSource)
+                .flatMap { directWorkout in
+                    (healthWorkoutsByStartDate[directWorkout.startDate] ?? []).compactMap { candidate in
+                        candidate.isSamePhysicalWorkout(as: directWorkout) ? candidate.id : nil
+                    }
+                }
+        )
+
+        if !conflictingHealthWorkoutIDs.isEmpty {
+            workouts.removeAll { conflictingHealthWorkoutIDs.contains($0.id) }
+            pendingWorkouts.removeAll { conflictingHealthWorkoutIDs.contains($0.id) }
+            for removedWorkout in (previousWorkouts + previousPendingWorkouts)
+                where conflictingHealthWorkoutIDs.contains(removedWorkout.id) {
+                knownWorkoutIDs.remove(removedWorkout.id)
+                newWorkoutBadgeStore.markSeen(removedWorkout)
             }
-
-            removedWorkouts.append(candidate)
-            return true
+            markCacheDeleted(conflictingHealthWorkoutIDs)
+            rebuildWorkoutIndexes()
         }
 
-        pendingWorkouts.removeAll { candidate in
-            guard !candidate.isStravaSource,
-                  candidate.isSamePhysicalWorkout(as: workout) else {
-                return false
+        var didAppendPendingWorkout = false
+        var replacedVisibleWorkoutIDs = Set<String>()
+        var needsVisibleWorkoutResort = false
+        for workout in acceptedWorkouts {
+            if let existingIndex = workoutIndexByID[workout.id] {
+                needsVisibleWorkoutResort = needsVisibleWorkoutResort
+                    || workouts[existingIndex].startDate != workout.startDate
+                workouts[existingIndex] = workout
+                knownWorkoutIDs.insert(workout.id)
+                replacedVisibleWorkoutIDs.insert(workout.id)
+            } else if let pendingIndex = pendingWorkoutIndexByID[workout.id] {
+                pendingWorkouts[pendingIndex] = workout
+                knownWorkoutIDs.insert(workout.id)
+            } else if knownWorkoutIDs.insert(workout.id).inserted {
+                pendingWorkoutIndexByID[workout.id] = pendingWorkouts.count
+                pendingWorkouts.append(workout)
+                newWorkoutBadgeStore.markIfNeeded(workout)
+                didAppendPendingWorkout = true
             }
-
-            removedWorkouts.append(candidate)
-            return true
+            markCacheDirty(workout.id)
         }
 
-        guard !removedWorkouts.isEmpty else {
-            return
+        if needsVisibleWorkoutResort {
+            workouts.sort { $0.startDate > $1.startDate }
         }
-
-        for removedWorkout in removedWorkouts {
-            knownWorkoutIDs.remove(removedWorkout.id)
-            newWorkoutBadgeStore.markSeen(removedWorkout)
-            markCacheDeleted(removedWorkout.id)
-        }
-
+        rebuildWorkoutIndexes()
         totalDistanceMeters = workouts.reduce(0) { $0 + $1.distanceMeters }
         updateTotalDistanceText()
-        let removedWorkoutIDs = Set(removedWorkouts.map(\.id))
-        let deletedIndexPaths = previousWorkouts.enumerated().compactMap { index, workout -> IndexPath? in
-            guard removedWorkoutIDs.contains(workout.id) else {
-                return nil
+
+        if needsVisibleWorkoutResort
+            || (!conflictingHealthWorkoutIDs.isEmpty && !replacedVisibleWorkoutIDs.isEmpty) {
+            collectionView.reloadData()
+        } else if !conflictingHealthWorkoutIDs.isEmpty {
+            let deletedIndexPaths = previousWorkouts.enumerated().compactMap { index, workout in
+                conflictingHealthWorkoutIDs.contains(workout.id)
+                    ? IndexPath(item: index, section: 0)
+                    : nil
             }
-
-            return IndexPath(item: index, section: 0)
+            applyWorkoutListDeletions(deletedIndexPaths, previousItemCount: previousWorkouts.count)
+        } else if !replacedVisibleWorkoutIDs.isEmpty,
+                  collectionView.numberOfItems(inSection: 0) == workouts.count {
+            let reloadedIndexPaths = workouts.enumerated().compactMap { index, workout in
+                replacedVisibleWorkoutIDs.contains(workout.id)
+                    ? IndexPath(item: index, section: 0)
+                    : nil
+            }
+            collectionView.reloadItems(at: reloadedIndexPaths)
         }
-        applyWorkoutListDeletions(deletedIndexPaths, previousItemCount: previousWorkouts.count)
-        scheduleCacheSave(delay: 0)
 
-        print(
-            "PTrack Sync: removed \(removedWorkouts.count) Apple Health duplicate(s) because Strava workout \(workout.id) has precedence"
-        )
+        if didAppendPendingWorkout {
+            schedulePendingWorkoutFlush()
+        }
+        scheduleCacheSave()
+    }
+
+    private func stravaConflict(for workout: TrackedWorkout) -> TrackedWorkout? {
+        guard workout.isHealthKitSource else {
+            return nil
+        }
+        return directStravaWorkoutsByStartDate[workout.startDate]?.first {
+            $0.isSamePhysicalWorkout(as: workout)
+        }
+    }
+
+    private func rebuildWorkoutIndexes() {
+        workoutIndexByID.removeAll(keepingCapacity: true)
+        workoutIndexByID.reserveCapacity(workouts.count)
+        pendingWorkoutIndexByID.removeAll(keepingCapacity: true)
+        pendingWorkoutIndexByID.reserveCapacity(pendingWorkouts.count)
+        directStravaWorkoutsByStartDate.removeAll(keepingCapacity: true)
+        healthWorkoutsByStartDate.removeAll(keepingCapacity: true)
+
+        for (index, workout) in workouts.enumerated() {
+            workoutIndexByID[workout.id] = index
+            indexWorkoutBySource(workout)
+        }
+        for (index, workout) in pendingWorkouts.enumerated() {
+            pendingWorkoutIndexByID[workout.id] = index
+            indexWorkoutBySource(workout)
+        }
+    }
+
+    private func indexWorkoutBySource(_ workout: TrackedWorkout) {
+        if workout.isDirectStravaSource {
+            directStravaWorkoutsByStartDate[workout.startDate, default: []].append(workout)
+        } else if workout.isHealthKitSource {
+            healthWorkoutsByStartDate[workout.startDate, default: []].append(workout)
+        }
     }
 
     @discardableResult
     private func removeCachedAppleHealthWorkoutsConflictingWithStrava() -> Bool {
-        let stravaWorkouts = workouts.filter(\.isStravaSource)
-        guard !stravaWorkouts.isEmpty else {
+        let stravaWorkoutsByStartDate = Dictionary(
+            grouping: workouts.filter(\.isDirectStravaSource),
+            by: \.startDate
+        )
+        guard !stravaWorkoutsByStartDate.isEmpty else {
             return false
         }
 
-        var removedCount = 0
+        var removedWorkouts: [TrackedWorkout] = []
         workouts.removeAll { workout in
-            guard !workout.isStravaSource else {
+            guard workout.isHealthKitSource else {
                 return false
             }
 
-            let hasStravaConflict = stravaWorkouts.contains { $0.isSamePhysicalWorkout(as: workout) }
+            let hasStravaConflict = stravaWorkoutsByStartDate[workout.startDate]?.contains {
+                $0.isSamePhysicalWorkout(as: workout)
+            } == true
             if hasStravaConflict {
-                removedCount += 1
+                removedWorkouts.append(workout)
                 newWorkoutBadgeStore.markSeen(workout)
-                markCacheDeleted(workout.id)
             }
             return hasStravaConflict
         }
 
-        guard removedCount > 0 else {
+        guard !removedWorkouts.isEmpty else {
             return false
         }
 
-        print("PTrack Sync: removed \(removedCount) cached Apple Health duplicate(s) because Strava has precedence")
+        markCacheDeleted(Set(removedWorkouts.map(\.id)))
+        rebuildWorkoutIndexes()
+
+        PTrackLog.synchronization.debug("PTrack Sync: removed \(removedWorkouts.count) cached Apple Health duplicate(s) because Strava has precedence")
         scheduleCacheSave(delay: 0)
         return true
-    }
-
-    private func appendTrackedWorkout(_ workout: TrackedWorkout) {
-        guard knownWorkoutIDs.insert(workout.id).inserted else {
-            return
-        }
-
-        pendingWorkouts.append(workout)
-        newWorkoutBadgeStore.markIfNeeded(workout)
-        markCacheDirty(workout.id)
-        schedulePendingWorkoutFlush()
     }
 
     private func schedulePendingWorkoutFlush(delay: TimeInterval? = nil) {
@@ -2641,6 +3885,7 @@ class ViewController: UIViewController {
 
         let incomingWorkouts = pendingWorkouts
         pendingWorkouts.removeAll()
+        pendingWorkoutIndexByID.removeAll(keepingCapacity: true)
 
         appendWorkoutsToList(incomingWorkouts)
         scheduleCacheSave()
@@ -2656,10 +3901,30 @@ class ViewController: UIViewController {
         let previousItemCount = workouts.count
         let incomingWorkoutIDs = Set(incomingWorkouts.map(\.id))
 
-        workouts.append(contentsOf: incomingWorkouts)
-        workouts.sort { $0.startDate > $1.startDate }
+        let sortedIncomingWorkouts = incomingWorkouts.sorted { $0.startDate > $1.startDate }
+        var mergedWorkouts: [TrackedWorkout] = []
+        mergedWorkouts.reserveCapacity(workouts.count + sortedIncomingWorkouts.count)
+        var existingIndex = 0
+        var incomingIndex = 0
+        while existingIndex < workouts.count, incomingIndex < sortedIncomingWorkouts.count {
+            if workouts[existingIndex].startDate >= sortedIncomingWorkouts[incomingIndex].startDate {
+                mergedWorkouts.append(workouts[existingIndex])
+                existingIndex += 1
+            } else {
+                mergedWorkouts.append(sortedIncomingWorkouts[incomingIndex])
+                incomingIndex += 1
+            }
+        }
+        if existingIndex < workouts.count {
+            mergedWorkouts.append(contentsOf: workouts[existingIndex...])
+        }
+        if incomingIndex < sortedIncomingWorkouts.count {
+            mergedWorkouts.append(contentsOf: sortedIncomingWorkouts[incomingIndex...])
+        }
+        workouts = mergedWorkouts
         totalDistanceMeters += incomingWorkouts.reduce(0) { $0 + $1.distanceMeters }
         updateTotalDistanceText()
+        rebuildWorkoutIndexes()
 
         let insertedIndexPaths = workouts.enumerated().compactMap { index, workout -> IndexPath? in
             guard incomingWorkoutIDs.contains(workout.id) else {
@@ -2724,14 +3989,18 @@ class ViewController: UIViewController {
         deletedCacheWorkoutIDs.remove(workoutID)
     }
 
-    private func markCacheDeleted(_ workoutID: String) {
-        guard !workoutID.isEmpty else {
+    private func markCacheDeleted(_ workoutIDs: Set<String>) {
+        let resolvedWorkoutIDs = Set(workoutIDs.filter { !$0.isEmpty })
+        guard !resolvedWorkoutIDs.isEmpty else {
             return
         }
 
-        dirtyCacheWorkoutIDs.remove(workoutID)
-        deletedCacheWorkoutIDs.insert(workoutID)
-        HeatmapRouteCacheStore.shared.removeRoute(id: workoutID)
+        dirtyCacheWorkoutIDs.subtract(resolvedWorkoutIDs)
+        deletedCacheWorkoutIDs.formUnion(resolvedWorkoutIDs)
+        // Heatmap snapshots are filtered against the current workout IDs, and
+        // their next complete progressive load prunes stale derived files in a
+        // single batch. Avoid queuing a stale prune that could race an upsert or
+        // authorization rollback which revives the same workout ID.
     }
 
     private func scheduleCacheSave(delay: TimeInterval? = nil) {
@@ -2745,6 +4014,12 @@ class ViewController: UIViewController {
     }
 
     private func performCacheSave() {
+        guard !isCacheLoadInProgress else {
+            needsCacheSaveAfterCurrentSave = true
+            PTrackLog.synchronization.debug("PTrack Cache: deferred save until cached workouts finish loading")
+            return
+        }
+
         if isCacheSaveInProgress {
             needsCacheSaveAfterCurrentSave = true
             return
@@ -2753,6 +4028,18 @@ class ViewController: UIViewController {
         let dirtyWorkoutIDs = dirtyCacheWorkoutIDs
         let deletedWorkoutIDs = deletedCacheWorkoutIDs
         guard !dirtyWorkoutIDs.isEmpty || !deletedWorkoutIDs.isEmpty else {
+            // A save request can be coalesced while the preceding transaction
+            // is active even if it adds no new mutations. The prior success is
+            // already durable, so finish any retained summary/widget publish
+            // now rather than silently losing that completion edge.
+            needsCacheSaveAfterCurrentSave = false
+            if isCachePersistenceHealthy {
+                if cachedWorkoutSummary != nil {
+                    cachedWorkoutSummary = nil
+                    updateTotalDistanceText()
+                }
+                refreshWidgetSnapshot()
+            }
             runCacheSaveCompletionHandlersIfReady()
             return
         }
@@ -2761,9 +4048,13 @@ class ViewController: UIViewController {
         deletedCacheWorkoutIDs.subtract(deletedWorkoutIDs)
         isCacheSaveInProgress = true
 
-        let cachedWorkouts = workouts
+        // Pending workouts are already part of the authoritative in-memory model,
+        // even when collection-view updates are intentionally delayed while the
+        // user is scrolling. Excluding them can consume their dirty IDs without
+        // ever writing their files.
+        let cachedWorkouts = authoritativeWorkouts
         cacheSaveQueue.async { [cacheStore = self.cacheStore] in
-            let didSave = cacheStore.saveIncremental(
+            let persistenceResult = cacheStore.saveIncremental(
                 cachedWorkouts,
                 dirtyWorkoutIDs: dirtyWorkoutIDs,
                 deletedWorkoutIDs: deletedWorkoutIDs
@@ -2775,13 +4066,29 @@ class ViewController: UIViewController {
                 }
 
                 self.isCacheSaveInProgress = false
-                if !didSave {
+                self.isCachePersistenceHealthy = persistenceResult.didSucceed
+                if persistenceResult == .success {
+                    self.consecutiveCacheSaveFailureCount = 0
+                } else {
+                    if persistenceResult == .transientFailure {
+                        self.consecutiveCacheSaveFailureCount += 1
+                    } else {
+                        self.consecutiveCacheSaveFailureCount = 0
+                    }
                     self.restoreUncommittedCacheChanges(
                         dirtyWorkoutIDs: dirtyWorkoutIDs,
                         deletedWorkoutIDs: deletedWorkoutIDs
                     )
-                } else {
-                    self.refreshWidgetSnapshot()
+
+                    if persistenceResult == .reconciliationRequired
+                        || persistenceResult == .invalidSnapshot {
+                        self.didDetectCacheIntegrityIssue = true
+                        self.needsHealthCacheIntegrityRepair = true
+                        self.needsStravaCacheIntegrityRepair = true
+                        self.markHealthHistoricalBackfillRequired()
+                        self.markStravaHistoricalBackfillRequired()
+                        self.queueDataSourceSynchronization(showsLoadingIndicator: false)
+                    }
                 }
 
                 let shouldScheduleNextSave = self.needsCacheSaveAfterCurrentSave
@@ -2789,10 +4096,38 @@ class ViewController: UIViewController {
                     || !self.deletedCacheWorkoutIDs.isEmpty
                 self.needsCacheSaveAfterCurrentSave = false
 
-                if shouldScheduleNextSave {
+                if persistenceResult == .success, shouldScheduleNextSave {
                     self.scheduleCacheSave(delay: 0)
-                } else if didSave {
+                } else if persistenceResult == .transientFailure,
+                          shouldScheduleNextSave,
+                          self.consecutiveCacheSaveFailureCount <= self.cacheSaveMaximumAutomaticRetryCount {
+                    let retryDelay = self.cacheSaveRetryDelay()
+                    PTrackLog.synchronization.debug(
+                        "PTrack Cache: transient save failure; retrying in \(Int(retryDelay)) second(s) without discarding pending mutations"
+                    )
+                    self.scheduleCacheSave(delay: retryDelay)
+                } else if persistenceResult == .success {
+                    if self.cachedWorkoutSummary != nil {
+                        self.cachedWorkoutSummary = nil
+                        self.updateTotalDistanceText()
+                    }
+                    self.refreshWidgetSnapshot()
                     self.runCacheSaveCompletionHandlersIfReady()
+                } else {
+                    switch persistenceResult {
+                    case .transientFailure:
+                        PTrackLog.synchronization.debug(
+                            "PTrack Cache: stopped automatic save retries after \(self.consecutiveCacheSaveFailureCount) consecutive transient failure(s); pending mutations remain available for the next lifecycle save"
+                        )
+                    case .reconciliationRequired:
+                        PTrackLog.synchronization.debug("PTrack Cache: stopped incremental retries and queued full source reconciliation")
+                    case .invalidSnapshot:
+                        PTrackLog.synchronization.debug("PTrack Cache: stopped incremental retries because the in-memory snapshot was invalid; queued source reconciliation")
+                    case .success:
+                        break
+                    }
+                    self.endBackgroundCacheSaveTask()
+                    _ = self.runPendingDataSourceSynchronizationIfNeeded()
                 }
             }
         }
@@ -2830,13 +4165,33 @@ class ViewController: UIViewController {
         }
 
         for workoutID in deletedWorkoutIDs {
-            dirtyCacheWorkoutIDs.remove(workoutID)
-            deletedCacheWorkoutIDs.insert(workoutID)
+            // A newer upsert may have revived an ID that this failed batch tried
+            // to delete. Preserve the newer dirty intent instead of restoring
+            // the stale deletion over it.
+            if !dirtyCacheWorkoutIDs.contains(workoutID) {
+                deletedCacheWorkoutIDs.insert(workoutID)
+            }
         }
     }
 
+    private func cacheSaveRetryDelay() -> TimeInterval {
+        let exponent = min(max(consecutiveCacheSaveFailureCount - 1, 0), 5)
+        return min(TimeInterval(1 << exponent), cacheSaveRetryMaximumDelay)
+    }
+
     private func refreshWidgetSnapshot() {
-        PTrackWidgetSnapshotStore.refresh(with: workouts)
+        // Never publish while cache loading/reconciliation says the in-memory
+        // list may be a partial subset of the last durable snapshot.
+        guard !isCacheLoadInProgress,
+              !isCacheSaveInProgress,
+              dirtyCacheWorkoutIDs.isEmpty,
+              deletedCacheWorkoutIDs.isEmpty,
+              !needsCacheSaveAfterCurrentSave,
+              isCachePersistenceHealthy else {
+            PTrackLog.synchronization.debug("PTrack Widget: skipped refresh from an incomplete workout snapshot")
+            return
+        }
+        PTrackWidgetSnapshotStore.refresh(with: authoritativeWorkouts)
     }
 
     private func prewarmInitialRouteSources() {
@@ -2853,27 +4208,41 @@ class ViewController: UIViewController {
         }
     }
 
-    private func handleLoadResult(_ result: Result<HealthWorkoutStore.LoadResult, Error>) {
-        let didRunHistoricalBackfill = isCurrentHealthHistoricalBackfill
-        isCurrentHealthHistoricalBackfill = false
-        isHealthSyncInProgress = false
-        setHealthNewDataSyncInProgress(false)
+    private func handleLoadResult(
+        _ result: Result<HealthWorkoutStore.LoadResult, Error>,
+        syncGeneration: UInt64,
+        didRunHistoricalBackfill: Bool
+    ) {
+        guard syncCoordinator.isCurrent(.health, generation: syncGeneration) else {
+            return
+        }
+        _ = syncCoordinator.finish(.health, generation: syncGeneration)
+        updateRouteGridPrefetchingState()
+        updateTotalDistanceText()
         let didFlushPendingWorkouts = flushPendingWorkouts()
         switch result {
         case .success(let loadResult):
-            print(
+            PTrackLog.synchronization.debug(
                 "PTrack HealthKit: route query completed, loaded routes: \(loadResult.trackedWorkoutCount), route failures: \(loadResult.failedRouteLoadCount)"
             )
+            if !loadResult.didCompleteWithoutRouteFailures {
+                markHealthHistoricalBackfillRequired()
+            }
             markHealthHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
                 didRunHistoricalBackfill: didRunHistoricalBackfill,
-                didCompleteWithoutRouteFailures: loadResult.didCompleteWithoutRouteFailures
+                didCompleteWithoutRouteFailures: loadResult.didCompleteWithoutRouteFailures,
+                syncGeneration: syncGeneration
+            )
+            markHealthImportCompletedAfterCacheSaveIfNeeded(
+                didCompleteWithoutRouteFailures: loadResult.didCompleteWithoutRouteFailures,
+                syncGeneration: syncGeneration
             )
             newWorkoutBadgeStore.markInitialSyncCompleted()
         case .failure(let error):
-            print("PTrack HealthKit: route query failed: \(error)")
+            PTrackLog.synchronization.debug("PTrack HealthKit: route query failed: \(error)")
+            markHealthHistoricalBackfillRequired()
         }
-        if isHealthSyncShowingLoadingIndicator {
-            isHealthSyncShowingLoadingIndicator = false
+        if syncCoordinator.consumeLoadingIndicator(.health) {
             endLoadingOperation()
         } else {
             updateHeaderReadAuthorizationState()
@@ -2882,12 +4251,13 @@ class ViewController: UIViewController {
         if didFlushPendingWorkouts {
             scheduleCacheSave(delay: 0)
         }
-        runPendingStravaSyncAfterHealthIfNeeded()
+        continueDataSourceSynchronizationAfterHealth()
     }
 
     private func markHealthHistoricalBackfillCompletedAfterCacheSaveIfNeeded(
         didRunHistoricalBackfill: Bool,
-        didCompleteWithoutRouteFailures: Bool
+        didCompleteWithoutRouteFailures: Bool,
+        syncGeneration: UInt64
     ) {
         guard didRunHistoricalBackfill,
               didCompleteWithoutRouteFailures else {
@@ -2895,19 +4265,55 @@ class ViewController: UIViewController {
         }
 
         runAfterPendingCacheSave { [weak self] in
-            self?.markHealthHistoricalBackfillCompleted()
+            guard let self,
+                  self.syncCoordinator.isCurrent(.health, generation: syncGeneration) else {
+                return
+            }
+            self.markHealthHistoricalBackfillCompleted()
+        }
+    }
+
+    private func markHealthImportCompletedAfterCacheSaveIfNeeded(
+        didCompleteWithoutRouteFailures: Bool,
+        syncGeneration: UInt64
+    ) {
+        guard didCompleteWithoutRouteFailures else {
+            return
+        }
+
+        runAfterPendingCacheSave { [weak self] in
+            guard let self,
+                  self.syncCoordinator.isCurrent(.health, generation: syncGeneration) else {
+                return
+            }
+            UserDefaults.standard.set(false, forKey: DefaultsKey.healthImportInProgress)
         }
     }
 
     private func markHealthHistoricalBackfillCompleted() {
-        guard !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCompleted)
-                || !UserDefaults.standard.bool(forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted) else {
+        guard isCachePersistenceHealthy else {
+            PTrackLog.synchronization.debug("PTrack HealthKit: kept historical coverage repair pending because the cache manifest is not durably committed")
             return
         }
 
         UserDefaults.standard.set(true, forKey: DefaultsKey.healthHistoricalBackfillCompleted)
         UserDefaults.standard.set(true, forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted)
-        print("PTrack HealthKit: historical backfill marked completed after cache save")
+        UserDefaults.standard.set(
+            currentCacheIntegrityRepairVersion,
+            forKey: DefaultsKey.healthCacheIntegrityRepairVersion
+        )
+        UserDefaults.standard.set(
+            Date(),
+            forKey: DefaultsKey.healthLastFullCoverageReconciliationDate
+        )
+        UserDefaults.standard.set(false, forKey: DefaultsKey.healthImportInProgress)
+        needsHealthCacheIntegrityRepair = false
+        PTrackLog.synchronization.debug("PTrack HealthKit: historical backfill marked completed after cache save")
+    }
+
+    private func markHealthHistoricalBackfillRequired() {
+        UserDefaults.standard.set(false, forKey: DefaultsKey.healthHistoricalBackfillCompleted)
+        UserDefaults.standard.set(false, forKey: DefaultsKey.healthHistoricalBackfillCacheCommitCompleted)
     }
 
     private func showHeatmap() {
@@ -3042,7 +4448,7 @@ class ViewController: UIViewController {
     private func showMoreSettings() {
         let moreSettingsViewController = MoreSettingsViewController()
         moreSettingsViewController.existingStravaActivityIDsProvider = { [weak self] in
-            Set(self?.workouts.compactMap(\.stravaActivityID) ?? [])
+            self?.directStravaActivityIDsInMemory() ?? []
         }
         moreSettingsViewController.stravaAuthorizationCompletion = { [weak self] excludedActivityIDs in
             self?.loadStravaWorkouts(
@@ -3068,7 +4474,7 @@ class ViewController: UIViewController {
             break
         }
 
-        guard !isHealthSyncInProgress else {
+        guard !syncCoordinator.isInProgress(.health) else {
             return
         }
 
@@ -3076,7 +4482,7 @@ class ViewController: UIViewController {
     }
 
     private func requestHealthAuthorizationIfAvailable() {
-        guard !isHealthSyncInProgress else {
+        guard !syncCoordinator.isInProgress(.health) else {
             return
         }
 
@@ -3105,11 +4511,11 @@ class ViewController: UIViewController {
         DemoModeStore.markPrimaryDataSourceSelected()
         updateDemoModeEntryVisibility()
         updateFullScreenInsets(force: true)
-        guard !isStravaSyncInProgress else {
+        guard !syncCoordinator.isInProgress(.strava) else {
             return
         }
 
-        let excludedActivityIDs = Set(workouts.compactMap(\.stravaActivityID))
+        let excludedActivityIDs = directStravaActivityIDsInMemory()
         if StravaManager.shared.hasStoredAuthorization {
             loadStravaWorkouts(
                 excludingStravaActivityIDs: excludedActivityIDs,
@@ -5229,7 +6635,7 @@ extension ViewController: CLLocationManagerDelegate {
         }
 
         shouldCenterRouteBookOnNextLocation = false
-        print("PTrack RouteBook: location update failed: \(error)")
+        PTrackLog.synchronization.debug("PTrack RouteBook: location update failed: \(error)")
     }
 }
 
@@ -5798,8 +7204,20 @@ private final class HomeDataSourceCardView: UIControl {
 
 private extension TrackedWorkout {
     func isSamePhysicalWorkout(as other: TrackedWorkout) -> Bool {
-        guard isStravaSource != other.isStravaSource,
-              activityType.isCompatibleForSourceConflict(with: other.activityType) else {
+        let hasDirectStravaAndHealthKitOrigins =
+            (isDirectStravaSource && other.isHealthKitSource)
+            || (isHealthKitSource && other.isDirectStravaSource)
+        guard hasDirectStravaAndHealthKitOrigins else {
+            return false
+        }
+
+        if let stravaActivityID,
+           let otherStravaActivityID = other.stravaActivityID,
+           stravaActivityID == otherStravaActivityID {
+            return true
+        }
+
+        guard activityType.isCompatibleForSourceConflict(with: other.activityType) else {
             return false
         }
 

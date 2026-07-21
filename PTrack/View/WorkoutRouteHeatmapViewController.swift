@@ -7,6 +7,7 @@
 
 import CoreLocation
 import MapKit
+import OSLog
 import SnapKit
 import UIKit
 
@@ -88,7 +89,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
     private let maximumRoutePointCount = 320
     private let navigationBackgroundHeight: CGFloat = 124
     private let routeLoadingPaddingRatio = 0.08
-    private let cacheLoadBatchSize = 8
+    private let cacheLoadBatchSize = 64
     private let maximumPreparedRoutePoolCount = 1_800
     private let regionCacheReloadDelay: TimeInterval = 0.45
 
@@ -426,7 +427,7 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
                 processedWorkoutIDs: initialWorkoutIDs,
                 isComplete: false
             )
-            cacheStore.loadProgressively(
+            let cacheLoadResult = cacheStore.loadProgressively(
                 batchSize: cacheLoadBatchSize,
                 shouldContinue: { [weak self] in
                     var shouldContinue = false
@@ -473,6 +474,25 @@ final class WorkoutRouteHeatmapViewController: UIViewController {
             DispatchQueue.main.async { [weak self] in
                 guard let self,
                       self.cacheLoadGeneration == generation else {
+                    return
+                }
+
+                guard cacheLoadResult.didFinishScanningWorkoutFiles,
+                      cacheLoadResult.loadedWorkoutCount
+                        == cacheLoadResult.discoveredWorkoutFileCount else {
+                    // Keep every pre-existing route/statistics file and leave
+                    // both manifests incomplete. A transient workout-cache read
+                    // must never authorize pruning to the successfully decoded
+                    // subset.
+                    self.setCachedWorkoutLoading(false)
+                    self.hasCompletedCachedWorkoutLoad = true
+                    self.scheduleSportsCareerStatisticsUpdate(
+                        immediate: true,
+                        animated: true
+                    )
+                    PTrackLog.cache.debug(
+                        "PTrack Heatmap Cache: skipped prune/completion after partial workout load \(cacheLoadResult.loadedWorkoutCount)/\(cacheLoadResult.discoveredWorkoutFileCount)"
+                    )
                     return
                 }
 

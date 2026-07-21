@@ -12,11 +12,14 @@ import HealthKit
 
 final class StravaManager: NSObject {
     static let shared = StravaManager()
-    static let trackedWorkoutsDidImportNotification = Notification.Name("studio.pj.PTrack.stravaTrackedWorkoutsDidImport")
+
+    private static let placeholderPublicationBatchSize = 100
+    private static let detailPublicationBatchSize = 10
 
     private let define = StravaDefine()
     private let defaults: UserDefaults
     private let networkManager: NetworkManager
+    private let syncStateStore: WorkoutSyncStateStore
     private let decoder = JSONDecoder()
     private var webAuthenticationSession: ASWebAuthenticationSession?
 
@@ -32,33 +35,290 @@ final class StravaManager: NSObject {
         case needsReauthorization
     }
 
+    struct ActivityReconciliationSnapshot: Codable, Sendable {
+        let athleteID: Int64
+        let activityIDs: Set<Int64>
+        let capturedAt: Date
+        let listingUpperBound: Date
+        let coversFullHistory: Bool
+        let didReachNaturalEnd: Bool
+        let didUseCompleteReadScope: Bool
+
+        /// Only a full-history listing that naturally reached its end is safe
+        /// to participate in destructive reconciliation. The caller must still
+        /// confirm an absence in two consecutive authoritative snapshots.
+        var isAuthoritative: Bool {
+            coversFullHistory && didReachNaturalEnd && didUseCompleteReadScope
+        }
+    }
+
+    struct RateLimitInfo: Sendable {
+        struct Window: Sendable {
+            let limit: Int
+            let usage: Int
+            let resetDate: Date
+
+            nonisolated var remaining: Int {
+                max(limit - usage, 0)
+            }
+        }
+
+        let shortTerm: Window?
+        let daily: Window?
+        let readShortTerm: Window?
+        let readDaily: Window?
+        let retryAfterDate: Date?
+        let observedAt: Date
+
+        var recommendedRetryDate: Date? {
+            let exhaustedResetDates = [shortTerm, daily, readShortTerm, readDaily]
+                .compactMap { $0 }
+                .compactMap { window -> Date? in
+                    let reserve: Int
+                    if window.resetDate.timeIntervalSince(observedAt) <= 15 * 60 + 5 {
+                        reserve = max(10, Int(ceil(Double(window.limit) * 0.1)))
+                    } else {
+                        reserve = max(50, Int(ceil(Double(window.limit) * 0.05)))
+                    }
+                    return window.remaining <= reserve ? window.resetDate : nil
+                }
+            return (exhaustedResetDates + [retryAfterDate].compactMap { $0 }).max()
+        }
+    }
+
     struct LoadResult {
+        let reconciliationSnapshot: ActivityReconciliationSnapshot
         let workouts: [TrackedWorkout]
-        /// All IDs returned by the authoritative activity summary listing.
-        let summaryActivityIDs: Set<Int64>
-        /// Summary activities eligible for a stream request before cache exclusion.
-        let routeCandidateActivityIDs: Set<Int64>
         /// IDs whose stream request or conversion failed and should be retried.
         let failedActivityIDs: Set<Int64>
+        /// IDs whose successful stream response cannot form a route and should not be retried forever.
+        let terminalActivityIDs: Set<Int64>
+        /// IDs intentionally left for a later pass to stay within a safe request budget.
+        let deferredActivityIDs: Set<Int64>
+        /// Latest server quota state observed during this pass.
+        let rateLimitInfo: RateLimitInfo?
+        /// Earliest safe time for a deferred follow-up pass.
+        let retryAfterDate: Date?
+        /// All requests counted against this pass, including token refreshes and retries.
+        let requestCount: Int
+        /// Requests still available after applying both the local cap and the
+        /// server-reported safety reserve.
+        let remainingRequestBudget: Int
+
+        var athleteID: Int64 {
+            reconciliationSnapshot.athleteID
+        }
+
+        var didLoadCompleteActivitySummary: Bool {
+            reconciliationSnapshot.didReachNaturalEnd
+        }
+
+        var didUseCompleteActivityReadScope: Bool {
+            reconciliationSnapshot.didUseCompleteReadScope
+        }
 
         var failedActivityCount: Int {
             failedActivityIDs.count
         }
 
-        var didCompleteWithoutActivityFailures: Bool {
-            failedActivityCount == 0
+        var deferredActivityCount: Int {
+            deferredActivityIDs.count
+        }
+
+        var terminalActivityCount: Int {
+            terminalActivityIDs.count
+        }
+
+        var didCompleteAuthoritativeSummary: Bool {
+            reconciliationSnapshot.isAuthoritative
+        }
+
+        var needsDeferredRetry: Bool {
+            !deferredActivityIDs.isEmpty
+                || !didLoadCompleteActivitySummary
+        }
+    }
+
+    private final class RequestBudget {
+        private let maximumRequestCount: Int
+        private(set) var requestCount = 0
+        private(set) var rateLimitInfo: RateLimitInfo?
+
+        init(maximumRequestCount: Int) {
+            self.maximumRequestCount = max(maximumRequestCount, 0)
+        }
+
+        var canStartRequest: Bool {
+            availableRequestCount > 0
+        }
+
+        var availableRequestCount: Int {
+            let localRemaining = max(maximumRequestCount - requestCount, 0)
+            guard let rateLimitInfo else {
+                return localRemaining
+            }
+
+            let serverRemaining = Self.safeServerRemaining(rateLimitInfo)
+            return min(localRemaining, serverRemaining ?? localRemaining)
+        }
+
+        var retryAfterDate: Date? {
+            let localReset = requestCount >= maximumRequestCount
+                ? Self.nextShortTermReset(after: Date())
+                : nil
+            let serverReset = rateLimitInfo.flatMap(Self.safeRetryDate)
+            return [localReset, serverReset].compactMap { $0 }.max()
+        }
+
+        func beginRequest() throws {
+            guard canStartRequest else {
+                throw StravaManagerError.requestBudgetExhausted(retryAfter: retryAfterDate)
+            }
+            requestCount += 1
+        }
+
+        func observe(headers: [String: String], at date: Date = Date()) {
+            guard !headers.isEmpty else {
+                return
+            }
+
+            let standard = Self.ratePair(
+                limit: Self.headerValue("X-RateLimit-Limit", in: headers),
+                usage: Self.headerValue("X-RateLimit-Usage", in: headers),
+                at: date
+            )
+            let read = Self.ratePair(
+                limit: Self.headerValue("X-ReadRateLimit-Limit", in: headers),
+                usage: Self.headerValue("X-ReadRateLimit-Usage", in: headers),
+                at: date
+            )
+            let retryAfterDate = Self.retryAfterDate(
+                from: Self.headerValue("Retry-After", in: headers),
+                relativeTo: date
+            )
+            guard standard != nil || read != nil || retryAfterDate != nil else {
+                return
+            }
+
+            rateLimitInfo = RateLimitInfo(
+                shortTerm: standard?.shortTerm ?? rateLimitInfo?.shortTerm,
+                daily: standard?.daily ?? rateLimitInfo?.daily,
+                readShortTerm: read?.shortTerm ?? rateLimitInfo?.readShortTerm,
+                readDaily: read?.daily ?? rateLimitInfo?.readDaily,
+                retryAfterDate: [rateLimitInfo?.retryAfterDate, retryAfterDate]
+                    .compactMap { $0 }
+                    .max(),
+                observedAt: date
+            )
+        }
+
+        private nonisolated static func safeServerRemaining(_ info: RateLimitInfo) -> Int? {
+            let windows = [info.shortTerm, info.daily, info.readShortTerm, info.readDaily]
+                .compactMap { $0 }
+            guard !windows.isEmpty else {
+                return info.retryAfterDate.map { $0 > Date() ? 0 : Int.max }
+            }
+
+            return windows.map { window in
+                max(window.remaining - safetyReserve(for: window, observedAt: info.observedAt), 0)
+            }.min()
+        }
+
+        private nonisolated static func safeRetryDate(_ info: RateLimitInfo) -> Date? {
+            let safetyResetDates = [info.shortTerm, info.daily, info.readShortTerm, info.readDaily]
+                .compactMap { $0 }
+                .compactMap { window -> Date? in
+                    window.remaining <= safetyReserve(for: window, observedAt: info.observedAt)
+                        ? window.resetDate
+                        : nil
+                }
+            return (safetyResetDates + [info.retryAfterDate].compactMap { $0 }).max()
+        }
+
+        private nonisolated static func safetyReserve(
+            for window: RateLimitInfo.Window,
+            observedAt: Date
+        ) -> Int {
+            if window.resetDate.timeIntervalSince(observedAt) <= 15 * 60 + 5 {
+                return max(10, Int(ceil(Double(window.limit) * 0.1)))
+            }
+            return max(50, Int(ceil(Double(window.limit) * 0.05)))
+        }
+
+        private nonisolated static func nextShortTermReset(after date: Date) -> Date {
+            Date(timeIntervalSince1970: (floor(date.timeIntervalSince1970 / 900) + 1) * 900 + 1)
+        }
+
+        private nonisolated static func ratePair(
+            limit: String?,
+            usage: String?,
+            at date: Date
+        ) -> (shortTerm: RateLimitInfo.Window, daily: RateLimitInfo.Window)? {
+            guard let limits = commaSeparatedIntegers(limit),
+                  let usages = commaSeparatedIntegers(usage),
+                  limits.count >= 2,
+                  usages.count >= 2 else {
+                return nil
+            }
+
+            let shortTermReset = nextShortTermReset(after: date)
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            let dailyReset = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date))
+                ?? date.addingTimeInterval(24 * 60 * 60)
+            return (
+                RateLimitInfo.Window(limit: limits[0], usage: usages[0], resetDate: shortTermReset),
+                RateLimitInfo.Window(limit: limits[1], usage: usages[1], resetDate: dailyReset)
+            )
+        }
+
+        private nonisolated static func commaSeparatedIntegers(_ value: String?) -> [Int]? {
+            guard let value else {
+                return nil
+            }
+            let values = value.split(separator: ",").compactMap {
+                Int($0.trimmingCharacters(in: .whitespaces))
+            }
+            return values.isEmpty ? nil : values
+        }
+
+        private nonisolated static func headerValue(
+            _ name: String,
+            in headers: [String: String]
+        ) -> String? {
+            headers[name.lowercased()]
+        }
+
+        private nonisolated static func retryAfterDate(from value: String?, relativeTo date: Date) -> Date? {
+            guard let value else {
+                return nil
+            }
+            if let seconds = TimeInterval(value.trimmingCharacters(in: .whitespaces)) {
+                return date.addingTimeInterval(max(seconds, 0))
+            }
+
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss z"
+            return formatter.date(from: value)
         }
     }
 
     init(defaults: UserDefaults = .standard, networkManager: NetworkManager = .shared) {
         self.defaults = defaults
         self.networkManager = networkManager
+        syncStateStore = WorkoutSyncStateStore(defaults: defaults)
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         super.init()
     }
 
     var hasStoredAuthorization: Bool {
         storedCredentials() != nil
+    }
+
+    var storedAthleteID: Int64? {
+        storedCredentials()?.athleteID
     }
 
     var authorizationState: AuthorizationState {
@@ -74,72 +334,49 @@ final class StravaManager: NSObject {
         return .notDetermined
     }
 
-    func authorizeAndLoadTrackedWorkouts(
-        presentationContextProvider: ASWebAuthenticationPresentationContextProviding,
-        after startDate: Date? = nil,
-        excludingStravaActivityIDs: Set<Int64> = [],
-        pageLimit: Int? = nil,
-        perPage: Int = 200,
-        onNewDataDetected: ((Int) async -> Void)? = nil,
-        onTrackedWorkout: ((TrackedWorkout) async -> Void)? = nil
-    ) async throws -> [TrackedWorkout] {
-        _ = try await authorize(presentationContextProvider: presentationContextProvider)
-        let workouts = try await loadTrackedWorkouts(
-            after: startDate,
-            excludingStravaActivityIDs: excludingStravaActivityIDs,
-            pageLimit: pageLimit,
-            perPage: perPage,
-            onNewDataDetected: onNewDataDetected,
-            onTrackedWorkout: onTrackedWorkout
-        )
-        NotificationCenter.default.post(name: Self.trackedWorkoutsDidImportNotification, object: workouts)
-        return workouts
-    }
-
-    func loadTrackedWorkouts(
-        after startDate: Date? = nil,
-        excludingStravaActivityIDs: Set<Int64> = [],
-        pageLimit: Int? = nil,
-        perPage: Int = 200,
-        onNewDataDetected: ((Int) async -> Void)? = nil,
-        onTrackedWorkout: ((TrackedWorkout) async -> Void)? = nil
-    ) async throws -> [TrackedWorkout] {
-        let result = try await loadTrackedWorkoutResult(
-            after: startDate,
-            excludingStravaActivityIDs: excludingStravaActivityIDs,
-            pageLimit: pageLimit,
-            perPage: perPage,
-            onNewDataDetected: onNewDataDetected,
-            onTrackedWorkout: onTrackedWorkout
-        )
-        return result.workouts
-    }
-
     func loadTrackedWorkoutResult(
         after startDate: Date? = nil,
         excludingStravaActivityIDs: Set<Int64> = [],
         pageLimit: Int? = nil,
         perPage: Int = 200,
+        requestLimit: Int = 80,
         onNewDataDetected: ((Int) async -> Void)? = nil,
-        onTrackedWorkout: ((TrackedWorkout) async -> Void)? = nil
+        onTrackedWorkouts: (([TrackedWorkout]) async -> Void)? = nil
     ) async throws -> LoadResult {
+        guard let syncCredentials = storedCredentials(),
+              let expectedAthleteID = syncCredentials.athleteID else {
+            throw StravaManagerError.notAuthorized
+        }
+        guard let scope = syncCredentials.scope,
+              Self.scopeComponents(scope).contains("activity:read_all") else {
+            log("stored authorization is missing activity:read_all; requiring reauthorization")
+            guard clearCredentialsIfCurrent(
+                syncCredentials,
+                markReauthorizationRequired: true
+            ) else {
+                throw StravaManagerError.authorizationChangedDuringImport
+            }
+            throw StravaManagerError.reauthorizationRequired
+        }
+
         log(
-            "load tracked workouts started, after: \(Self.debugDateString(startDate)), excluded cached IDs: \(excludingStravaActivityIDs.count), pageLimit: \(pageLimit.map(String.init) ?? "nil"), perPage: \(perPage)"
+            "load tracked workouts started, after: \(Self.debugDateString(startDate)), excluded cached IDs: \(excludingStravaActivityIDs.count), pageLimit: \(pageLimit.map(String.init) ?? "nil"), perPage: \(perPage), total request limit: \(requestLimit)"
         )
-        let activities = try await loadActivities(
+        let requestBudget = RequestBudget(maximumRequestCount: requestLimit)
+        let activityListing = try await loadActivities(
             after: startDate,
             pageLimit: pageLimit,
-            perPage: perPage
+            perPage: perPage,
+            expectedAthleteID: expectedAthleteID,
+            requestBudget: requestBudget
         )
+        let activities = activityListing.activities
         log("loaded summary activities: \(activities.count)")
 
         let unsupportedCount = activities.filter { $0.supportedSport == nil }.count
         let withoutRouteHintCount = activities.filter { $0.supportedSport != nil && !$0.hasRouteHint }.count
         let alreadyCachedCount = activities.filter { excludingStravaActivityIDs.contains($0.id) }.count
         let summaryActivityIDs = Set(activities.map(\.id))
-        let routeCandidateActivityIDs = Set(activities.compactMap { activity in
-            activity.supportedSport != nil && activity.hasRouteHint ? activity.id : nil
-        })
         let supportedActivities = activities.filter {
             $0.supportedSport != nil &&
             $0.hasRouteHint &&
@@ -152,12 +389,55 @@ final class StravaManager: NSObject {
             await onNewDataDetected?(supportedActivities.count)
         }
 
-        var trackedWorkouts: [TrackedWorkout] = []
-        trackedWorkouts.reserveCapacity(supportedActivities.count)
-        var importedActivityIDs = Set<Int64>()
-        var failedActivityIDs = Set<Int64>()
+        let activitiesToImport = Array(
+            supportedActivities.prefix(requestBudget.availableRequestCount)
+        )
+        var deferredActivityIDs = Set(
+            supportedActivities.dropFirst(activitiesToImport.count).map(\.id)
+        )
+        if !deferredActivityIDs.isEmpty {
+            log(
+                "deferred \(deferredActivityIDs.count) activity stream request(s) to a later import pass"
+            )
+        }
 
-        for (index, activity) in supportedActivities.enumerated() {
+        // Publish lightweight summary-route placeholders for every missing
+        // activity before requesting detailed streams. This restores a stable
+        // activity count in one summary pass while detailed stream enrichment
+        // remains bounded by the request budget.
+        var trackedWorkoutsByActivityID: [Int64: TrackedWorkout] = [:]
+        trackedWorkoutsByActivityID.reserveCapacity(supportedActivities.count)
+        var terminalActivityIDs = Set<Int64>()
+        var failedActivityIDs = Set<Int64>()
+        var placeholderBatch: [TrackedWorkout] = []
+        placeholderBatch.reserveCapacity(Self.placeholderPublicationBatchSize)
+        for activity in supportedActivities {
+            guard let placeholder = TrackedWorkout(
+                stravaSummaryActivity: activity,
+                isTerminal: false,
+                athleteID: expectedAthleteID
+            ) else {
+                failedActivityIDs.insert(activity.id)
+                log("summary activity \(activity.id) could not form a route placeholder")
+                continue
+            }
+
+            trackedWorkoutsByActivityID[activity.id] = placeholder
+            placeholderBatch.append(placeholder)
+            if placeholderBatch.count == Self.placeholderPublicationBatchSize {
+                await onTrackedWorkouts?(placeholderBatch)
+                placeholderBatch.removeAll(keepingCapacity: true)
+            }
+        }
+        if !placeholderBatch.isEmpty {
+            await onTrackedWorkouts?(placeholderBatch)
+        }
+
+        var importedActivityIDs = Set<Int64>()
+        var detailBatch: [TrackedWorkout] = []
+        detailBatch.reserveCapacity(Self.detailPublicationBatchSize)
+
+        activityImportLoop: for (index, activity) in activitiesToImport.enumerated() {
             guard importedActivityIDs.insert(activity.id).inserted else {
                 log("skipping duplicate activity ID in current import: \(activity.id)")
                 continue
@@ -165,39 +445,110 @@ final class StravaManager: NSObject {
 
             do {
                 log(
-                    "loading streams \(index + 1)/\(supportedActivities.count), activity: \(activity.id), sport: \(activity.sportType ?? activity.type ?? "unknown"), start: \(Self.debugDateString(activity.startDate))"
+                    "loading streams \(index + 1)/\(activitiesToImport.count), activity: \(activity.id), sport: \(activity.sportType ?? activity.type ?? "unknown"), start: \(Self.debugDateString(activity.startDate))"
                 )
-                let streams = try await loadActivityStreams(activityID: activity.id)
-                if let workout = TrackedWorkout(stravaActivity: activity, streams: streams) {
-                    trackedWorkouts.append(workout)
-                    await onTrackedWorkout?(workout)
+                let streams = try await loadActivityStreams(
+                    activityID: activity.id,
+                    expectedAthleteID: expectedAthleteID,
+                    requestBudget: requestBudget
+                )
+                if let workout = TrackedWorkout(
+                    stravaActivity: activity,
+                    streams: streams,
+                    athleteID: expectedAthleteID
+                ) {
+                    trackedWorkoutsByActivityID[activity.id] = workout
+                    failedActivityIDs.remove(activity.id)
+                    detailBatch.append(workout)
+                    if detailBatch.count == Self.detailPublicationBatchSize {
+                        await onTrackedWorkouts?(detailBatch)
+                        detailBatch.removeAll(keepingCapacity: true)
+                    }
                     log(
                         "converted activity \(activity.id), coordinates: \(workout.coordinates.count), distance: \(workout.distanceMeters)"
                     )
                 } else {
-                    failedActivityIDs.insert(activity.id)
-                    log("skipped activity \(activity.id), streams did not contain enough route data")
+                    terminalActivityIDs.insert(activity.id)
+                    failedActivityIDs.remove(activity.id)
+                    if let placeholder = TrackedWorkout(
+                        stravaSummaryActivity: activity,
+                        isTerminal: true,
+                        athleteID: expectedAthleteID
+                    ) {
+                        trackedWorkoutsByActivityID[activity.id] = placeholder
+                        detailBatch.append(placeholder)
+                        if detailBatch.count == Self.detailPublicationBatchSize {
+                            await onTrackedWorkouts?(detailBatch)
+                            detailBatch.removeAll(keepingCapacity: true)
+                        }
+                    }
+                    log(
+                        "skipped terminal activity \(activity.id), its successful stream response did not contain enough route data"
+                    )
                 }
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
+                if let managerError = error as? StravaManagerError,
+                   case .authorizationChangedDuringImport = managerError {
+                    throw managerError
+                }
                 if Self.requiresReauthorization(error) {
+                    if !detailBatch.isEmpty {
+                        await onTrackedWorkouts?(detailBatch)
+                        detailBatch.removeAll(keepingCapacity: true)
+                    }
                     throw error
                 }
+
+                if Self.shouldStopImportPass(after: error) {
+                    let remainingActivityIDs = activitiesToImport[index...].map(\.id)
+                    if Self.isRateLimitFailure(error) || Self.isRequestBudgetFailure(error) {
+                        deferredActivityIDs.formUnion(remainingActivityIDs)
+                        log(
+                            "request budget exhausted while loading activity \(activity.id); deferred \(remainingActivityIDs.count) activity/activities until \(Self.debugDateString(requestBudget.retryAfterDate))"
+                        )
+                    } else {
+                        failedActivityIDs.formUnion(remainingActivityIDs)
+                        log(
+                            "transient import failure while loading activity \(activity.id); stopped this pass with \(remainingActivityIDs.count) activity/activities left for a later retry: \(error.localizedDescription)"
+                        )
+                    }
+                    break activityImportLoop
+                }
+
                 failedActivityIDs.insert(activity.id)
                 log("failed to load streams for activity \(activity.id): \(error.localizedDescription)")
             }
         }
 
-        let sortedWorkouts = trackedWorkouts.sorted { $0.startDate > $1.startDate }
+        if !detailBatch.isEmpty {
+            await onTrackedWorkouts?(detailBatch)
+        }
+
+        try validateStoredAuthorization(expectedAthleteID: expectedAthleteID)
+        let sortedWorkouts = trackedWorkoutsByActivityID.values.sorted { $0.startDate > $1.startDate }
         log(
-            "load tracked workouts completed, converted routes: \(sortedWorkouts.count), activity failures: \(failedActivityIDs.count)"
+            "load tracked workouts completed, converted routes: \(sortedWorkouts.count), activity failures: \(failedActivityIDs.count), terminal: \(terminalActivityIDs.count), deferred: \(deferredActivityIDs.count), requests: \(requestBudget.requestCount)"
         )
         return LoadResult(
+            reconciliationSnapshot: ActivityReconciliationSnapshot(
+                athleteID: expectedAthleteID,
+                activityIDs: summaryActivityIDs,
+                capturedAt: Date(),
+                listingUpperBound: activityListing.upperBound,
+                coversFullHistory: startDate == nil,
+                didReachNaturalEnd: activityListing.didReachEnd,
+                didUseCompleteReadScope: true
+            ),
             workouts: sortedWorkouts,
-            summaryActivityIDs: summaryActivityIDs,
-            routeCandidateActivityIDs: routeCandidateActivityIDs,
-            failedActivityIDs: failedActivityIDs
+            failedActivityIDs: failedActivityIDs,
+            terminalActivityIDs: terminalActivityIDs,
+            deferredActivityIDs: deferredActivityIDs,
+            rateLimitInfo: requestBudget.rateLimitInfo,
+            retryAfterDate: requestBudget.retryAfterDate,
+            requestCount: requestBudget.requestCount,
+            remainingRequestBudget: requestBudget.availableRequestCount
         )
     }
 
@@ -209,6 +560,7 @@ final class StravaManager: NSObject {
         guard let authorizationURL = authorizationURL() else {
             throw StravaManagerError.invalidURL
         }
+        let credentialsBeforeAuthorization = storedCredentials()
 
         log("starting authorization session: \(authorizationURL.absoluteString)")
         return try await withCheckedThrowingContinuation { continuation in
@@ -238,7 +590,10 @@ final class StravaManager: NSObject {
                 self.log("authorization callback received: \(callbackURL.absoluteString)")
                 Task {
                     do {
-                        let credentials = try await self.handleAuthorizationCallback(callbackURL)
+                        let credentials = try await self.handleAuthorizationCallback(
+                            callbackURL,
+                            credentialsBeforeAuthorization: credentialsBeforeAuthorization
+                        )
                         continuation.resume(returning: credentials)
                     } catch {
                         continuation.resume(throwing: error)
@@ -281,7 +636,10 @@ final class StravaManager: NSObject {
         return components?.url
     }
 
-    private func handleAuthorizationCallback(_ callbackURL: URL) async throws -> StravaStoredCredentials {
+    private func handleAuthorizationCallback(
+        _ callbackURL: URL,
+        credentialsBeforeAuthorization: StravaStoredCredentials?
+    ) async throws -> StravaStoredCredentials {
         guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
             throw StravaManagerError.missingAuthorizationCode
         }
@@ -299,12 +657,33 @@ final class StravaManager: NSObject {
 
         let grantedScope = queryItems.first(where: { $0.name == "scope" })?.value
         log("authorization callback parsed, scope: \(grantedScope ?? "nil"), code: <redacted>")
-        return try await exchangeAuthorizationCode(code, grantedScope: grantedScope)
+        guard let grantedScope,
+              Self.scopeComponents(grantedScope).contains("activity:read_all") else {
+            log("authorization did not grant activity:read_all; requiring reauthorization")
+            if let credentialsBeforeAuthorization {
+                if !clearCredentialsIfCurrent(
+                    credentialsBeforeAuthorization,
+                    markReauthorizationRequired: true
+                ) {
+                    markAuthorizationNeedsReauthorization()
+                }
+            } else {
+                markAuthorizationNeedsReauthorization()
+            }
+            throw StravaManagerError.reauthorizationRequired
+        }
+        return try await exchangeAuthorizationCode(
+            code,
+            grantedScope: grantedScope,
+            previousAthleteID: credentialsBeforeAuthorization?.athleteID
+                ?? syncStateStore.lastAuthorizedStravaAthleteID.flatMap(Int64.init)
+        )
     }
 
     private func exchangeAuthorizationCode(
         _ code: String,
-        grantedScope: String?
+        grantedScope: String?,
+        previousAthleteID: Int64?
     ) async throws -> StravaStoredCredentials {
         log("exchanging authorization code for token")
         let response: StravaOAuthTokenResponse = try await sendTokenRequest(parameters: [
@@ -322,6 +701,34 @@ final class StravaManager: NSObject {
             scope: grantedScope,
             athleteID: response.athlete?.id
         )
+        if let previousAthleteID,
+           let currentAthleteID = credentials.athleteID {
+            let previousCredentialOwner = String(previousAthleteID)
+            let currentCredentialOwner = String(currentAthleteID)
+            let existingHandoff = syncStateStore.stravaAuthorizationHandoff
+            if previousCredentialOwner != currentCredentialOwner {
+                let durableCacheOwner = syncStateStore.cachedStravaAthleteID
+                    ?? syncStateStore.lastSynchronizedStravaAthleteID
+                let canExtendExistingHandoff = durableCacheOwner == nil
+                    && existingHandoff?.authorizedAthleteIDs.contains(previousCredentialOwner) == true
+                let cacheOwner = durableCacheOwner
+                    ?? (canExtendExistingHandoff ? existingHandoff?.cacheOwnerAthleteID : nil)
+                    ?? previousCredentialOwner
+                var authorizedAthleteIDs = canExtendExistingHandoff
+                    ? existingHandoff?.authorizedAthleteIDs ?? []
+                    : []
+                authorizedAthleteIDs.insert(currentCredentialOwner)
+
+                // Persist the account handoff before replacing credentials. If
+                // the process exits during a rapid A -> B -> C (or A -> B -> A)
+                // chain, every still-possible credential owner remains covered.
+                syncStateStore.stravaAuthorizationHandoff = .init(
+                    cacheOwnerAthleteID: cacheOwner,
+                    authorizedAthleteIDs: authorizedAthleteIDs,
+                    capturedAt: Date()
+                )
+            }
+        }
         saveCredentials(credentials)
         log(
             "authorization token saved, athlete: \(credentials.athleteID.map(String.init) ?? "nil"), expiresAt: \(Self.debugDateString(credentials.expiresAt)), scope: \(credentials.scope ?? "nil")"
@@ -329,10 +736,28 @@ final class StravaManager: NSObject {
         return credentials
     }
 
-    private func refreshCredentials(_ credentials: StravaStoredCredentials) async throws -> StravaStoredCredentials {
+    private func refreshCredentials(
+        _ credentials: StravaStoredCredentials,
+        expectedAthleteID: Int64,
+        requestBudget: RequestBudget? = nil
+    ) async throws -> StravaStoredCredentials {
+        guard credentials.athleteID == expectedAthleteID,
+              let storedCredentialsBeforeRefresh = storedCredentials(),
+              storedCredentialsBeforeRefresh.athleteID == expectedAthleteID,
+              let scopeBeforeRefresh = storedCredentialsBeforeRefresh.scope,
+              Self.scopeComponents(scopeBeforeRefresh).contains("activity:read_all"),
+              storedCredentialsBeforeRefresh.accessToken == credentials.accessToken,
+              storedCredentialsBeforeRefresh.refreshToken == credentials.refreshToken else {
+            throw StravaManagerError.authorizationChangedDuringImport
+        }
         guard !credentials.refreshToken.isEmpty else {
             log("stored refresh token is empty; clearing authorization")
-            clearCredentials(markReauthorizationRequired: true)
+            guard clearCredentialsIfCurrent(
+                credentials,
+                markReauthorizationRequired: true
+            ) else {
+                throw StravaManagerError.authorizationChangedDuringImport
+            }
             throw StravaManagerError.reauthorizationRequired
         }
 
@@ -344,13 +769,33 @@ final class StravaManager: NSObject {
                 "client_secret": define.ClientSecret,
                 "grant_type": "refresh_token",
                 "refresh_token": credentials.refreshToken
-            ])
+            ], requestBudget: requestBudget)
         } catch let error as NetworkError where Self.isAuthorizationFailure(error) {
             log("access token refresh failed because authorization is invalid; clearing stored credentials")
-            clearCredentials(markReauthorizationRequired: true)
+            guard clearCredentialsIfCurrent(
+                credentials,
+                markReauthorizationRequired: true
+            ) else {
+                throw StravaManagerError.authorizationChangedDuringImport
+            }
             throw StravaManagerError.reauthorizationRequired
         } catch {
             throw error
+        }
+
+        // A browser authorization can finish while the refresh request is in
+        // flight. Never overwrite those newer credentials with this response.
+        guard let storedCredentialsAfterRefresh = storedCredentials(),
+              storedCredentialsAfterRefresh.athleteID == expectedAthleteID,
+              let scopeAfterRefresh = storedCredentialsAfterRefresh.scope,
+              Self.scopeComponents(scopeAfterRefresh).contains("activity:read_all"),
+              storedCredentialsAfterRefresh.accessToken == credentials.accessToken,
+              storedCredentialsAfterRefresh.refreshToken == credentials.refreshToken else {
+            throw StravaManagerError.authorizationChangedDuringImport
+        }
+        if let responseAthleteID = response.athlete?.id,
+           responseAthleteID != expectedAthleteID {
+            throw StravaManagerError.authorizationChangedDuringImport
         }
 
         let refreshedCredentials = StravaStoredCredentials(
@@ -366,7 +811,10 @@ final class StravaManager: NSObject {
         return refreshedCredentials
     }
 
-    private func sendTokenRequest<Response: Decodable>(parameters: [String: String]) async throws -> Response {
+    private func sendTokenRequest<Response: Decodable>(
+        parameters: [String: String],
+        requestBudget: RequestBudget? = nil
+    ) async throws -> Response {
         let endpoint = try NetworkEndpoint(
             urlString: define.TokenURL,
             method: .post,
@@ -376,10 +824,15 @@ final class StravaManager: NSObject {
         let grantType = parameters["grant_type"] ?? "unknown"
         log("token request started, grant_type: \(grantType)")
         do {
+            try requestBudget?.beginRequest()
             let response: NetworkResponse<Response> = try await networkManager.response(endpoint, decoder: decoder)
+            requestBudget?.observe(headers: response.headers)
             log("token request completed, grant_type: \(grantType), status: \(response.statusCode), bytes: \(response.data.count)")
             return response.value
         } catch {
+            if let networkError = error as? NetworkError {
+                requestBudget?.observe(headers: networkError.responseHeaders)
+            }
             log("token request failed, grant_type: \(grantType), error: \(error.localizedDescription)")
             throw error
         }
@@ -388,20 +841,33 @@ final class StravaManager: NSObject {
     private func loadActivities(
         after startDate: Date?,
         pageLimit: Int?,
-        perPage: Int
-    ) async throws -> [StravaSummaryActivity] {
+        perPage: Int,
+        expectedAthleteID: Int64,
+        requestBudget: RequestBudget
+    ) async throws -> StravaActivityListing {
         let pageSize = min(max(perPage, 1), 200)
         var allActivities: [StravaSummaryActivity] = []
         var loadedActivityIDs = Set<Int64>()
         var page = 1
+        var didReachEnd = false
+        let pagingSnapshotDate = Date()
+        var beforeEpoch = Int(ceil(pagingSnapshotDate.timeIntervalSince1970)) + 1
 
         log(
             "activity paging started, after: \(Self.debugDateString(startDate)), pageLimit: \(pageLimit.map(String.init) ?? "nil"), perPage: \(pageSize)"
         )
         while pageLimit.map({ page <= max($0, 1) }) ?? true {
+            guard requestBudget.canStartRequest else {
+                log("activity paging deferred because the request budget is exhausted")
+                break
+            }
+
             var parameters: [String: NetworkParameterValue?] = [
-                "page": .int(page),
-                "per_page": .int(pageSize)
+                // Keep page fixed and move a time cursor. Offset pagination can
+                // skip a record when an activity is removed while paging.
+                "page": .int(1),
+                "per_page": .int(pageSize),
+                "before": .int(beforeEpoch)
             ]
             if let startDate {
                 parameters["after"] = .int(Int(startDate.timeIntervalSince1970))
@@ -414,7 +880,22 @@ final class StravaManager: NSObject {
                 parameterEncoding: .query
             )
             log("activity page \(page) request queued")
-            let pageActivities: [StravaSummaryActivity] = try await authorizedJSON(endpoint)
+            let pageActivities: [StravaSummaryActivity]
+            do {
+                pageActivities = try await authorizedJSON(
+                    endpoint,
+                    expectedAthleteID: expectedAthleteID,
+                    requestBudget: requestBudget
+                )
+            } catch {
+                if Self.isRateLimitFailure(error) || Self.isRequestBudgetFailure(error) {
+                    log(
+                        "activity paging deferred after page \(page - 1), retry after: \(Self.debugDateString(requestBudget.retryAfterDate))"
+                    )
+                    break
+                }
+                throw error
+            }
             var newActivityCount = 0
             for activity in pageActivities where loadedActivityIDs.insert(activity.id).inserted {
                 allActivities.append(activity)
@@ -426,16 +907,47 @@ final class StravaManager: NSObject {
 
             if pageActivities.count < pageSize {
                 log("activity paging finished because page \(page) returned less than page size")
+                didReachEnd = true
                 break
             }
+            guard let oldestStartEpoch = pageActivities.compactMap(\.startDate)
+                .map({ Int($0.timeIntervalSince1970) })
+                .min(),
+                  oldestStartEpoch < beforeEpoch else {
+                log("activity paging stopped because its time cursor did not advance")
+                break
+            }
+
+            // `before` is exclusive. Keep a one-second overlap so activities
+            // sharing the page-boundary timestamp cannot be skipped. A full
+            // overlap page with no new IDs means the boundary itself is
+            // ambiguous (for example 200 activities in the same second), so
+            // stop with a non-authoritative listing rather than skip records.
+            let overlappingBeforeEpoch = oldestStartEpoch + 1
+            guard newActivityCount > 0,
+                  overlappingBeforeEpoch < beforeEpoch else {
+                log("activity paging stopped at an ambiguous timestamp boundary")
+                break
+            }
+            beforeEpoch = overlappingBeforeEpoch
             page += 1
         }
 
-        log("activity paging completed, total unique activities: \(allActivities.count)")
-        return allActivities
+        log(
+            "activity paging completed, total unique activities: \(allActivities.count), reached end: \(didReachEnd)"
+        )
+        return StravaActivityListing(
+            activities: allActivities,
+            didReachEnd: didReachEnd,
+            upperBound: pagingSnapshotDate
+        )
     }
 
-    private func loadActivityStreams(activityID: Int64) async throws -> StravaActivityStreamSet {
+    private func loadActivityStreams(
+        activityID: Int64,
+        expectedAthleteID: Int64,
+        requestBudget: RequestBudget
+    ) async throws -> StravaActivityStreamSet {
         let endpoint = try NetworkEndpoint(
             urlString: "\(define.APIBaseURL)/activities/\(activityID)/streams",
             method: .get,
@@ -445,45 +957,115 @@ final class StravaManager: NSObject {
             ],
             parameterEncoding: .query
         )
-        let streams: StravaActivityStreamSet = try await authorizedJSON(endpoint)
+        let streams: StravaActivityStreamSet = try await authorizedJSON(
+            endpoint,
+            expectedAthleteID: expectedAthleteID,
+            requestBudget: requestBudget
+        )
         log("activity \(activityID) streams loaded, \(streamSummary(streams))")
         return streams
     }
 
-    private func authorizedJSON<Response: Decodable>(_ endpoint: NetworkEndpoint) async throws -> Response {
-        var credentials = try await validCredentials()
+    private func authorizedJSON<Response: Decodable>(
+        _ endpoint: NetworkEndpoint,
+        expectedAthleteID: Int64,
+        requestBudget: RequestBudget
+    ) async throws -> Response {
+        var credentials = try await validCredentials(
+            expectedAthleteID: expectedAthleteID,
+            requestBudget: requestBudget
+        )
         do {
-            return try await authorizedJSON(endpoint, accessToken: credentials.accessToken)
+            let response: Response = try await authorizedJSON(
+                endpoint,
+                accessToken: credentials.accessToken,
+                requestBudget: requestBudget
+            )
+            try validateStoredAuthorization(expectedAthleteID: expectedAthleteID)
+            return response
         } catch let error as NetworkError where error.statusCode == 401 {
             log("request unauthorized, refreshing token before retry: \(requestDescription(endpoint))")
-            credentials = try await refreshCredentials(credentials)
+            credentials = try await refreshCredentials(
+                credentials,
+                expectedAthleteID: expectedAthleteID,
+                requestBudget: requestBudget
+            )
             log("retrying request after token refresh: \(requestDescription(endpoint))")
-            return try await authorizedJSON(endpoint, accessToken: credentials.accessToken)
+            do {
+                let response: Response = try await authorizedJSON(
+                    endpoint,
+                    accessToken: credentials.accessToken,
+                    requestBudget: requestBudget
+                )
+                try validateStoredAuthorization(expectedAthleteID: expectedAthleteID)
+                return response
+            } catch let retryError as NetworkError
+                where Self.isAPIAuthorizationFailure(retryError) {
+                log("request remained unauthorized after token refresh; clearing stored credentials")
+                guard clearCredentialsIfCurrent(
+                    credentials,
+                    markReauthorizationRequired: true
+                ) else {
+                    throw StravaManagerError.authorizationChangedDuringImport
+                }
+                throw StravaManagerError.reauthorizationRequired
+            }
+        } catch let error as NetworkError where Self.isAPIAuthorizationFailure(error) {
+            log("request authorization is invalid; clearing stored credentials")
+            guard clearCredentialsIfCurrent(
+                credentials,
+                markReauthorizationRequired: true
+            ) else {
+                throw StravaManagerError.authorizationChangedDuringImport
+            }
+            throw StravaManagerError.reauthorizationRequired
         }
     }
 
     private func authorizedJSON<Response: Decodable>(
         _ endpoint: NetworkEndpoint,
-        accessToken: String
+        accessToken: String,
+        requestBudget: RequestBudget
     ) async throws -> Response {
         var endpoint = endpoint
         endpoint.headers["Authorization"] = "Bearer \(accessToken)"
         let description = requestDescription(endpoint)
         log("request started: \(description)")
         do {
+            try requestBudget.beginRequest()
             let response: NetworkResponse<Response> = try await networkManager.response(endpoint, decoder: decoder)
+            requestBudget.observe(headers: response.headers)
             log("request completed: \(description), status: \(response.statusCode), bytes: \(response.data.count)")
             return response.value
         } catch {
+            if let networkError = error as? NetworkError {
+                requestBudget.observe(headers: networkError.responseHeaders)
+            }
             log("request failed: \(description), error: \(error.localizedDescription)")
             throw error
         }
     }
 
-    private func validCredentials() async throws -> StravaStoredCredentials {
+    private func validCredentials(
+        expectedAthleteID: Int64,
+        requestBudget: RequestBudget
+    ) async throws -> StravaStoredCredentials {
         guard let credentials = storedCredentials() else {
             log("no stored Strava credentials")
             throw StravaManagerError.notAuthorized
+        }
+        guard credentials.athleteID == expectedAthleteID else {
+            throw StravaManagerError.authorizationChangedDuringImport
+        }
+        guard let scope = credentials.scope,
+              Self.scopeComponents(scope).contains("activity:read_all") else {
+            guard clearCredentialsIfCurrent(
+                credentials,
+                markReauthorizationRequired: true
+            ) else {
+                throw StravaManagerError.authorizationChangedDuringImport
+            }
+            throw StravaManagerError.reauthorizationRequired
         }
 
         if credentials.isAccessTokenValid {
@@ -492,7 +1074,29 @@ final class StravaManager: NSObject {
         }
 
         log("stored access token expired or missing expiry, refreshing")
-        return try await refreshCredentials(credentials)
+        return try await refreshCredentials(
+            credentials,
+            expectedAthleteID: expectedAthleteID,
+            requestBudget: requestBudget
+        )
+    }
+
+    private func validateStoredAuthorization(expectedAthleteID: Int64) throws {
+        guard let credentials = storedCredentials(),
+              credentials.athleteID == expectedAthleteID else {
+            log("authorization identity or scope changed during import; discarding this pass")
+            throw StravaManagerError.authorizationChangedDuringImport
+        }
+        guard let scope = credentials.scope,
+              Self.scopeComponents(scope).contains("activity:read_all") else {
+            guard clearCredentialsIfCurrent(
+                credentials,
+                markReauthorizationRequired: true
+            ) else {
+                throw StravaManagerError.authorizationChangedDuringImport
+            }
+            throw StravaManagerError.reauthorizationRequired
+        }
     }
 
     private func storedCredentials() -> StravaStoredCredentials? {
@@ -516,8 +1120,30 @@ final class StravaManager: NSObject {
         }
 
         defaults.set(data, forKey: DefaultsKey.credentials)
+        if let athleteID = credentials.athleteID {
+            syncStateStore.lastAuthorizedStravaAthleteID = String(athleteID)
+        }
         defaults.set(true, forKey: DefaultsKey.authorizationAttempted)
         defaults.set(false, forKey: DefaultsKey.authorizationNeedsReauthorization)
+    }
+
+    @discardableResult
+    private func clearCredentialsIfCurrent(
+        _ expectedCredentials: StravaStoredCredentials,
+        markReauthorizationRequired: Bool
+    ) -> Bool {
+        guard let currentCredentials = storedCredentials(),
+              currentCredentials.athleteID == expectedCredentials.athleteID,
+              currentCredentials.accessToken == expectedCredentials.accessToken,
+              currentCredentials.refreshToken == expectedCredentials.refreshToken else {
+            return false
+        }
+
+        if let athleteID = currentCredentials.athleteID {
+            syncStateStore.lastAuthorizedStravaAthleteID = String(athleteID)
+        }
+        clearCredentials(markReauthorizationRequired: markReauthorizationRequired)
+        return true
     }
 
     private func clearCredentials(markReauthorizationRequired: Bool) {
@@ -541,11 +1167,42 @@ final class StravaManager: NSObject {
         case .notAuthorized, .reauthorizationRequired:
             return true
         case .authorizationDenied,
+             .authorizationChangedDuringImport,
              .authorizationSessionFailedToStart,
              .cancelled,
              .invalidRedirectURI,
              .invalidURL,
-             .missingAuthorizationCode:
+             .missingAuthorizationCode,
+             .requestBudgetExhausted:
+            return false
+        }
+    }
+
+    static func shouldRetryImport(after error: Error) -> Bool {
+        if error is CancellationError {
+            return false
+        }
+        if let managerError = error as? StravaManagerError {
+            if case .requestBudgetExhausted = managerError {
+                return true
+            }
+            return false
+        }
+        guard let networkError = error as? NetworkError else {
+            return false
+        }
+
+        switch networkError {
+        case .transportFailed(let underlying):
+            return (underlying as? URLError)?.code != .cancelled
+        case .invalidResponse, .decodingFailed:
+            return true
+        case .httpStatus(let statusCode, _, _, _):
+            return statusCode == 408
+                || statusCode == 425
+                || statusCode == 429
+                || statusCode >= 500
+        case .invalidURL:
             return false
         }
     }
@@ -605,6 +1262,58 @@ final class StravaManager: NSObject {
 
         return statusCode == 400 || statusCode == 401 || statusCode == 403
     }
+
+    private static func isRateLimitFailure(_ error: Error) -> Bool {
+        (error as? NetworkError)?.statusCode == 429
+    }
+
+    private static func isRequestBudgetFailure(_ error: Error) -> Bool {
+        guard let managerError = error as? StravaManagerError else {
+            return false
+        }
+        if case .requestBudgetExhausted = managerError {
+            return true
+        }
+        return false
+    }
+
+    private static func scopeComponents(_ scope: String) -> Set<String> {
+        Set(
+            scope
+                .split(whereSeparator: { $0 == "," || $0.isWhitespace })
+                .map(String.init)
+        )
+    }
+
+    private static func isAPIAuthorizationFailure(_ error: NetworkError) -> Bool {
+        error.statusCode == 401 || error.statusCode == 403
+    }
+
+    private static func shouldStopImportPass(after error: Error) -> Bool {
+        if let managerError = error as? StravaManagerError {
+            switch managerError {
+            case .authorizationChangedDuringImport, .requestBudgetExhausted:
+                return true
+            default:
+                break
+            }
+        }
+
+        guard let networkError = error as? NetworkError else {
+            return false
+        }
+
+        switch networkError {
+        case .httpStatus(let statusCode, _, _, _):
+            return statusCode == 400
+                || statusCode == 401
+                || statusCode == 403
+                || statusCode == 429
+                || statusCode >= 500
+        case .transportFailed, .invalidResponse, .invalidURL, .decodingFailed:
+            return true
+        }
+    }
 }
 
 struct StravaStoredCredentials: Codable {
@@ -626,6 +1335,7 @@ struct StravaStoredCredentials: Codable {
 
 enum StravaManagerError: LocalizedError {
     case authorizationDenied(String)
+    case authorizationChangedDuringImport
     case authorizationSessionFailedToStart
     case cancelled
     case invalidRedirectURI(redirectURI: String, callbackDomain: String)
@@ -633,11 +1343,14 @@ enum StravaManagerError: LocalizedError {
     case missingAuthorizationCode
     case notAuthorized
     case reauthorizationRequired
+    case requestBudgetExhausted(retryAfter: Date?)
 
     var errorDescription: String? {
         switch self {
         case .authorizationDenied(let message):
             return message
+        case .authorizationChangedDuringImport:
+            return "Strava authorization changed during synchronization. Please retry."
         case .authorizationSessionFailedToStart:
             return "Strava authorization could not be started."
         case .cancelled:
@@ -652,6 +1365,11 @@ enum StravaManagerError: LocalizedError {
             return "Strava authorization is required."
         case .reauthorizationRequired:
             return "Strava authorization has expired. Please sign in again."
+        case .requestBudgetExhausted(let retryAfter):
+            guard let retryAfter else {
+                return "The Strava request budget for this synchronization pass is exhausted."
+            }
+            return "The Strava request budget is exhausted. Retry after \(ISO8601DateFormatter().string(from: retryAfter))."
         }
     }
 }
@@ -666,6 +1384,12 @@ private struct StravaOAuthTokenResponse: Decodable {
 
 private struct StravaAthlete: Decodable {
     let id: Int64
+}
+
+private struct StravaActivityListing {
+    let activities: [StravaSummaryActivity]
+    let didReachEnd: Bool
+    let upperBound: Date
 }
 
 private struct StravaSummaryActivity: Decodable {
@@ -787,6 +1511,107 @@ private struct StravaPolylineMap: Decodable {
 
             return !value.isEmpty
         }
+    }
+}
+
+private extension StravaSummaryActivity {
+    func placeholderRouteCoordinates(startDate: Date) -> [RouteCoordinate] {
+        var points: [StravaLatLng] = []
+        if let encodedPolyline = [map?.polyline, map?.summaryPolyline]
+            .compactMap({ $0 })
+            .first(where: { !$0.isEmpty }) {
+            points = Self.decodePolyline(encodedPolyline)
+        }
+
+        if points.count < 2 {
+            points = [startLatlng, endLatlng].compactMap { $0 }
+        }
+
+        points = points.filter {
+            $0.latitude.isFinite
+                && $0.longitude.isFinite
+                && (-90...90).contains($0.latitude)
+                && (-180...180).contains($0.longitude)
+        }
+        guard points.count > 1 else {
+            return []
+        }
+
+        let duration = max(elapsedTime ?? movingTime ?? TimeInterval(points.count - 1), 1)
+        let totalDistanceMeters = self.distance.flatMap { value in
+            value.isFinite && value > 0 ? value : nil
+        }
+        let denominator = Double(max(points.count - 1, 1))
+        return points.enumerated().map { index, point in
+            let progress = Double(index) / denominator
+            return RouteCoordinate(
+                latitude: point.latitude,
+                longitude: point.longitude,
+                timestamp: startDate.addingTimeInterval(duration * progress),
+                sourceDistanceMeters: totalDistanceMeters.map { $0 * progress },
+                horizontalAccuracyMeters: nil,
+                altitudeMeters: nil,
+                verticalAccuracyMeters: nil,
+                gradeRatio: nil,
+                speedMetersPerSecond: nil,
+                speedAccuracyMetersPerSecond: nil,
+                courseDegrees: nil,
+                courseAccuracyDegrees: nil,
+                floorLevel: nil,
+                heartRateBeatsPerMinute: nil,
+                powerWatts: nil,
+                temperatureCelsius: nil
+            )
+        }
+    }
+
+    static func decodePolyline(_ encodedPolyline: String) -> [StravaLatLng] {
+        let bytes = Array(encodedPolyline.utf8)
+        guard !bytes.isEmpty else {
+            return []
+        }
+
+        var index = 0
+        var latitude: Int64 = 0
+        var longitude: Int64 = 0
+        var points: [StravaLatLng] = []
+        points.reserveCapacity(min(bytes.count / 2, 4_096))
+
+        func nextDelta() -> Int64? {
+            var result: Int64 = 0
+            var shift: Int64 = 0
+            while index < bytes.count, shift <= 55 {
+                let value = Int64(bytes[index]) - 63
+                index += 1
+                guard value >= 0 else {
+                    return nil
+                }
+
+                result |= (value & 0x1f) << shift
+                if value < 0x20 {
+                    return (result & 1) == 0 ? result >> 1 : ~(result >> 1)
+                }
+                shift += 5
+            }
+            return nil
+        }
+
+        while index < bytes.count, points.count < 100_000 {
+            guard let latitudeDelta = nextDelta(),
+                  let longitudeDelta = nextDelta() else {
+                return []
+            }
+            latitude += latitudeDelta
+            longitude += longitudeDelta
+            points.append(
+                StravaLatLng(
+                    latitude: Double(latitude) / 100_000,
+                    longitude: Double(longitude) / 100_000
+                )
+            )
+        }
+
+        return points
     }
 }
 
@@ -1060,7 +1885,74 @@ private struct StravaLatLng: Decodable {
 }
 
 private extension TrackedWorkout {
-    init?(stravaActivity activity: StravaSummaryActivity, streams: StravaActivityStreamSet) {
+    init?(
+        stravaSummaryActivity activity: StravaSummaryActivity,
+        isTerminal: Bool,
+        athleteID: Int64
+    ) {
+        guard let sport = activity.supportedSport,
+              let startDate = activity.startDate else {
+            return nil
+        }
+
+        let rawCoordinates = activity.placeholderRouteCoordinates(startDate: startDate)
+        guard rawCoordinates.count > 1 else {
+            return nil
+        }
+
+        let sampledCoordinates = RouteSampler.downsample(rawCoordinates, limit: 1_200)
+        let quantityMetrics = Self.stravaQuantityMetrics(activity: activity, sport: sport)
+        var placeholderMetadata = Self.stravaMetadata(
+            activity: activity,
+            sport: sport,
+            athleteID: athleteID
+        )
+        placeholderMetadata[Self.stravaStreamDataVersionMetadataKey] = TrackedMetadataValue(
+            type: "number",
+            doubleValue: 0
+        )
+        placeholderMetadata[Self.stravaSummaryPlaceholderMetadataKey] = TrackedMetadataValue(
+            type: "bool",
+            boolValue: true
+        )
+        if isTerminal {
+            placeholderMetadata[Self.stravaTerminalPlaceholderMetadataKey] = TrackedMetadataValue(
+                type: "bool",
+                boolValue: true
+            )
+        }
+
+        id = "strava-\(activity.id)"
+        healthDataVersion = Self.currentHealthDataVersion
+        activityTypeRawValue = sport.healthKitActivityType.rawValue
+        self.startDate = startDate
+        endDate = startDate.addingTimeInterval(activity.elapsedTime ?? activity.movingTime ?? 0)
+        durationSeconds = activity.movingTime ?? activity.elapsedTime
+        distanceMeters = activity.distance ?? 0
+        totalEnergyBurnedKilocalories = activity.calories
+        sourceRevision = TrackedWorkoutSourceRevision(stravaActivityID: activity.id)
+        device = nil
+        metadata = placeholderMetadata
+        workoutEvents = nil
+        routeSegments = nil
+        routeSummary = TrackedRouteSummary(
+            stravaSummaryCoordinates: rawCoordinates,
+            sampledCoordinateCount: sampledCoordinates.count,
+            activity: activity
+        )
+        self.quantityMetrics = quantityMetrics.isEmpty ? nil : quantityMetrics
+        coordinates = sampledCoordinates
+        fullCoordinates = Self.fullCoordinatesIfSampled(
+            rawCoordinates: rawCoordinates,
+            sampledCoordinates: sampledCoordinates
+        )
+    }
+
+    init?(
+        stravaActivity activity: StravaSummaryActivity,
+        streams: StravaActivityStreamSet,
+        athleteID: Int64
+    ) {
         guard let sport = activity.supportedSport,
               let startDate = activity.startDate else {
             return nil
@@ -1084,7 +1976,11 @@ private extension TrackedWorkout {
         totalEnergyBurnedKilocalories = activity.calories
         sourceRevision = TrackedWorkoutSourceRevision(stravaActivityID: activity.id)
         device = nil
-        metadata = Self.stravaMetadata(activity: activity, sport: sport)
+        metadata = Self.stravaMetadata(
+            activity: activity,
+            sport: sport,
+            athleteID: athleteID
+        )
         workoutEvents = nil
         routeSegments = nil
         routeSummary = TrackedRouteSummary(
@@ -1103,10 +1999,15 @@ private extension TrackedWorkout {
 
     private static func stravaMetadata(
         activity: StravaSummaryActivity,
-        sport: StravaSupportedSport
+        sport: StravaSupportedSport,
+        athleteID: Int64
     ) -> [String: TrackedMetadataValue] {
         var metadata: [String: TrackedMetadataValue] = [
             "strava.id": TrackedMetadataValue(type: "string", stringValue: "\(activity.id)"),
+            TrackedWorkout.stravaAthleteIDMetadataKey: TrackedMetadataValue(
+                type: "string",
+                stringValue: "\(athleteID)"
+            ),
             TrackedWorkout.stravaStreamDataVersionMetadataKey: TrackedMetadataValue(
                 type: "number",
                 doubleValue: Double(TrackedWorkout.currentStravaStreamDataVersion)
@@ -1210,6 +2111,22 @@ private extension TrackedWorkoutSourceRevision {
 }
 
 private extension TrackedRouteSummary {
+    init(
+        stravaSummaryCoordinates coordinates: [RouteCoordinate],
+        sampledCoordinateCount: Int,
+        activity: StravaSummaryActivity
+    ) {
+        rawLocationCount = coordinates.count
+        self.sampledCoordinateCount = sampledCoordinateCount
+        measuredDistanceMeters = activity.distance
+        minimumAltitudeMeters = nil
+        maximumAltitudeMeters = nil
+        elevationGainMeters = activity.totalElevationGain
+        elevationLossMeters = nil
+        averageSpeedMetersPerSecond = activity.averageSpeed
+        maximumSpeedMetersPerSecond = activity.maxSpeed
+    }
+
     init(
         stravaCoordinates coordinates: [RouteCoordinate],
         sampledCoordinateCount: Int,
