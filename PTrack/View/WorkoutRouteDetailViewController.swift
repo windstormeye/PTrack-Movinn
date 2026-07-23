@@ -2278,9 +2278,9 @@ final class WorkoutRouteDetailViewController: UIViewController {
     ) -> RouteDirectionPolylineRenderer {
         let renderer = RouteDirectionPolylineRenderer(polyline: polyline)
         renderer.lineWidth = AppMapStyle.routeLineWidth
-        renderer.directionIndicatorLength = 14.5
-        renderer.directionIndicatorWidth = 17
-        renderer.directionIndicatorStrokeWidth = 3.4
+        renderer.directionIndicatorLength = 9
+        renderer.directionIndicatorWidth = 10.5
+        renderer.directionIndicatorStrokeWidth = 2
         renderer.lineJoin = .round
         renderer.lineCap = .round
         return renderer

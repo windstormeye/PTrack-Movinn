@@ -196,10 +196,10 @@ final class RouteDirectionPolylineRenderer: MKPolylineRenderer {
     var drawsRouteStroke = true
     var directionIndicatorColor: UIColor = .black
     var directionIndicatorSpacing: CGFloat = 118
-    var directionIndicatorLength: CGFloat = 16
-    var directionIndicatorWidth: CGFloat = 21
-    var directionIndicatorStrokeWidth: CGFloat = 6
-    var minimumZoomScaleForIndicators: MKZoomScale = 0.03
+    var directionIndicatorLength: CGFloat = 10
+    var directionIndicatorWidth: CGFloat = 13
+    var directionIndicatorStrokeWidth: CGFloat = 3.5
+    var minimumZoomScaleForIndicators: MKZoomScale = 0.05
     var minimumRouteLengthForIndicators: CGFloat = 120
     var maximumIndicatorCount = 120
 
