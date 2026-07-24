@@ -17,6 +17,7 @@ final class AppUpdateManager {
         static let appStoreURL = URL(string: "https://apps.apple.com/app/movinn-visualize-workouts/id6782782334")!
         static let lookupURL = URL(string: "https://itunes.apple.com/lookup")!
         static let fallbackStorefrontCountry = "cn"
+        static let dismissedUpdateVersionKey = "AppUpdateManager.dismissedUpdateVersion"
         static let presentationRetryDelaysInMilliseconds = [400, 800, 1_600, 3_200]
     }
 
@@ -116,6 +117,9 @@ final class AppUpdateManager {
 
         switch result {
         case .success(.updateAvailable(let release)):
+            guard reportsResult || !hasDismissedUpdate(version: release.version) else {
+                return
+            }
             presentUpdateAlert(for: release, from: presenter)
         case .success(.upToDate):
             guard reportsResult else {
@@ -327,10 +331,13 @@ final class AppUpdateManager {
             message: release.releaseNotes,
             preferredStyle: .alert
         )
-        alertController.addAction(UIAlertAction(
+        let dismissAction = UIAlertAction(
             title: AppLocalization.text(.updateDismiss),
             style: .cancel
-        ))
+        ) { [weak self] _ in
+            self?.markUpdateDismissed(version: release.version)
+        }
+        alertController.addAction(dismissAction)
 
         let updateAction = UIAlertAction(
             title: AppLocalization.text(.updateNow),
@@ -353,6 +360,14 @@ final class AppUpdateManager {
         pendingRelease = nil
         pendingPresentationPresenter = nil
         resetPresentationRetryCycle()
+    }
+
+    private func hasDismissedUpdate(version: String) -> Bool {
+        UserDefaults.standard.string(forKey: Constants.dismissedUpdateVersionKey) == version
+    }
+
+    private func markUpdateDismissed(version: String) {
+        UserDefaults.standard.set(version, forKey: Constants.dismissedUpdateVersionKey)
     }
 
     private func schedulePresentationRetry() {
