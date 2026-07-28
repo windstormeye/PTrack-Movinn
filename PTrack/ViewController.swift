@@ -164,6 +164,10 @@ class ViewController: UIViewController {
     private let routeCollectionBadgeLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 1.5, left: 4, bottom: 1.5, right: 4))
     private let scrollDateIndicatorView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let scrollDateIndicatorLabel = PaddingLabel(contentInsets: UIEdgeInsets(top: 5, left: 11, bottom: 5, right: 11))
+    private var headerHeightConstraint: Constraint?
+    private var titleLeadingConstraint: Constraint?
+    private var titleTopConstraint: Constraint?
+    private var currentHeaderLayoutMetrics: HomeHeaderLayoutMetrics?
     private var totalDistanceTrailingToMoreConstraint: Constraint?
     private let routeBookLocateButton = UIButton(type: .system)
     private let routeBookMapStyleButton = UIButton(type: .system)
@@ -314,6 +318,7 @@ class ViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateHeaderLayoutForCurrentWindow()
         updateFullScreenInsets()
         positionLoadingIndicatorNextToTotalDistanceText()
     }
@@ -382,7 +387,8 @@ class ViewController: UIViewController {
     }
 
     private func configureCollectionView() {
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = AppColors.solidBackground
+        routeGridView.collectionView.backgroundColor = AppColors.solidBackground
 
         routeGridView.configureLayout(
             columns: cachedRouteGridColumnCount(),
@@ -877,9 +883,12 @@ class ViewController: UIViewController {
         headerView.addSubview(moreButton)
         headerView.addSubview(routeCollectionBadgeLabel)
 
+        let layoutMetrics = HomeHeaderLayout.metrics(for: view)
+        currentHeaderLayoutMetrics = layoutMetrics
+
         headerView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
-            make.height.equalTo(122)
+            headerHeightConstraint = make.height.equalTo(layoutMetrics.height).constraint
         }
 
         headerBlurView.snp.makeConstraints { make in
@@ -887,8 +896,8 @@ class ViewController: UIViewController {
         }
 
         titleLabel.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(16)
-            make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(10)
+            titleLeadingConstraint = make.leading.equalToSuperview().offset(layoutMetrics.titleLeading).constraint
+            titleTopConstraint = make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(layoutMetrics.titleTop).constraint
         }
 
         titleAccentLabel.snp.makeConstraints { make in
@@ -915,6 +924,19 @@ class ViewController: UIViewController {
 
         updateTotalDistanceText()
         configureRouteBookScaleView()
+    }
+
+    private func updateHeaderLayoutForCurrentWindow() {
+        let layoutMetrics = HomeHeaderLayout.metrics(for: view)
+        guard layoutMetrics != currentHeaderLayoutMetrics else {
+            return
+        }
+
+        currentHeaderLayoutMetrics = layoutMetrics
+        headerHeightConstraint?.update(offset: layoutMetrics.height)
+        titleLeadingConstraint?.update(offset: layoutMetrics.titleLeading)
+        titleTopConstraint?.update(offset: layoutMetrics.titleTop)
+        view.setNeedsLayout()
     }
 
     private func configureRouteCollectionBadgeLabel() {

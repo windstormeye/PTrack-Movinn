@@ -13,12 +13,53 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        if #available(iOS 26.0, *) {
+            configureMainMenu()
+        }
+
         RouteCollectionCloudSyncCoordinator.shared.startIfEnabled()
         HeatmapRouteCacheStore.shared.prewarmCompleteRouteCache()
         Task { @MainActor in
             _ = ProSubscriptionManager.shared
         }
         return true
+    }
+
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        removeAllMainMenuEntries(from: builder)
+    }
+
+    @available(iOS 26.0, *)
+    private func configureMainMenu() {
+        let configuration = UIMainMenuSystem.Configuration()
+        configuration.newScenePreference = .removed
+        configuration.documentPreference = .removed
+        configuration.printingPreference = .removed
+        configuration.findingPreference = .removed
+        configuration.toolbarPreference = .removed
+        configuration.sidebarPreference = .removed
+        configuration.inspectorPreference = .removed
+        configuration.textFormattingPreference = .removed
+
+        UIMainMenuSystem.shared.setBuildConfiguration(configuration) { [weak self] builder in
+            self?.removeAllMainMenuEntries(from: builder)
+        }
+    }
+
+    private func removeAllMainMenuEntries(from builder: UIMenuBuilder) {
+        guard builder.system == UIMenuSystem.main else {
+            return
+        }
+
+        for identifier in suppressedTopLevelMenuIdentifiers {
+            builder.remove(menu: identifier)
+        }
+        builder.replaceChildren(ofMenu: .root) { _ in [] }
+    }
+
+    private var suppressedTopLevelMenuIdentifiers: [UIMenu.Identifier] {
+        [.application, .file, .edit, .view, .format, .window, .help]
     }
 
     func applicationDidReceiveMemoryWarning(_ application: UIApplication) {

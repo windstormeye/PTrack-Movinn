@@ -16,6 +16,10 @@ final class DemoModeHomeViewController: UIViewController {
     private let titleAccentLabel = UILabel()
     private let totalDistanceLabel = UILabel()
     private let moreButton = UIButton(type: .system)
+    private var headerHeightConstraint: Constraint?
+    private var titleLeadingConstraint: Constraint?
+    private var titleTopConstraint: Constraint?
+    private var currentHeaderLayoutMetrics: HomeHeaderLayoutMetrics?
     private let defaultColumnCount: CGFloat = 3
     private let itemSpacing: CGFloat = 12
     private let lineSpacing: CGFloat = 2
@@ -47,6 +51,7 @@ final class DemoModeHomeViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateHeaderLayoutForCurrentWindow()
         updateFullScreenInsets()
     }
 
@@ -56,7 +61,8 @@ final class DemoModeHomeViewController: UIViewController {
     }
 
     private func configureGridView() {
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = AppColors.solidBackground
+        routeGridView.collectionView.backgroundColor = AppColors.solidBackground
         routeGridView.configureLayout(
             columns: defaultColumnCount,
             itemSpacing: itemSpacing,
@@ -125,13 +131,16 @@ final class DemoModeHomeViewController: UIViewController {
         headerView.addSubview(totalDistanceLabel)
         headerView.addSubview(moreButton)
 
+        let layoutMetrics = HomeHeaderLayout.metrics(for: view)
+        currentHeaderLayoutMetrics = layoutMetrics
+
         headerView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
-            make.height.equalTo(122)
+            headerHeightConstraint = make.height.equalTo(layoutMetrics.height).constraint
         }
         titleLabel.snp.makeConstraints { make in
-            make.leading.equalToSuperview().offset(16)
-            make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(10)
+            titleLeadingConstraint = make.leading.equalToSuperview().offset(layoutMetrics.titleLeading).constraint
+            titleTopConstraint = make.top.equalTo(view.safeAreaLayoutGuide.snp.top).offset(layoutMetrics.titleTop).constraint
         }
         titleAccentLabel.snp.makeConstraints { make in
             make.leading.equalTo(titleLabel.snp.trailing).offset(-1)
@@ -147,6 +156,19 @@ final class DemoModeHomeViewController: UIViewController {
             make.centerY.equalTo(titleLabel)
             make.size.equalTo(36)
         }
+    }
+
+    private func updateHeaderLayoutForCurrentWindow() {
+        let layoutMetrics = HomeHeaderLayout.metrics(for: view)
+        guard layoutMetrics != currentHeaderLayoutMetrics else {
+            return
+        }
+
+        currentHeaderLayoutMetrics = layoutMetrics
+        headerHeightConstraint?.update(offset: layoutMetrics.height)
+        titleLeadingConstraint?.update(offset: layoutMetrics.titleLeading)
+        titleTopConstraint?.update(offset: layoutMetrics.titleTop)
+        view.setNeedsLayout()
     }
 
     private func makeMoreMenu() -> UIMenu {
