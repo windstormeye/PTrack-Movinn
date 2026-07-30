@@ -18,6 +18,15 @@ final class WorkoutRouteShareViewController: UIViewController {
     private typealias CanvasAspectRatio = RouteShareCanvasAspectRatio
     private typealias SharePhotoItem = RouteSharePhotoItem
 
+    private enum Layout {
+        static let previewHorizontalInset: CGFloat = 16
+        static let previewTopSpacing: CGFloat = 4
+        static let previewBottomSpacing: CGFloat = 24
+        static let iPadMinimumPreviewWidth: CGFloat = 340
+        static let iPadMaximumPreviewWidth: CGFloat = 520
+        static let verticalFitSafetyMargin: CGFloat = 1
+    }
+
     private enum LivePhotoExportSource {
         case photo(PHAsset)
         case collage([CollageLivePhotoExportSource])
@@ -88,6 +97,8 @@ final class WorkoutRouteShareViewController: UIViewController {
         target: self,
         action: #selector(resetShareCanvas)
     )
+    private var previewContainerWidthConstraint: Constraint?
+    private var appliedIPadPreviewContainerWidth: CGFloat?
     private var toolsContainerWidthConstraint: Constraint?
     private var calorieModuleHeightConstraint: Constraint?
     private weak var previewBackgroundTapGesture: UITapGestureRecognizer?
@@ -313,6 +324,11 @@ final class WorkoutRouteShareViewController: UIViewController {
         showInitialBackgroundAdjustmentToastIfNeeded()
     }
 
+    override func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        updateIPadPreviewContainerWidth()
+    }
+
     private var isPermanentlyLeaving: Bool {
         isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true
     }
@@ -498,7 +514,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private func configureScrollView() {
         scrollView.backgroundColor = AppColors.sharePageBackground
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.alwaysBounceVertical = true
+        scrollView.alwaysBounceVertical = traitCollection.userInterfaceIdiom != .pad
         scrollView.contentInset = UIEdgeInsets(
             top: navigationBackgroundHeight,
             left: 0,
@@ -626,10 +642,17 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewView.addSubview(brandPillView)
 
         previewContainerView.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(4)
-            make.leading.trailing.equalToSuperview().inset(16)
+            make.top.equalToSuperview().offset(Layout.previewTopSpacing)
+            if traitCollection.userInterfaceIdiom == .pad {
+                make.centerX.equalToSuperview()
+                make.leading.greaterThanOrEqualToSuperview().offset(Layout.previewHorizontalInset)
+                make.trailing.lessThanOrEqualToSuperview().inset(Layout.previewHorizontalInset)
+                previewContainerWidthConstraint = make.width.equalTo(Layout.iPadMinimumPreviewWidth).constraint
+            } else {
+                make.leading.trailing.equalToSuperview().inset(Layout.previewHorizontalInset)
+            }
             make.height.equalTo(previewContainerView.snp.width).multipliedBy(CanvasAspectRatio.fallbackHeightMultiplier)
-            make.bottom.equalToSuperview().inset(24)
+            make.bottom.equalToSuperview().inset(Layout.previewBottomSpacing)
         }
 
         remakePreviewViewConstraints()
@@ -675,6 +698,40 @@ final class WorkoutRouteShareViewController: UIViewController {
 
         configureMapRouteOverlay()
         updatePreviewModuleVisibility()
+    }
+
+    private func updateIPadPreviewContainerWidth() {
+        guard let previewContainerWidthConstraint else {
+            return
+        }
+
+        let horizontalAvailableWidth = max(
+            view.bounds.width - Layout.previewHorizontalInset * 2,
+            0
+        )
+        let reservedVerticalSpace = scrollView.contentInset.top
+            + scrollView.contentInset.bottom
+            + Layout.previewTopSpacing
+            + Layout.previewBottomSpacing
+        let verticalAvailableHeight = max(
+            view.bounds.height - reservedVerticalSpace - Layout.verticalFitSafetyMargin,
+            0
+        )
+        let widthThatFitsVertically = verticalAvailableHeight / CanvasAspectRatio.fallbackHeightMultiplier
+        let preferredWidth = max(Layout.iPadMinimumPreviewWidth, widthThatFitsVertically)
+        let targetWidth = min(
+            horizontalAvailableWidth,
+            Layout.iPadMaximumPreviewWidth,
+            preferredWidth
+        )
+
+        guard targetWidth > 0,
+              abs(targetWidth - (appliedIPadPreviewContainerWidth ?? 0)) > 0.5 else {
+            return
+        }
+
+        appliedIPadPreviewContainerWidth = targetWidth
+        previewContainerWidthConstraint.update(offset: targetWidth)
     }
 
     private func remakePreviewViewConstraints() {
