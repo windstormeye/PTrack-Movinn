@@ -234,14 +234,27 @@ final class ProSubscriptionManager {
                 throw ProSubscriptionError.purchaseFailed
             }
 
-            try await AppStore.sync()
+            // AppStore.sync() 可能因账号会话过期、网络等原因抛错（如 "Unable to Complete Request"）。
+            // 抛错时不能直接终止恢复流程：设备本地可能已有可用的交易记录，
+            // 先降级查询 entitlements，确实查不到再把 sync 的错误抛给 UI。
+            var syncError: Error?
+            do {
+                try await AppStore.sync()
+            } catch {
+                print("PTrack StoreKit: AppStore.sync failed: \(error)")
+                syncError = error
+            }
+
             let isActive = await refreshAccess()
             if isActive {
                 setDebugProAccessOverrideToUnlockedIfNeeded()
+                return ProSubscriptionRestoreResult.restored
             }
-            return isActive
-                ? ProSubscriptionRestoreResult.restored
-                : ProSubscriptionRestoreResult.noActivePurchase
+
+            if let syncError {
+                throw syncError
+            }
+            return ProSubscriptionRestoreResult.noActivePurchase
         }
         restoreTask = task
 
