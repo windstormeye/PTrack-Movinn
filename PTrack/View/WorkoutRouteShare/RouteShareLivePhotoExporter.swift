@@ -194,6 +194,393 @@ final class RouteShareLivePhotoExporter {
         }
     }
 
+    /// 逐帧渲染的动画 Live Photo(3D 轨迹导出用)。
+    /// `frameProvider` 在主线程按帧调用,progress ∈ [0, 1],返回完整画布帧。
+    func export(
+        animationFrameCount frameCount: Int,
+        frameRate: Int32,
+        stillImage: UIImage,
+        outputSize: CGSize,
+        frameProvider: @escaping @MainActor (Int, Double) -> UIImage?,
+        progressHandler: ((Double) -> Void)? = nil,
+        completion: @escaping (Result<RouteShareLivePhotoExport, Error>) -> Void
+    ) {
+        let progressReporter = ExportProgressReporter(handler: progressHandler)
+        progressReporter.report(0, force: true)
+        guard frameCount > 1, frameRate > 0 else {
+            completion(.failure(RouteShareLivePhotoExportError.renderingFailed))
+            return
+        }
+
+        do {
+            let directoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MovinnLivePhoto-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+            let photoURL = directoryURL.appendingPathComponent("movinn-live-photo.jpg")
+            let videoURL = directoryURL.appendingPathComponent("movinn-live-photo.mov")
+            let renderedVideoURL = directoryURL.appendingPathComponent("rendered-animated-live-photo.mov")
+            let contentIdentifier = UUID().uuidString
+
+            Task { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                do {
+                    try writeLivePhotoJPEG(
+                        stillImage,
+                        contentIdentifier: contentIdentifier,
+                        to: photoURL
+                    )
+                    progressReporter.report(0.04, force: true)
+                    try await writeAnimatedVideoFrames(
+                        to: renderedVideoURL,
+                        frameCount: frameCount,
+                        frameRate: frameRate,
+                        outputSize: outputSize,
+                        frameProvider: frameProvider,
+                        progressHandler: { progress in
+                            progressReporter.report(0.04 + progress * 0.84)
+                        }
+                    )
+                    progressReporter.report(0.9, force: true)
+                    try await writeLivePhotoPairedVideo(
+                        from: renderedVideoURL,
+                        to: videoURL,
+                        contentIdentifier: contentIdentifier
+                    )
+                    progressReporter.report(1, force: true)
+                    DispatchQueue.main.async {
+                        completion(.success(RouteShareLivePhotoExport(
+                            photoURL: photoURL,
+                            pairedVideoURL: videoURL,
+                            directoryURL: directoryURL
+                        )))
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: directoryURL)
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    /// 背景包含 Live Photo(单张背景或拼图任意数量 Live 图块)时的 3D 动画导出:
+    /// 各背景配对视频逐帧播放(播完定格最后一帧),同时叠加逐帧渲染的 3D 轨迹覆盖层。
+    func export(
+        animatedBackgroundSources sources: [RouteShareLivePhotoVideoSource],
+        animationFrameCount frameCount: Int,
+        frameRate: Int32,
+        stillImage: UIImage,
+        outputSize: CGSize,
+        canvasColor: UIColor = .white,
+        includesAudio: Bool = true,
+        overlayFrameProvider: @escaping @MainActor (Int, Double) -> UIImage?,
+        progressHandler: ((Double) -> Void)? = nil,
+        completion: @escaping (Result<RouteShareLivePhotoExport, Error>) -> Void
+    ) {
+        let progressReporter = ExportProgressReporter(handler: progressHandler)
+        progressReporter.report(0, force: true)
+        guard frameCount > 1, frameRate > 0, !sources.isEmpty else {
+            completion(.failure(RouteShareLivePhotoExportError.renderingFailed))
+            return
+        }
+
+        do {
+            let directoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MovinnLivePhoto-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+            let photoURL = directoryURL.appendingPathComponent("movinn-live-photo.jpg")
+            let videoURL = directoryURL.appendingPathComponent("movinn-live-photo.mov")
+            let renderedVideoURL = directoryURL.appendingPathComponent("rendered-animated-live-photo.mov")
+            let renderedVideoWithAudioURL = directoryURL.appendingPathComponent("rendered-animated-live-photo-audio.mov")
+            let contentIdentifier = UUID().uuidString
+            let outputDuration = CMTime(value: CMTimeValue(frameCount), timescale: CMTimeScale(frameRate))
+
+            Task { [weak self] in
+                guard let self else {
+                    return
+                }
+
+                do {
+                    let preparedSources = try await prepareCompositeVideoSources(
+                        sources,
+                        directoryURL: directoryURL,
+                        progressReporter: progressReporter
+                    )
+                    try writeLivePhotoJPEG(
+                        stillImage,
+                        contentIdentifier: contentIdentifier,
+                        to: photoURL
+                    )
+                    progressReporter.report(0.32, force: true)
+                    try await writeAnimatedCompositeVideoFrames(
+                        to: renderedVideoURL,
+                        backgroundSources: preparedSources,
+                        frameCount: frameCount,
+                        frameRate: frameRate,
+                        outputSize: outputSize,
+                        canvasColor: canvasColor,
+                        overlayFrameProvider: overlayFrameProvider,
+                        progressHandler: { progress in
+                            progressReporter.report(0.32 + progress * 0.5)
+                        }
+                    )
+                    progressReporter.report(0.84, force: true)
+
+                    let pairedVideoSourceURL: URL
+                    if includesAudio {
+                        pairedVideoSourceURL = try await writeCompositeAudioVideo(
+                            videoURL: renderedVideoURL,
+                            sources: preparedSources,
+                            duration: outputDuration,
+                            outputURL: renderedVideoWithAudioURL
+                        )
+                    } else {
+                        pairedVideoSourceURL = renderedVideoURL
+                    }
+                    progressReporter.report(0.92, force: true)
+                    try await writeLivePhotoPairedVideo(
+                        from: pairedVideoSourceURL,
+                        to: videoURL,
+                        contentIdentifier: contentIdentifier
+                    )
+                    progressReporter.report(1, force: true)
+                    DispatchQueue.main.async {
+                        completion(.success(RouteShareLivePhotoExport(
+                            photoURL: photoURL,
+                            pairedVideoURL: videoURL,
+                            directoryURL: directoryURL
+                        )))
+                    }
+                } catch {
+                    try? FileManager.default.removeItem(at: directoryURL)
+                    DispatchQueue.main.async {
+                        completion(.failure(error))
+                    }
+                }
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    private func writeAnimatedCompositeVideoFrames(
+        to url: URL,
+        backgroundSources: [PreparedCompositeVideoSource],
+        frameCount: Int,
+        frameRate: Int32,
+        outputSize: CGSize,
+        canvasColor: UIColor,
+        overlayFrameProvider: @escaping @MainActor (Int, Double) -> UIImage?,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws {
+        let width = max(Int(outputSize.width.rounded()), 2)
+        let height = max(Int(outputSize.height.rounded()), 2)
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
+        let outputDuration = CMTime(value: CMTimeValue(frameCount), timescale: CMTimeScale(frameRate))
+
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let videoInput = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height
+            ]
+        )
+        videoInput.expectsMediaDataInRealTime = false
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+        )
+
+        guard writer.canAdd(videoInput) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+        writer.add(videoInput)
+        guard writer.startWriting() else {
+            throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        writer.startSession(atSourceTime: .zero)
+        guard let pixelBufferPool = adaptor.pixelBufferPool else {
+            writer.cancelWriting()
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        var frameSources = makeCompositeFrameSources(
+            from: backgroundSources,
+            outputSize: outputSize,
+            outputDuration: outputDuration,
+            frameDuration: frameDuration,
+            frameRate: frameRate
+        )
+
+        do {
+            for frameIndex in 0..<frameCount {
+                while !videoInput.isReadyForMoreMediaData {
+                    if writer.status == .failed || writer.status == .cancelled {
+                        throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+                    }
+                    try await Task.sleep(nanoseconds: 2_000_000)
+                }
+
+                let progress = Double(frameIndex) / Double(frameCount - 1)
+                let overlayImage = await MainActor.run {
+                    overlayFrameProvider(frameIndex, progress)
+                }
+                guard let overlayImage else {
+                    throw RouteShareLivePhotoExportError.renderingFailed
+                }
+
+                let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(frameIndex))
+                try autoreleasepool {
+                    let frameImage = try compositeFrameImage(
+                        at: presentationTime,
+                        frameSources: &frameSources,
+                        overlayImage: overlayImage,
+                        outputSize: outputSize,
+                        canvasColor: canvasColor
+                    )
+                    let pixelBuffer = try makePixelBuffer(
+                        from: frameImage,
+                        pixelBufferPool: pixelBufferPool,
+                        width: width,
+                        height: height
+                    )
+                    guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+                        throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+                    }
+                }
+                progressHandler?(Double(frameIndex + 1) / Double(frameCount))
+            }
+        } catch {
+            writer.cancelWriting()
+            throw error
+        }
+
+        videoInput.markAsFinished()
+        await withCheckedContinuation { continuation in
+            writer.finishWriting {
+                continuation.resume()
+            }
+        }
+
+        guard writer.status == .completed else {
+            throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+        }
+    }
+
+    private func writeAnimatedVideoFrames(
+        to url: URL,
+        frameCount: Int,
+        frameRate: Int32,
+        outputSize: CGSize,
+        frameProvider: @escaping @MainActor (Int, Double) -> UIImage?,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws {
+        let width = max(Int(outputSize.width.rounded()), 2)
+        let height = max(Int(outputSize.height.rounded()), 2)
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
+
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let videoInput = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height
+            ]
+        )
+        videoInput.expectsMediaDataInRealTime = false
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            ]
+        )
+
+        guard writer.canAdd(videoInput) else {
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+        writer.add(videoInput)
+        guard writer.startWriting() else {
+            throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        writer.startSession(atSourceTime: .zero)
+        guard let pixelBufferPool = adaptor.pixelBufferPool else {
+            writer.cancelWriting()
+            throw RouteShareLivePhotoExportError.renderingFailed
+        }
+
+        do {
+            for frameIndex in 0..<frameCount {
+                while !videoInput.isReadyForMoreMediaData {
+                    if writer.status == .failed || writer.status == .cancelled {
+                        throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+                    }
+                    try await Task.sleep(nanoseconds: 2_000_000)
+                }
+
+                let progress = Double(frameIndex) / Double(frameCount - 1)
+                let frameImage = await MainActor.run {
+                    frameProvider(frameIndex, progress)
+                }
+                guard let cgImage = frameImage?.cgImage else {
+                    throw RouteShareLivePhotoExportError.renderingFailed
+                }
+
+                let presentationTime = CMTimeMultiply(frameDuration, multiplier: Int32(frameIndex))
+                try autoreleasepool {
+                    let pixelBuffer = try makePixelBuffer(
+                        from: cgImage,
+                        pixelBufferPool: pixelBufferPool,
+                        width: width,
+                        height: height
+                    )
+                    guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+                        throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+                    }
+                }
+                progressHandler?(Double(frameIndex + 1) / Double(frameCount))
+            }
+        } catch {
+            writer.cancelWriting()
+            throw error
+        }
+
+        videoInput.markAsFinished()
+        await withCheckedContinuation { continuation in
+            writer.finishWriting {
+                continuation.resume()
+            }
+        }
+
+        guard writer.status == .completed else {
+            throw writer.error ?? RouteShareLivePhotoExportError.renderingFailed
+        }
+    }
+
     func export(
         sources: [RouteShareLivePhotoVideoSource],
         stillImage: UIImage,

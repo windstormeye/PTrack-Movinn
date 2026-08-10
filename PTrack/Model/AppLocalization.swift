@@ -179,6 +179,8 @@ enum AppTextKey: String {
     case route
     case routeSlope
     case routeSlopeColorHint
+    case routeStyle3DFollowColor
+    case routeStyle3DSlopeColor
     case routeCollection
     case routeCollectionMenuTitle
     case routeCollectionEmptyMessage
@@ -554,6 +556,8 @@ enum AppLocalization {
             .route: "轨迹",
             .routeSlope: "坡度",
             .routeSlopeColorHint: "偏绿的路段平缓，偏红的路段陡峭",
+            .routeStyle3DFollowColor: "跟随颜色",
+            .routeStyle3DSlopeColor: "坡度配色",
             .routeCollection: "导入路线",
             .routeCollectionMenuTitle: "路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
@@ -807,6 +811,8 @@ enum AppLocalization {
             .route: "ルート",
             .routeSlope: "勾配",
             .routeSlopeColorHint: "緑寄りの区間は緩やかで、赤寄りの区間は急です",
+            .routeStyle3DFollowColor: "カラー連動",
+            .routeStyle3DSlopeColor: "勾配カラー",
             .routeCollection: "ルート読み込み",
             .routeCollectionMenuTitle: "ルート",
             .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
@@ -1060,6 +1066,8 @@ enum AppLocalization {
             .route: "경로",
             .routeSlope: "경사도",
             .routeSlopeColorHint: "초록색에 가까운 구간은 완만하고, 빨간색에 가까운 구간은 가파릅니다",
+            .routeStyle3DFollowColor: "색상 연동",
+            .routeStyle3DSlopeColor: "경사 색상",
             .routeCollection: "경로 가져오기",
             .routeCollectionMenuTitle: "경로",
             .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
@@ -1313,6 +1321,8 @@ enum AppLocalization {
             .route: "Route",
             .routeSlope: "Slope",
             .routeSlopeColorHint: "Greener sections are gentler; redder sections are steeper",
+            .routeStyle3DFollowColor: "Match Color",
+            .routeStyle3DSlopeColor: "Slope Colors",
             .routeCollection: "Imported Routes",
             .routeCollectionMenuTitle: "Routes",
             .routeCollectionEmptyMessage: "No imported routes yet",

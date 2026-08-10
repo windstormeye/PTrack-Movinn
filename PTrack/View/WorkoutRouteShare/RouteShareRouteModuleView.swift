@@ -10,7 +10,12 @@ import UIKit
 
 final class RouteShareRouteModuleView: UIView {
     let pathView = WorkoutRoutePathView()
+    let route3DView = RouteShare3DRouteView()
     let deleteButton = RouteShareModuleChrome.makeDeleteButton()
+
+    private(set) var displayMode: RouteShareRouteDisplayMode = .flat
+    private var configuredWorkout: TrackedWorkout?
+    private var routeColor: UIColor = .label
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -23,13 +28,72 @@ final class RouteShareRouteModuleView: UIView {
     }
 
     func configure(with workout: TrackedWorkout, color: UIColor) {
+        configuredWorkout = workout
+        routeColor = color
         pathView.configure(with: workout)
         pathView.setStrokeColor(color)
         pathView.setLineWidth(2)
+        if displayMode == .threeD {
+            route3DView.configure(with: workout)
+            route3DView.setRouteColor(color)
+        }
+    }
+
+    func setDisplayMode(_ mode: RouteShareRouteDisplayMode) {
+        guard displayMode != mode else {
+            return
+        }
+        displayMode = mode
+        switch mode {
+        case .flat:
+            pathView.isHidden = false
+            route3DView.isHidden = true
+            route3DView.setAnimationsPaused(true)
+        case .threeD:
+            if let configuredWorkout {
+                route3DView.configure(with: configuredWorkout)
+                route3DView.setRouteColor(routeColor)
+            }
+            pathView.isHidden = true
+            route3DView.isHidden = false
+            route3DView.setAnimationsPaused(false)
+        }
+    }
+
+    func setRouteColor(_ color: UIColor) {
+        routeColor = color
+        pathView.setStrokeColor(color)
+        route3DView.setRouteColor(color)
+    }
+
+    func set3DColorMode(_ mode: RouteShare3DColorMode) {
+        route3DView.setColorMode(mode)
+    }
+
+    /// 导出静态图前后调用,把 3D 视图定格为当前帧静态画面。
+    func setSnapshotCaptureActive(_ active: Bool) {
+        guard displayMode == .threeD else {
+            return
+        }
+        route3DView.setSnapshotCaptureActive(active)
+    }
+
+    var isShowing3DRoute: Bool {
+        displayMode == .threeD
+    }
+
+    func setModuleVisibilityPaused(_ paused: Bool) {
+        guard displayMode == .threeD else {
+            return
+        }
+        route3DView.setAnimationsPaused(paused)
     }
 
     func selectionChromeRect() -> CGRect {
         layoutIfNeeded()
+        if displayMode == .threeD {
+            return bounds.insetBy(dx: 6, dy: 6)
+        }
         let pathRect = pathView.renderedContentBounds()
             .map { pathView.convert($0, to: self) }
             ?? pathView.frame.insetBy(dx: 14, dy: 14)
@@ -48,9 +112,14 @@ final class RouteShareRouteModuleView: UIView {
         layer.masksToBounds = false
 
         addSubview(pathView)
+        addSubview(route3DView)
+        route3DView.isHidden = true
 
         pathView.snp.makeConstraints { make in
             make.edges.equalToSuperview().inset(12)
+        }
+        route3DView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
         }
     }
 

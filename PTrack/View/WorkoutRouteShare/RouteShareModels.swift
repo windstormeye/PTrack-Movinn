@@ -14,6 +14,16 @@ enum RouteSharePreviewModule {
     case calorie
 }
 
+enum RouteShareRouteDisplayMode {
+    case flat
+    case threeD
+}
+
+enum RouteShare3DColorMode {
+    case solid
+    case slope
+}
+
 enum RouteSharePreviewBackground {
     case map
     case photo(Int)
