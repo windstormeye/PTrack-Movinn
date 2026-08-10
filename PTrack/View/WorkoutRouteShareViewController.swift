@@ -60,7 +60,6 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let previewPlaceholderView = UIView()
     private let previewPlaceholderIconView = UIImageView()
     private let routeModuleView = RouteShareRouteModuleView()
-    private var routePathView: WorkoutRoutePathView { routeModuleView.pathView }
     private let routeSelectionBorderLayer = CAShapeLayer()
     private var routeDeleteCornerButton: UIButton { routeModuleView.deleteButton }
     private let metricsModuleView = RouteShareMetricsModuleView()
@@ -75,6 +74,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     private let toolBarView = RouteShareToolBarView()
     private var canvasColorToolButton: UIButton { toolBarView.canvasColorButton }
     private var colorToolButton: UIButton { toolBarView.colorButton }
+    private var routeStyleToolButton: UIButton { toolBarView.routeStyleButton }
     private var calorieFoodToolButton: UIButton { toolBarView.calorieFoodButton }
     private var aspectRatioToolButton: UIButton { toolBarView.aspectRatioButton }
     private var mapStyleToolButton: UIButton { toolBarView.mapStyleButton }
@@ -123,9 +123,23 @@ final class WorkoutRouteShareViewController: UIViewController {
     private var selectedPreviewModule: PreviewModule?
     private var selectedRouteColorIndex = 0 {
         didSet {
-            routePathView.setStrokeColor(effectiveRouteColor)
+            routeModuleView.setRouteColor(effectiveRouteColor)
             mapView.removeOverlays(mapView.overlays.filter { !($0 is AppMapToneTileOverlay) })
             configureMapRouteOverlay()
+        }
+    }
+    private var selectedRouteDisplayMode: RouteShareRouteDisplayMode = .flat {
+        didSet {
+            routeModuleView.setDisplayMode(selectedRouteDisplayMode)
+            routeModuleView.setRouteColor(effectiveRouteColor)
+            configureRouteStyleToolButton()
+            updatePreviewSelection()
+        }
+    }
+    private var selectedRoute3DColorMode: RouteShare3DColorMode = .solid {
+        didSet {
+            routeModuleView.set3DColorMode(selectedRoute3DColorMode)
+            configureRouteStyleToolButton()
         }
     }
     private var selectedMetricsColorIndex = 0 {
@@ -135,7 +149,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
     private var selectedRouteCustomColor: UIColor? {
         didSet {
-            routePathView.setStrokeColor(effectiveRouteColor)
+            routeModuleView.setRouteColor(effectiveRouteColor)
             mapView.removeOverlays(mapView.overlays.filter { !($0 is AppMapToneTileOverlay) })
             configureMapRouteOverlay()
         }
@@ -451,6 +465,8 @@ final class WorkoutRouteShareViewController: UIViewController {
         calorieModuleView.setCalorieFoodOption(nil)
         isBackgroundAdjustmentEnabled = false
         hasManualMapAdjustment = false
+        selectedRouteDisplayMode = .flat
+        selectedRoute3DColorMode = .solid
         selectedPreviewModule = nil
 
         AppMapStyle.apply(selectedMapStyle, to: mapView)
@@ -954,7 +970,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         aspectRatioToolButton.showsMenuAsPrimaryAction = true
         calorieFoodToolButton.showsMenuAsPrimaryAction = true
         mapStyleToolButton.showsMenuAsPrimaryAction = true
+        routeStyleToolButton.showsMenuAsPrimaryAction = true
         configureMapStyleButton()
+        configureRouteStyleToolButton()
 
         toolBarScrollView.backgroundColor = .clear
         toolBarScrollView.showsHorizontalScrollIndicator = false
@@ -1329,7 +1347,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         configuration.baseForegroundColor = AppColors.movinnGreen
         livePhotoToolButton.configuration = configuration
         livePhotoToolButton.removeTarget(nil, action: nil, for: .touchUpInside)
-        livePhotoToolButton.addTarget(self, action: #selector(playCollageLivePhoto), for: .touchUpInside)
+        livePhotoToolButton.addTarget(self, action: #selector(playLivePhotoBackground), for: .touchUpInside)
     }
 
     private func configureMapStyleButton() {
@@ -1345,6 +1363,52 @@ final class WorkoutRouteShareViewController: UIViewController {
                 self?.applyMapStyle(style)
             }
         })
+    }
+
+    private func configureRouteStyleToolButton() {
+        routeStyleToolButton.configuration = toolButtonConfiguration(
+            title: AppLocalization.text(.route),
+            imageName: selectedRouteDisplayMode == .threeD ? "view.3d" : "point.bottomleft.forward.to.point.topright.scurvepath"
+        )
+
+        let modeActions = [
+            UIAction(
+                title: "2D",
+                state: selectedRouteDisplayMode == .flat ? .on : .off
+            ) { [weak self] _ in
+                self?.selectedRouteDisplayMode = .flat
+            },
+            UIAction(
+                title: "3D",
+                state: selectedRouteDisplayMode == .threeD ? .on : .off
+            ) { [weak self] _ in
+                self?.selectedRouteDisplayMode = .threeD
+            }
+        ]
+
+        var menuChildren: [UIMenuElement] = [
+            UIMenu(options: .displayInline, children: modeActions)
+        ]
+
+        if selectedRouteDisplayMode == .threeD {
+            let colorModeActions = [
+                UIAction(
+                    title: AppLocalization.text(.routeStyle3DFollowColor),
+                    state: selectedRoute3DColorMode == .solid ? .on : .off
+                ) { [weak self] _ in
+                    self?.selectedRoute3DColorMode = .solid
+                },
+                UIAction(
+                    title: AppLocalization.text(.routeStyle3DSlopeColor),
+                    state: selectedRoute3DColorMode == .slope ? .on : .off
+                ) { [weak self] _ in
+                    self?.selectedRoute3DColorMode = .slope
+                }
+            ]
+            menuChildren.append(UIMenu(options: .displayInline, children: colorModeActions))
+        }
+
+        routeStyleToolButton.menu = UIMenu(children: menuChildren)
     }
 
     private func toolButtonConfiguration(title: String, imageName: String) -> UIButton.Configuration {
@@ -2242,17 +2306,19 @@ final class WorkoutRouteShareViewController: UIViewController {
         previewLivePhotoView.startPlayback(with: .full)
     }
 
-    @objc private func playCollageLivePhoto() {
-        guard case .collage = previewBackground else {
-            return
+    @objc private func playLivePhotoBackground() {
+        switch previewBackground {
+        case .photo:
+            replayPreviewLivePhoto()
+        case .collage:
+            let livePhotoSources = selectedCollageLivePhotoSources()
+            guard !livePhotoSources.isEmpty else {
+                return
+            }
+            requestCollageLivePhotoPlayback(for: livePhotoSources)
+        case .map:
+            break
         }
-
-        let livePhotoSources = selectedCollageLivePhotoSources()
-        guard !livePhotoSources.isEmpty else {
-            return
-        }
-
-        requestCollageLivePhotoPlayback(for: livePhotoSources)
     }
 
     private func selectMapBackground(usesDefaultMapAspectRatio: Bool = true) {
@@ -3085,6 +3151,7 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
 
         routeModuleView.isHidden = !isPhotoBackground || !isRouteModuleEnabled
+        routeModuleView.setModuleVisibilityPaused(routeModuleView.isHidden)
         metricsModuleView.isHidden = !isMetricsModuleEnabled
         calorieModuleView.isHidden = !isCalorieModuleEnabled
         if selectedPreviewModule == .route, routeModuleView.isHidden {
@@ -3119,7 +3186,7 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     private func updateMapPreviewContentColors() {
-        routePathView.setStrokeColor(effectiveRouteColor)
+        routeModuleView.setRouteColor(effectiveRouteColor)
         applyMetricsColor()
         refreshMapRouteOverlayColor()
         configureColorToolButton()
@@ -3194,7 +3261,9 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
 
         canvasColorToolButton.isHidden = false
-        colorToolButton.isHidden = !selectedPreviewModuleSupportsColor
+        let isRoute3DSelected = selectedPreviewModule == .route && selectedRouteDisplayMode == .threeD
+        colorToolButton.isHidden = !selectedPreviewModuleSupportsColor || isRoute3DSelected
+        routeStyleToolButton.isHidden = selectedPreviewModule != .route || routeModuleView.isHidden
         mapStyleToolButton.isHidden = !isMapBackground
         calorieFoodToolButton.isHidden = false
         collageToolButton.isHidden = true
@@ -3202,7 +3271,16 @@ final class WorkoutRouteShareViewController: UIViewController {
         deleteToolButton.isHidden = true
         addRouteToolButton.isHidden = isMapBackground || isRouteModuleEnabled
         addMetricsToolButton.isHidden = isMetricsModuleEnabled
-        livePhotoToolButton.isHidden = !(isCollageBackground && !selectedCollageLivePhotoSources().isEmpty)
+        let isSingleLivePhotoBackground: Bool
+        if case .photo(let index) = previewBackground,
+           photoItems.indices.contains(index),
+           photoItems[index].isLivePhoto {
+            isSingleLivePhotoBackground = true
+        } else {
+            isSingleLivePhotoBackground = false
+        }
+        livePhotoToolButton.isHidden = !(isSingleLivePhotoBackground
+            || (isCollageBackground && !selectedCollageLivePhotoSources().isEmpty))
         configureCollageToolButton()
         configureLivePhotoToolButton()
 
@@ -3210,6 +3288,7 @@ final class WorkoutRouteShareViewController: UIViewController {
             aspectRatioToolButton,
             canvasColorToolButton,
             colorToolButton,
+            routeStyleToolButton,
             calorieFoodToolButton,
             mapStyleToolButton,
             collageToolButton,
@@ -3295,6 +3374,17 @@ final class WorkoutRouteShareViewController: UIViewController {
     }
 
     @objc private func sharePreviewImage() {
+        if selectedRouteDisplayMode == .threeD, isRouteModuleEnabled, !routeModuleView.isHidden {
+            if let livePhotoSource = selectedLivePhotoExportSource(),
+               requiresMultiLivePhotoExportUnlock(for: livePhotoSource) {
+                requestMultiLivePhotoExportAccess { [weak self] in
+                    self?.sharePreviewImage()
+                }
+                return
+            }
+            exportAndShareAnimated3DLivePhoto()
+            return
+        }
         if let livePhotoSource = selectedLivePhotoExportSource() {
             if requiresMultiLivePhotoExportUnlock(for: livePhotoSource) {
                 requestMultiLivePhotoExportAccess { [weak self] in
@@ -3504,6 +3594,331 @@ final class WorkoutRouteShareViewController: UIViewController {
         }
     }
 
+    /// 3D 轨迹动画 Live Photo:旋转一圈 + 圆点从起点走到终点,时长打满上限。
+    private enum Route3DLivePhotoSpec {
+        static let duration: TimeInterval = 6
+        static let frameRate: Int32 = 30
+        static var frameCount: Int { max(Int(duration * Double(frameRate)), 2) }
+    }
+
+    private enum Animated3DBackgroundVideoMode {
+        case none
+        case photo(PHAsset)
+        case collage([(tileIndex: Int, asset: PHAsset)])
+    }
+
+    private func animated3DBackgroundVideoMode() -> Animated3DBackgroundVideoMode {
+        switch previewBackground {
+        case .photo(let index):
+            guard photoItems.indices.contains(index),
+                  case .routeMedia(let mediaItem) = photoItems[index],
+                  mediaItem.isLivePhoto else {
+                return .none
+            }
+            return .photo(mediaItem.asset)
+        case .collage:
+            let sources = selectedCollageLivePhotoSources()
+                .map { (tileIndex: $0.tileIndex, asset: $0.asset) }
+            return sources.isEmpty ? .none : .collage(sources)
+        case .map:
+            return .none
+        }
+    }
+
+    private func exportAndShareAnimated3DLivePhoto() {
+        selectedPreviewModule = nil
+        updatePreviewSelection()
+        showExportLoading(text: AppLocalization.text(.livePhotoSaving), progress: 0)
+        view.layoutIfNeeded()
+        let outputSize = RouteSharePreviewRenderer.outputPixelSize(for: previewView.bounds.size)
+        let route3DView = routeModuleView.route3DView
+        let backgroundMode = animated3DBackgroundVideoMode()
+
+        // 逐帧渲染会实时改动预览层级,先盖一张当前画面的快照,导出结束再移除。
+        var exportCoverView: UIView?
+        if let coverView = previewView.snapshotView(afterScreenUpdates: false) {
+            coverView.frame = previewView.frame
+            previewView.superview?.addSubview(coverView)
+            exportCoverView = coverView
+        }
+
+        route3DView.beginExportAnimationControl()
+        setSelectionChromeHidden(true)
+        let collageLivePlaybackWasHidden = collageView.isLivePhotoPlaybackHiddenForRendering
+        if case .collage = backgroundMode {
+            collageView.setLivePhotoPlaybackHiddenForRendering(true)
+        }
+        preparePreviewForExportCapture()
+
+        // === 一次性静态图层捕捉:帧循环内不再触碰 UIKit 层级,只做 CG 合成 ===
+        let outputScale = outputSize.width / max(previewView.bounds.width, 1)
+        let overlaySiblings: [UIView] = [metricsModuleView, calorieModuleView, brandPillView]
+        let routeZIndex = previewView.subviews.firstIndex(of: routeModuleView) ?? 0
+        let belowSiblings = overlaySiblings.filter { sibling in
+            (previewView.subviews.firstIndex(of: sibling) ?? 0) < routeZIndex
+        }
+        let aboveSiblings = overlaySiblings.filter { sibling in
+            (previewView.subviews.firstIndex(of: sibling) ?? 0) > routeZIndex
+        }
+
+        func capturePreviewImage(opaque: Bool, hiding viewsToHide: [UIView]) -> UIImage {
+            let hiddenStates = viewsToHide.map(\.isHidden)
+            viewsToHide.forEach { $0.isHidden = true }
+            let previousColor = previewView.backgroundColor
+            if !opaque {
+                previewView.backgroundColor = .clear
+            }
+            preparePreviewForExportCapture()
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = opaque
+            let image = UIGraphicsImageRenderer(size: outputSize, format: format).image { _ in
+                previewView.drawHierarchy(
+                    in: CGRect(origin: .zero, size: outputSize),
+                    afterScreenUpdates: false
+                )
+            }
+            zip(viewsToHide, hiddenStates).forEach { view, wasHidden in
+                view.isHidden = wasHidden
+            }
+            previewView.backgroundColor = previousColor
+            return image
+        }
+
+        // 底图:背景 + 画布,不含任何模块(封面静帧的背景也用它)。
+        let baseImage = capturePreviewImage(
+            opaque: true,
+            hiding: [routeModuleView] + overlaySiblings
+        )
+
+        // 有 Live 背景时改为覆盖层合成;无 Live 背景同样隐藏背景层,统一走静态图层合成。
+        var videoSources: [RouteShareLivePhotoVideoSource] = []
+        var restoreBackgroundSession: () -> Void = {}
+        let staticBackgroundViews: [UIView] = [
+            mapContainerView,
+            previewImageView,
+            previewLivePhotoView,
+            collageView,
+            previewPlaceholderView
+        ]
+
+        switch backgroundMode {
+        case .none, .photo:
+            if case .photo(let asset) = backgroundMode {
+                videoSources = [RouteShareLivePhotoVideoSource(
+                    asset: asset,
+                    backgroundTransform: currentBackgroundRenderTransform(outputSize: outputSize),
+                    clippingPath: nil
+                )]
+            }
+            let backgroundHiddenStates = staticBackgroundViews.map(\.isHidden)
+            let previousPreviewBackgroundColor = previewView.backgroundColor
+            staticBackgroundViews.forEach { $0.isHidden = true }
+            previewView.backgroundColor = .clear
+            preparePreviewForExportCapture()
+            restoreBackgroundSession = { [weak self] in
+                guard let self else {
+                    return
+                }
+                zip(staticBackgroundViews, backgroundHiddenStates).forEach { view, isHidden in
+                    view.isHidden = isHidden
+                }
+                previewView.backgroundColor = previousPreviewBackgroundColor
+            }
+        case .collage(let tiles):
+            videoSources = tiles.map { tile in
+                RouteShareLivePhotoVideoSource(
+                    asset: tile.asset,
+                    backgroundTransform: collageLivePhotoBackgroundTransform(
+                        asset: tile.asset,
+                        tileIndex: tile.tileIndex,
+                        outputSize: outputSize
+                    ),
+                    clippingPath: collageLivePhotoClippingPath(
+                        tileIndex: tile.tileIndex,
+                        outputSize: outputSize
+                    )
+                )
+            }
+            // 静态图块保留在覆盖层里,只隐藏 Live 图块,让配对视频从洞里透出来。
+            let previousPreviewBackgroundColor = previewView.backgroundColor
+            let previousCollageBackgroundColor = collageView.backgroundColor
+            let tileHiddenStates = tiles.map { tile in
+                (tile.tileIndex, collageView.isTileHiddenForRendering(at: tile.tileIndex))
+            }
+            collageView.backgroundColor = .clear
+            previewView.backgroundColor = .clear
+            tiles.forEach { tile in
+                collageView.setTileHiddenForRendering(at: tile.tileIndex, hidden: true)
+            }
+            preparePreviewForExportCapture()
+            restoreBackgroundSession = { [weak self] in
+                guard let self else {
+                    return
+                }
+                tileHiddenStates.forEach { tileIndex, wasHidden in
+                    self.collageView.setTileHiddenForRendering(at: tileIndex, hidden: wasHidden)
+                }
+                collageView.backgroundColor = previousCollageBackgroundColor
+                previewView.backgroundColor = previousPreviewBackgroundColor
+            }
+        }
+
+        // 覆盖层按 3D 模块层级切成上下两张,保持模块间遮挡关系;拼图静态图块归下层。
+        let belowOverlayImage = capturePreviewImage(
+            opaque: false,
+            hiding: [routeModuleView] + aboveSiblings
+        )
+        let aboveOverlayImage = capturePreviewImage(
+            opaque: false,
+            hiding: [routeModuleView, collageView] + belowSiblings
+        )
+
+        // 3D 模块几何信息(导出期间不变),离屏渲染按导出分辨率出图。
+        let moduleCenter = routeModuleView.center
+        let moduleTransform = routeModuleView.transform
+        let moduleBoundsSize = routeModuleView.bounds.size
+        let moduleTransformScale = sqrt(
+            moduleTransform.a * moduleTransform.a + moduleTransform.c * moduleTransform.c
+        )
+        var threeDPixelSize = CGSize(
+            width: moduleBoundsSize.width * outputScale * moduleTransformScale,
+            height: moduleBoundsSize.height * outputScale * moduleTransformScale
+        )
+        let longestSide = max(threeDPixelSize.width, threeDPixelSize.height)
+        if longestSide > 2200 {
+            let shrink = 2200 / longestSide
+            threeDPixelSize = CGSize(
+                width: threeDPixelSize.width * shrink,
+                height: threeDPixelSize.height * shrink
+            )
+        }
+
+        let renderFrame: (Double, Bool) -> UIImage? = { [weak self] progress, includeBase in
+            guard self != nil else {
+                return nil
+            }
+            return autoreleasepool {
+                route3DView.setExportProgress(
+                    progress,
+                    elapsedSeconds: progress * Route3DLivePhotoSpec.duration
+                )
+                guard let threeDImage = route3DView.renderExportFrame(pixelSize: threeDPixelSize) else {
+                    return nil
+                }
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = 1
+                format.opaque = includeBase
+                return UIGraphicsImageRenderer(size: outputSize, format: format).image { rendererContext in
+                    let fullRect = CGRect(origin: .zero, size: outputSize)
+                    if includeBase {
+                        baseImage.draw(in: fullRect)
+                    }
+                    belowOverlayImage.draw(in: fullRect)
+
+                    let cgContext = rendererContext.cgContext
+                    cgContext.saveGState()
+                    cgContext.translateBy(
+                        x: moduleCenter.x * outputScale,
+                        y: moduleCenter.y * outputScale
+                    )
+                    cgContext.concatenate(moduleTransform)
+                    let drawSize = CGSize(
+                        width: moduleBoundsSize.width * outputScale,
+                        height: moduleBoundsSize.height * outputScale
+                    )
+                    threeDImage.draw(in: CGRect(
+                        x: -drawSize.width / 2,
+                        y: -drawSize.height / 2,
+                        width: drawSize.width,
+                        height: drawSize.height
+                    ))
+                    cgContext.restoreGState()
+
+                    aboveOverlayImage.draw(in: fullRect)
+                }
+            }
+        }
+
+        // 封面静帧 = 底图 + 3D 起点帧。
+        let stillImage = renderFrame(0, true) ?? UIImage()
+
+        let finishExportSession: () -> Void = { [weak self] in
+            guard let self else {
+                return
+            }
+            restoreBackgroundSession()
+            collageView.setLivePhotoPlaybackHiddenForRendering(collageLivePlaybackWasHidden)
+            route3DView.endExportAnimationControl()
+            setSelectionChromeHidden(false)
+            updatePreviewSelection()
+            exportCoverView?.removeFromSuperview()
+        }
+
+        let progressHandler: (Double) -> Void = { [weak self] progress in
+            self?.exportLoadingView.update(progress: progress * 0.94)
+        }
+        let completion: (Result<RouteShareLivePhotoExport, Error>) -> Void = { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            finishExportSession()
+            switch result {
+            case .success(let livePhotoExport):
+                exportLoadingView.update(progress: 0.97)
+                RouteSharePhotoLibrarySaver.saveLivePhoto(livePhotoExport) { [weak self] saveResult in
+                    guard let self else {
+                        return
+                    }
+
+                    try? FileManager.default.removeItem(at: livePhotoExport.directoryURL)
+                    switch saveResult {
+                    case .success:
+                        exportLoadingView.update(progress: 1)
+                        hideExportLoading()
+                        showSavedToPhotosAlert()
+                    case .failure(let error):
+                        hideExportLoading()
+                        showAlert(title: AppLocalization.text(.share), message: detailedErrorMessage(error))
+                    }
+                }
+            case .failure(let error):
+                hideExportLoading()
+                showAlert(title: AppLocalization.text(.share), message: detailedErrorMessage(error))
+            }
+        }
+
+        if videoSources.isEmpty {
+            livePhotoExporter.export(
+                animationFrameCount: Route3DLivePhotoSpec.frameCount,
+                frameRate: Route3DLivePhotoSpec.frameRate,
+                stillImage: stillImage,
+                outputSize: outputSize,
+                frameProvider: { _, progress in
+                    renderFrame(progress, true)
+                },
+                progressHandler: progressHandler,
+                completion: completion
+            )
+        } else {
+            livePhotoExporter.export(
+                animatedBackgroundSources: videoSources,
+                animationFrameCount: Route3DLivePhotoSpec.frameCount,
+                frameRate: Route3DLivePhotoSpec.frameRate,
+                stillImage: stillImage,
+                outputSize: outputSize,
+                canvasColor: selectedCanvasColor,
+                includesAudio: true,
+                overlayFrameProvider: { _, progress in
+                    renderFrame(progress, false)
+                },
+                progressHandler: progressHandler,
+                completion: completion
+            )
+        }
+    }
+
     private func livePhotoStillImage(outputSize: CGSize) -> UIImage {
         let shouldHideCollagePlayback: Bool
         if case .collage = previewBackground {
@@ -3706,6 +4121,7 @@ final class WorkoutRouteShareViewController: UIViewController {
 
     private func setSelectionChromeHidden(_ hidden: Bool) {
         isExportChromeHidden = hidden
+        routeModuleView.setSnapshotCaptureActive(hidden)
         if hidden {
             [routeSelectionBorderLayer, metricsSelectionBorderLayer, calorieSelectionBorderLayer].forEach { borderLayer in
                 borderLayer.isHidden = true

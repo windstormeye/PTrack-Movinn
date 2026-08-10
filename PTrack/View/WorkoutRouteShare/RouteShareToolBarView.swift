@@ -11,6 +11,7 @@ import UIKit
 final class RouteShareToolBarView: UIView {
     let canvasColorButton = UIButton(type: .system)
     let colorButton = UIButton(type: .system)
+    let routeStyleButton = UIButton(type: .system)
     let calorieFoodButton = UIButton(type: .system)
     let aspectRatioButton = UIButton(type: .system)
     let mapStyleButton = UIButton(type: .system)
@@ -42,6 +43,7 @@ final class RouteShareToolBarView: UIView {
             aspectRatioButton,
             canvasColorButton,
             colorButton,
+            routeStyleButton,
             calorieFoodButton,
             mapStyleButton,
             collageButton,
@@ -68,6 +70,7 @@ final class RouteShareToolBarView: UIView {
             aspectRatioButton,
             canvasColorButton,
             colorButton,
+            routeStyleButton,
             calorieFoodButton,
             mapStyleButton,
             collageButton,
