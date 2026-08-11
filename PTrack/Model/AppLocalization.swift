@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum AppLanguage: String, CaseIterable {
+nonisolated enum AppLanguage: String, CaseIterable, Sendable {
     case chinese = "zh-Hans"
     case japanese = "ja"
     case korean = "ko"
@@ -27,7 +27,7 @@ enum AppLanguage: String, CaseIterable {
     }
 }
 
-enum AppTextKey: String {
+nonisolated enum AppTextKey: String, Sendable {
     case all
     case applyToAll
     case appleFitnessDownloadCTA
@@ -150,6 +150,7 @@ enum AppTextKey: String {
     case privacyPolicy
     case proCodeRedemption
     case proFeatureHeatmap
+    case proFeatureWellnessRecap
     case proFeatureICloudRouteSync
     case proFeatureMultiLivePhotoExport
     case proFeatureMoreComing
@@ -181,6 +182,207 @@ enum AppTextKey: String {
     case routeSlopeColorHint
     case routeStyle3DFollowColor
     case routeStyle3DSlopeColor
+    case wellnessRecapSheetTitle
+    case wellnessHeaderTip
+    case wellnessSummaryRisk
+    case wellnessSummaryAttention
+    case wellnessSummaryGood
+    case wellnessSummaryCold
+    case wellnessFactSleepFormat
+    case wellnessFactStepsFormat
+    case wellnessFactWorkoutsFormat
+    case wellnessFactExerciseFormat
+    case wellnessCoverageNoteFormat
+    case wellnessDisclaimer
+    case wellnessAuthPromptTitle
+    case wellnessAuthPromptBody
+    case wellnessAuthButton
+    case wellnessLoading
+    case wellnessEmptyBody
+    case wellnessAdviceSleepDebtTitle
+    case wellnessAdviceSleepDebtEvidence
+    case wellnessAdviceSleepDebtBody
+    case wellnessAdviceSleepIrregularTitle
+    case wellnessAdviceSleepIrregularEvidence
+    case wellnessAdviceSleepIrregularBody
+    case wellnessAdviceSleepShortTitle
+    case wellnessAdviceSleepShortEvidence
+    case wellnessAdviceSleepShortBody
+    case wellnessAdviceWeekendJetlagTitle
+    case wellnessAdviceWeekendJetlagEvidence
+    case wellnessAdviceWeekendJetlagBody
+    case wellnessAdviceSleepStableTitle
+    case wellnessAdviceSleepStableEvidence
+    case wellnessAdviceSleepStableBody
+    case wellnessAdviceLoadSpikeTitle
+    case wellnessAdviceLoadSpikeEvidence
+    case wellnessAdviceLoadSpikeBody
+    case wellnessAdviceLoadDropTitle
+    case wellnessAdviceLoadDropEvidence
+    case wellnessAdviceLoadDropBody
+    case wellnessAdviceSedentaryTitle
+    case wellnessAdviceSedentaryEvidence
+    case wellnessAdviceSedentaryBody
+    case wellnessAdviceRecoveryTitle
+    case wellnessAdviceRecoveryEvidence
+    case wellnessAdviceRecoveryBody
+    case wellnessAdviceRecoveryHRVSuffix
+    case wellnessAdviceActiveWeekTitle
+    case wellnessAdviceActiveWeekEvidence
+    case wellnessAdviceActiveWeekBody
+    case wellnessRangeThreeDays
+    case wellnessRangeWeek
+    case wellnessRangeMonth
+    case wellnessRangeHalfYear
+    case wellnessRangeYear
+    case wellnessSectionFacts
+    case wellnessSectionTrends
+    case wellnessSectionAdvice
+    case wellnessChartSleep
+    case wellnessChartSteps
+    case wellnessChartLoad
+    case wellnessTableHeaderMetric
+    case wellnessTableHeaderCurrent
+    case wellnessTableHeaderReference
+    case wellnessTableHeaderChange
+    case wellnessMetricSleep
+    case wellnessMetricSteps
+    case wellnessMetricExercise
+    case wellnessMetricWorkouts
+    case wellnessMetricDistance
+    case wellnessMetricRHR
+    case wellnessMetricHRV
+    case wellnessAdviceSleepTrendUpTitle
+    case wellnessAdviceSleepTrendUpEvidence
+    case wellnessAdviceSleepTrendUpBody
+    case wellnessAdviceSleepTrendDownTitle
+    case wellnessAdviceSleepTrendDownEvidence
+    case wellnessAdviceSleepTrendDownBody
+    case wellnessAdviceVolumeUpTitle
+    case wellnessAdviceVolumeUpEvidence
+    case wellnessAdviceVolumeUpBody
+    case wellnessAdviceVolumeDownTitle
+    case wellnessAdviceVolumeDownEvidence
+    case wellnessAdviceVolumeDownBody
+    case wellnessAdviceConsistencyGoodTitle
+    case wellnessAdviceConsistencyGoodEvidence
+    case wellnessAdviceConsistencyGoodBody
+    case wellnessAdviceConsistencyLowTitle
+    case wellnessAdviceConsistencyLowEvidence
+    case wellnessAdviceConsistencyLowBody
+    case wellnessAdvicePBTitle
+    case wellnessAdvicePBEvidence
+    case wellnessAdvicePBBody
+    case wellnessAdviceDaylightTitle
+    case wellnessAdviceDaylightEvidence
+    case wellnessAdviceDaylightBody
+    case wellnessAdviceMidpointLateTitle
+    case wellnessAdviceMidpointLateEvidence
+    case wellnessAdviceMidpointLateBody
+    case wellnessAdviceDeepSleepTitle
+    case wellnessAdviceDeepSleepEvidence
+    case wellnessAdviceDeepSleepBody
+    case wellnessAdviceRHRImprovedTitle
+    case wellnessAdviceRHRImprovedEvidence
+    case wellnessAdviceRHRImprovedBody
+    case wellnessAdviceStepsUpTitle
+    case wellnessAdviceStepsUpEvidence
+    case wellnessAdviceStepsUpBody
+    case wellnessAdviceStepsDownTitle
+    case wellnessAdviceStepsDownEvidence
+    case wellnessAdviceStepsDownBody
+    case wellnessAdviceHabitDayTitle
+    case wellnessAdviceHabitDayEvidence
+    case wellnessAdviceHabitDayBody
+    case wellnessAdviceStepsConsistentTitle
+    case wellnessAdviceStepsConsistentEvidence
+    case wellnessAdviceStepsConsistentBody
+    case wellnessAdviceHRVHighTitle
+    case wellnessAdviceHRVHighEvidence
+    case wellnessAdviceHRVHighBody
+    case wellnessAdviceWorkoutGapTitle
+    case wellnessAdviceWorkoutGapEvidence
+    case wellnessAdviceWorkoutGapBody
+    case wellnessAdviceStreakTitle
+    case wellnessAdviceStreakEvidence
+    case wellnessAdviceStreakBody
+    case wellnessAdviceRHRTrendGoodTitle
+    case wellnessAdviceRHRTrendGoodEvidence
+    case wellnessAdviceRHRTrendGoodBody
+    case wellnessAdviceRHRTrendBadTitle
+    case wellnessAdviceRHRTrendBadEvidence
+    case wellnessAdviceRHRTrendBadBody
+    case wellnessAdviceCarbTitle
+    case wellnessAdviceCarbEvidence
+    case wellnessAdviceCarbBody
+    case wellnessAdviceProteinTitle
+    case wellnessAdviceProteinEvidence
+    case wellnessAdviceProteinBody
+    case wellnessAdviceHydrationTitle
+    case wellnessAdviceHydrationEvidence
+    case wellnessAdviceHydrationEvidenceLong
+    case wellnessAdviceHydrationBody
+    case wellnessAdviceLateMealTitle
+    case wellnessAdviceLateMealEvidence
+    case wellnessAdviceLateMealBody
+    case wellnessAdviceLightWeekTitle
+    case wellnessAdviceLightWeekEvidence
+    case wellnessAdviceLightWeekBody
+    case wellnessAdviceSleepRoutineTitle
+    case wellnessAdviceSleepRoutineEvidence
+    case wellnessAdviceSleepRoutineBody
+    case wellnessAdviceMixTitle
+    case wellnessAdviceMixEvidence
+    case wellnessAdviceMixBody
+    case wellnessAdviceRestDayTitle
+    case wellnessAdviceRestDayEvidence
+    case wellnessAdviceRestDayBody
+    case wellnessAdviceCarbNowTitle
+    case wellnessAdviceCarbNowEvidence
+    case wellnessAdviceCarbNowBody
+    case wellnessAdviceProteinNowTitle
+    case wellnessAdviceProteinNowEvidence
+    case wellnessAdviceProteinNowBody
+    case wellnessAdviceFuelGrowthTitle
+    case wellnessAdviceFuelGrowthEvidence
+    case wellnessAdviceFuelGrowthBody
+    case wellnessAdviceNutritionBaseTitle
+    case wellnessAdviceNutritionBaseEvidence
+    case wellnessAdviceNutritionBaseBody
+    case wellnessAdviceNutritionBaseYearBody
+    case wellnessAdviceMilestoneTitle
+    case wellnessAdviceMilestoneEvidence
+    case wellnessAdviceMilestoneBody
+    case wellnessAdviceMilestoneYearBody
+    case wellnessAdviceSeasonalTitle
+    case wellnessAdviceSeasonalEvidence
+    case wellnessAdviceSeasonalBody
+    case wellnessAdviceTonightTitle
+    case wellnessAdviceTonightEvidence
+    case wellnessAdviceTonightBody
+    case wellnessTipSleep1
+    case wellnessTipSleep2
+    case wellnessTipSleep3
+    case wellnessTipSleep4
+    case wellnessTipSleep5
+    case wellnessTipActivity1
+    case wellnessTipActivity2
+    case wellnessTipActivity3
+    case wellnessTipActivity4
+    case wellnessTipActivity5
+    case wellnessTipNutrition1
+    case wellnessTipNutrition2
+    case wellnessTipNutrition3
+    case wellnessTipNutrition4
+    case wellnessTipNutrition5
+    case wellnessTipRecovery1
+    case wellnessTipRecovery2
+    case wellnessTipRecovery3
+    case wellnessTipRecovery4
+    case wellnessTipPositive1
+    case wellnessTipPositive2
+    case wellnessTipPositive3
+    case wellnessTipPositive4
     case routeCollection
     case routeCollectionMenuTitle
     case routeCollectionEmptyMessage
@@ -287,9 +489,9 @@ final class AppLanguageStore {
     static let shared = AppLanguageStore()
     static let languageDidChangeNotification = Notification.Name("studio.pj.PTrack.languageDidChange")
 
-    private static let fallbackLanguage: AppLanguage = .chinese
-    private static let appleLanguagesKey = "AppleLanguages"
-    private static let legacyLanguageKey = "studio.pj.PTrack.appLanguage"
+    private nonisolated static let fallbackLanguage: AppLanguage = .chinese
+    private nonisolated static let appleLanguagesKey = "AppleLanguages"
+    private nonisolated static let legacyLanguageKey = "studio.pj.PTrack.appLanguage"
 
     private let defaults: UserDefaults
     private var lastResolvedLanguage: AppLanguage
@@ -333,7 +535,7 @@ final class AppLanguageStore {
         return true
     }
 
-    private static func resolveLanguage(in defaults: UserDefaults) -> AppLanguage {
+    nonisolated static func resolveLanguage(in defaults: UserDefaults) -> AppLanguage {
         if let language = preferredSupportedLanguage(from: defaults.array(forKey: appleLanguagesKey) as? [String]) {
             return language
         }
@@ -354,11 +556,11 @@ final class AppLanguageStore {
         return fallbackLanguage
     }
 
-    private static func preferredSupportedLanguage(from identifiers: [String]?) -> AppLanguage? {
+    private nonisolated static func preferredSupportedLanguage(from identifiers: [String]?) -> AppLanguage? {
         identifiers?.compactMap { language(for: $0) }.first
     }
 
-    private static func language(for identifier: String) -> AppLanguage? {
+    private nonisolated static func language(for identifier: String) -> AppLanguage? {
         let normalizedIdentifier = Locale(identifier: identifier)
             .identifier
             .replacingOccurrences(of: "_", with: "-")
@@ -390,15 +592,18 @@ final class AppLanguageStore {
     }
 }
 
-enum AppLocalization {
-    static func text(_ key: AppTextKey, language: AppLanguage = AppLanguageStore.shared.language) -> String {
+nonisolated enum AppLocalization {
+    static func text(
+        _ key: AppTextKey,
+        language: AppLanguage = AppLanguageStore.resolveLanguage(in: .standard)
+    ) -> String {
         translations[language]?[key] ?? translations[.chinese]?[key] ?? key.rawValue
     }
 
     static func format(
         _ key: AppTextKey,
         _ arguments: CVarArg...,
-        language: AppLanguage = AppLanguageStore.shared.language
+        language: AppLanguage = AppLanguageStore.resolveLanguage(in: .standard)
     ) -> String {
         String(format: text(key, language: language), arguments: arguments)
     }
@@ -527,6 +732,7 @@ enum AppLocalization {
             .privacyPolicy: "隐私政策",
             .proCodeRedemption: "代码兑换",
             .proFeatureHeatmap: "查看运动路线热图",
+            .proFeatureWellnessRecap: "根据你的运动数据提供指导建议",
             .proFeatureICloudRouteSync: "iCloud 同步导入路线",
             .proFeatureMultiLivePhotoExport: "支持轨迹多动图\n分享",
             .proFeatureMoreComing: "未来更多功能",
@@ -558,6 +764,207 @@ enum AppLocalization {
             .routeSlopeColorHint: "偏绿的路段平缓，偏红的路段陡峭",
             .routeStyle3DFollowColor: "跟随颜色",
             .routeStyle3DSlopeColor: "坡度配色",
+            .wellnessRecapSheetTitle: "指导建议",
+            .wellnessHeaderTip: "👆 点这里，看看基于你运动数据的指导建议",
+            .wellnessRangeThreeDays: "三天",
+            .wellnessRangeWeek: "一周",
+            .wellnessRangeMonth: "一月",
+            .wellnessRangeHalfYear: "半年",
+            .wellnessRangeYear: "一年",
+            .wellnessSectionFacts: "数据概览",
+            .wellnessSectionTrends: "趋势",
+            .wellnessSectionAdvice: "建议",
+            .wellnessChartSleep: "睡眠时长（小时）",
+            .wellnessChartSteps: "每日步数",
+            .wellnessChartLoad: "运动负荷",
+            .wellnessTableHeaderMetric: "指标",
+            .wellnessTableHeaderCurrent: "本期",
+            .wellnessTableHeaderReference: "参照",
+            .wellnessTableHeaderChange: "变化",
+            .wellnessMetricSleep: "睡眠时长",
+            .wellnessMetricSteps: "日均步数",
+            .wellnessMetricExercise: "锻炼分钟",
+            .wellnessMetricWorkouts: "运动次数",
+            .wellnessMetricDistance: "运动距离",
+            .wellnessMetricRHR: "静息心率",
+            .wellnessMetricHRV: "心率变异性",
+            .wellnessAdviceSleepTrendUpTitle: "睡眠在变好",
+            .wellnessAdviceSleepTrendUpEvidence: "本期平均比上期多睡约 %@ 小时",
+            .wellnessAdviceSleepTrendUpBody: "无论是刻意调整还是节奏使然，这个方向是对的，保持住。",
+            .wellnessAdviceSleepTrendDownTitle: "睡眠在变少",
+            .wellnessAdviceSleepTrendDownEvidence: "本期平均比上期少睡约 %@ 小时",
+            .wellnessAdviceSleepTrendDownBody: "持续数周的下滑比单日波动更值得关注，回想一下这段时间作息发生了什么变化。",
+            .wellnessAdviceVolumeUpTitle: "运动量在上升",
+            .wellnessAdviceVolumeUpEvidence: "本期锻炼总量比上期多约 %d%%",
+            .wellnessAdviceVolumeUpBody: "总量上升的同时注意循序渐进，把恢复日留够。",
+            .wellnessAdviceVolumeDownTitle: "运动量在回落",
+            .wellnessAdviceVolumeDownEvidence: "本期锻炼总量比上期少约 %d%%",
+            .wellnessAdviceVolumeDownBody: "回落本身不是问题，关键是别让间隔拉太长；先安排一次轻松的即可。",
+            .wellnessAdviceConsistencyGoodTitle: "运动非常规律",
+            .wellnessAdviceConsistencyGoodEvidence: "%d/%d 周有运动记录",
+            .wellnessAdviceConsistencyGoodBody: "规律性是长期收益的核心，比单次强度更重要，继续保持。",
+            .wellnessAdviceConsistencyLowTitle: "规律性可以更好",
+            .wellnessAdviceConsistencyLowEvidence: "只有 %d/%d 周有运动记录",
+            .wellnessAdviceConsistencyLowBody: "比起偶尔的大强度，每周固定一个时间段的小运动更容易坚持。",
+            .wellnessAdvicePBTitle: "刷新了纪录",
+            .wellnessAdvicePBEvidence: "本期单次最长距离 %@ 公里，超过上期",
+            .wellnessAdvicePBBody: "距离纪录被刷新，说明底子在变厚。",
+            .wellnessAdviceDaylightTitle: "白天光照偏少",
+            .wellnessAdviceDaylightEvidence: "近几天日均户外光照约 %d 分钟",
+            .wellnessAdviceDaylightBody: "白天的自然光是校准生物钟最有效的信号。上午出门 15 分钟，比晚上强迫自己早睡更管用。",
+            .wellnessAdviceMidpointLateTitle: "入睡整体在后移",
+            .wellnessAdviceMidpointLateEvidence: "近几天睡眠中点比常态晚约 %d 分钟",
+            .wellnessAdviceMidpointLateBody: "整体后移往往是不知不觉发生的。今晚把上床时间往回挪 20 分钟，比周末一次性补觉有效。",
+            .wellnessAdviceDeepSleepTitle: "深睡占比偏低",
+            .wellnessAdviceDeepSleepEvidence: "近几晚深睡约占总睡眠的 %d%%",
+            .wellnessAdviceDeepSleepBody: "设备的深睡为估算值，仅供参考。睡前一小时远离咖啡因和强光，通常对深睡最直接。",
+            .wellnessAdviceRHRImprovedTitle: "心肺在变强",
+            .wellnessAdviceRHRImprovedEvidence: "静息心率比常态低约 %d bpm（当前约 %d bpm）",
+            .wellnessAdviceRHRImprovedBody: "静息心率下降是有氧能力提升最可靠的信号之一，最近的训练在起作用。",
+            .wellnessAdviceStepsUpTitle: "日常活动量在上升",
+            .wellnessAdviceStepsUpEvidence: "本期日均步数比上期多约 %d%%",
+            .wellnessAdviceStepsUpBody: "日常步行的提升往往比刻意训练更可持续，这是个好势头。",
+            .wellnessAdviceStepsDownTitle: "日常活动量在下降",
+            .wellnessAdviceStepsDownEvidence: "本期日均步数比上期少约 %d%%",
+            .wellnessAdviceStepsDownBody: "运动之外的日常活动同样重要。通勤或午后加一段步行，是最容易补回来的部分。",
+            .wellnessAdviceHabitDayTitle: "你的运动日是%@",
+            .wellnessAdviceHabitDayEvidence: "%d 个运动日集中在%@",
+            .wellnessAdviceHabitDayBody: "固定的运动日是最被低估的坚持技巧——它把\u{201C}要不要动\u{201D}变成了\u{201C}到点就动\u{201D}。",
+            .wellnessAdviceStepsConsistentTitle: "步数很稳",
+            .wellnessAdviceStepsConsistentEvidence: "近 %2$d 天中有 %1$d 天达到常态水平以上",
+            .wellnessAdviceStepsConsistentBody: "稳定比冲高更难得，日常活动的底盘很扎实。",
+            .wellnessAdviceHRVHighTitle: "恢复状态在线",
+            .wellnessAdviceHRVHighEvidence: "心率变异性比常态高约 %d%%",
+            .wellnessAdviceHRVHighBody: "身体恢复得不错，如果计划里有强度课，最近是安排的好时机。",
+            .wellnessAdviceWorkoutGapTitle: "间隔有点长了",
+            .wellnessAdviceWorkoutGapEvidence: "已连续 %d 天没有运动记录",
+            .wellnessAdviceWorkoutGapBody: "对平时有训练习惯的你来说，间隔拉长会让重启变难。今天来一次轻松的就够。",
+            .wellnessAdviceStreakTitle: "连着动起来了",
+            .wellnessAdviceStreakEvidence: "已连续 %d 天有运动记录",
+            .wellnessAdviceStreakBody: "势头很好。也别忘了给身体留恢复日——连续之后的轻松日同样是训练的一部分。",
+            .wellnessAdviceRHRTrendGoodTitle: "静息心率在下降",
+            .wellnessAdviceRHRTrendGoodEvidence: "本期比上期低约 %d bpm（当前约 %d bpm）",
+            .wellnessAdviceRHRTrendGoodBody: "长期静息心率下降通常意味着有氧底子在变厚，这个趋势值得保持。",
+            .wellnessAdviceRHRTrendBadTitle: "静息心率在上升",
+            .wellnessAdviceRHRTrendBadEvidence: "本期比上期高约 %d bpm（当前约 %d bpm）",
+            .wellnessAdviceRHRTrendBadBody: "长期上升可能与压力、睡眠或恢复不足有关。仅供参考，如伴随不适请咨询专业人员。",
+            .wellnessAdviceCarbTitle: "长时间运动后先补碳水",
+            .wellnessAdviceCarbEvidence: "本期有 %d 次 60 分钟以上的运动，最长约 %d 分钟",
+            .wellnessAdviceCarbBody: "60 分钟以上的运动会明显消耗糖原。结束后 1–2 小时内吃到主食类碳水（米饭、面食、燕麦或水果），恢复效率最高。",
+            .wellnessAdviceProteinTitle: "蛋白质别只在晚饭补",
+            .wellnessAdviceProteinEvidence: "本期运动合计约 %d 分钟",
+            .wellnessAdviceProteinBody: "运动后 20–30 克蛋白质（约一个手掌大小的肉类、两个鸡蛋或一杯希腊酸奶）就够。分散在三餐比集中一顿更有效。",
+            .wellnessAdviceHydrationTitle: "补水要分次，不要一次灌",
+            .wellnessAdviceHydrationEvidence: "本期单日最高活动消耗约 %d 千卡",
+            .wellnessAdviceHydrationEvidenceLong: "本期有 90 分钟以上的长时间运动",
+            .wellnessAdviceHydrationBody: "大量出汗后一次性喝大量白水反而会稀释电解质。少量多次，超过 1 小时的运动可以补含钠的饮品或加点盐分的食物。",
+            .wellnessAdviceLateMealTitle: "睡不够时更容易想吃",
+            .wellnessAdviceLateMealEvidence: "本期平均睡眠约 %@ 小时",
+            .wellnessAdviceLateMealBody: "睡眠不足会推高饥饿感、削弱饱腹信号，晚上尤其明显。把正餐安排在睡前 2 小时以上，会比刻意克制更省力。",
+            .wellnessAdviceLightWeekTitle: "低活动期按需吃就好",
+            .wellnessAdviceLightWeekEvidence: "本期运动量较低",
+            .wellnessAdviceLightWeekBody: "训练量少的阶段不需要额外加餐，保持蛋白质和蔬菜的基本量即可，等训练量回来了再调整。",
+            .wellnessAdviceSleepRoutineTitle: "睡眠节奏保持得不错",
+            .wellnessAdviceSleepRoutineEvidence: "本期平均睡眠约 %@ 小时",
+            .wellnessAdviceSleepRoutineBody: "没有明显异常。继续维持固定的上床时间，比偶尔的长睡更有价值。",
+            .wellnessAdviceMixTitle: "试试搭配不同强度",
+            .wellnessAdviceMixEvidence: "本期运动合计约 %d 分钟",
+            .wellnessAdviceMixBody: "大部分时间做轻松有氧、少部分做高强度，是被反复验证的耐力提升结构。都堆在中等强度反而收益最低。",
+            .wellnessAdviceRestDayTitle: "把恢复日排进计划",
+            .wellnessAdviceRestDayEvidence: "恢复同样是训练的一部分",
+            .wellnessAdviceRestDayBody: "身体是在休息时变强的，不是在训练时。每周留 1–2 天低强度或完全休息，长期进步更稳。",
+            .wellnessAdviceCarbNowTitle: "这一两天先把糖原补回来",
+            .wellnessAdviceCarbNowEvidence: "最近一次长时间运动约 %d 分钟",
+            .wellnessAdviceCarbNowBody: "长时间运动后的 24 小时里，碳水的补充比蛋白质更关键。下一顿主食吃够，比只加一份鸡胸肉更有用。",
+            .wellnessAdviceProteinNowTitle: "接下来两餐带上蛋白质",
+            .wellnessAdviceProteinNowEvidence: "近三天运动合计约 %d 分钟",
+            .wellnessAdviceProteinNowBody: "刚练完的这一两天肌肉修复最活跃。每餐加一份蛋白质（鸡蛋、豆制品、鱼肉都行），比集中补一顿有效。",
+            .wellnessAdviceFuelGrowthTitle: "训练量涨了，吃也要跟上",
+            .wellnessAdviceFuelGrowthEvidence: "折合每周约 %d 分钟训练，且明显高于上期",
+            .wellnessAdviceFuelGrowthBody: "训练量上台阶时，最常见的问题不是吃太多而是吃太少，表现为越练越没劲。主食和蛋白质都该同步上调。",
+            .wellnessAdviceNutritionBaseTitle: "这个训练量下的饮食基础",
+            .wellnessAdviceNutritionBaseEvidence: "折合每周约 %d 分钟训练",
+            .wellnessAdviceNutritionBaseBody: "维持这个量，日常三餐里稳定的主食、蛋白质和蔬菜比任何补剂都重要。真正决定长期状态的是基础饮食的稳定性。",
+            .wellnessAdviceNutritionBaseYearBody: "一整年维持这个量，靠的是可持续的日常饮食，而不是赛前突击。稳定的三餐结构就是最好的长期方案。",
+            .wellnessAdviceMilestoneTitle: "这段时间的里程碑",
+            .wellnessAdviceMilestoneEvidence: "累计 %@ 公里，共 %d 次运动",
+            .wellnessAdviceMilestoneBody: "这个累计量是靠一次次积累出来的。回头看，坚持本身就是最难的部分。",
+            .wellnessAdviceMilestoneYearBody: "一年的累计量摊开看很惊人，但它只是由每一次普通的出门组成的。这就是长期主义的样子。",
+            .wellnessAdviceSeasonalTitle: "运动量有季节性",
+            .wellnessAdviceSeasonalEvidence: "%@ 最活跃，%@ 最少",
+            .wellnessAdviceSeasonalBody: "季节波动很正常，值得做的是给淡季准备替代方案——室内、短时长或换个项目，让底子不至于掉太多。",
+            .wellnessAdviceTonightTitle: "今晚早点睡",
+            .wellnessAdviceTonightEvidence: "昨晚睡了约 %@ 小时，常态是 %@ 小时",
+            .wellnessAdviceTonightBody: "今晚争取 %@ 前上床，比平时提前约 %d 分钟。缺口在当天补最有效，拖到周末效果会打折。",
+            .wellnessTipSleep1: "固定起床时间比固定入睡时间更容易做到，也更能稳住生物钟。",
+            .wellnessTipSleep2: "睡前一小时把灯调暗，比数羊有用得多——光照是最强的清醒信号。",
+            .wellnessTipSleep3: "咖啡因的半衰期约 5 小时，下午三点后的那杯常常是深睡变少的原因。",
+            .wellnessTipSleep4: "睡前泡个热水澡，出浴后体温下降的过程本身就是助眠信号。",
+            .wellnessTipSleep5: "如果躺下 20 分钟还睡不着，起身做点安静的事再回来，比硬躺更有效。",
+            .wellnessTipActivity1: "把运动装备提前一晚放门口，是被验证过最有效的\u{201C}降低启动门槛\u{201D}方法。",
+            .wellnessTipActivity2: "宁可缩短时长也别跳过——十分钟的运动对习惯的价值远高于零。",
+            .wellnessTipActivity3: "换个路线或换个项目，往往比逼自己加量更能续上兴趣。",
+            .wellnessTipActivity4: "热身不用复杂，前五分钟放慢速度本身就是最好的热身。",
+            .wellnessTipActivity5: "一周里有一次和别人一起运动，坚持率会明显高于全部独自完成。",
+            .wellnessTipNutrition1: "运动后先补水再吃东西，脱水状态下的食欲信号往往不准。",
+            .wellnessTipNutrition2: "把水果放在看得见的地方，是成本最低的饮食结构调整。",
+            .wellnessTipNutrition3: "训练日和休息日的食量本来就该不同，不必每天一模一样。",
+            .wellnessTipNutrition4: "加工程度越低的碳水，饱腹感和血糖波动通常都更友好。",
+            .wellnessTipNutrition5: "晚餐吃太晚会挤占深睡时间，睡前两小时是个好界限。",
+            .wellnessTipRecovery1: "恢复不只是躺着——散步、拉伸这类低强度活动往往比完全不动恢复更快。",
+            .wellnessTipRecovery2: "连续两周状态下滑，通常是训练之外的因素（工作、睡眠、情绪）在起作用。",
+            .wellnessTipRecovery3: "静息心率和心率变异性受当天饮酒、疾病影响很大，看趋势别看单日。",
+            .wellnessTipRecovery4: "感到\u{201C}腿沉\u{201D}时降强度不降频率，比直接停练更容易回到状态。",
+            .wellnessTipPositive1: "进步大多不是线性的，平台期同样是变强过程的一部分。",
+            .wellnessTipPositive2: "把这个状态记下来，下次低谷时回看会很有帮助。",
+            .wellnessTipPositive3: "状态好的时候最容易加量过头，记得给下一周留出余地。",
+            .wellnessTipPositive4: "能长期坚持的运动，通常是那个你不讨厌的运动，而不是最高效的那个。",
+            .wellnessSummaryRisk: "本周有需要注意的信号，先看置顶这条。",
+            .wellnessSummaryAttention: "整体不错，有几处可以微调。",
+            .wellnessSummaryGood: "状态在线，继续保持。",
+            .wellnessSummaryCold: "数据还在积累，先看看本周的事实。",
+            .wellnessFactSleepFormat: "睡眠：近 7 天平均 %@ 小时（记录 %d 天）",
+            .wellnessFactStepsFormat: "步数：日均 %@ 步",
+            .wellnessFactWorkoutsFormat: "运动：%d 次 · 共 %@ 公里 · %d 分钟",
+            .wellnessFactExerciseFormat: "锻炼时长：本周合计 %d 分钟",
+            .wellnessCoverageNoteFormat: "部分日期未记录（睡眠 %d/%d 天、步数 %d/%d 天），未记录不计为 0。",
+            .wellnessDisclaimer: "以上为基于你个人数据的生活方式参考，在本机生成，不构成医疗建议。",
+            .wellnessAuthPromptTitle: "想更懂自己的运动吗",
+            .wellnessAuthPromptBody: "如果愿意，可以让 Movinn 读取健康数据。它会结合你的睡眠、步数和运动，在这台设备上生成属于你的总结与建议——所有分析都在本地完成，数据不会上传，也不会分享给任何人。你随时可以在系统设置里调整。",
+            .wellnessAuthButton: "好，试试看",
+            .wellnessLoading: "正在生成本周指导…",
+            .wellnessEmptyBody: "数据还在积累。佩戴设备记录几天后，这里会给出你的专属总结。",
+            .wellnessAdviceSleepDebtTitle: "补一补睡眠债",
+            .wellnessAdviceSleepDebtEvidence: "近 7 天累计比常态少睡约 %@ 小时",
+            .wellnessAdviceSleepDebtBody: "建议接下来 3 晚提前约 %d 分钟上床，今晚可在 %@ 前休息。",
+            .wellnessAdviceSleepIrregularTitle: "作息波动较大",
+            .wellnessAdviceSleepIrregularEvidence: "近 7 天入睡时间波动约 ±%d 分钟",
+            .wellnessAdviceSleepIrregularBody: "比起补时长，固定上床窗口更有效：试试在 %@–%@ 之间入睡。",
+            .wellnessAdviceSleepShortTitle: "睡眠持续偏短",
+            .wellnessAdviceSleepShortEvidence: "近 7 天平均 %@ 小时，低于你的常态 %@ 小时",
+            .wellnessAdviceSleepShortBody: "连续偏短会先拖慢恢复，再影响状态。本周先把最容易的一晚补回来。",
+            .wellnessAdviceWeekendJetlagTitle: "周末补觉明显",
+            .wellnessAdviceWeekendJetlagEvidence: "周末比工作日平均多睡约 %@ 小时",
+            .wellnessAdviceWeekendJetlagBody: "补觉说明工作日在欠债。建议工作日上床时间小步前移 15–30 分钟。",
+            .wellnessAdviceSleepStableTitle: "睡眠状态稳定",
+            .wellnessAdviceSleepStableEvidence: "近 7 天平均 %@ 小时，作息规律",
+            .wellnessAdviceSleepStableBody: "时长和规律都在你的常态区间，保持现在的节奏就好。",
+            .wellnessAdviceLoadSpikeTitle: "本周加量偏快",
+            .wellnessAdviceLoadSpikeEvidence: "近 7 天运动负荷约为近月常态的 %@ 倍",
+            .wellnessAdviceLoadSpikeBody: "短期快速加量与伤病风险相关。建议下周回落到常态水平，优先安排低强度。",
+            .wellnessAdviceLoadDropTitle: "运动量明显回落",
+            .wellnessAdviceLoadDropEvidence: "本周负荷不足常态的六成",
+            .wellnessAdviceLoadDropBody: "不必一次补回来：从 2 次、每次约 %d 分钟开始，先回到节奏。",
+            .wellnessAdviceSedentaryTitle: "活动量连续偏低",
+            .wellnessAdviceSedentaryEvidence: "连续 %d 天步数低于 %@",
+            .wellnessAdviceSedentaryBody: "今天先以 %@ 步为目标——这是按你自己的常态定的，不是统一的一万步。",
+            .wellnessAdviceRecoveryTitle: "恢复信号偏弱",
+            .wellnessAdviceRecoveryEvidence: "静息心率连续 %d 天高于常态约 %d bpm%@",
+            .wellnessAdviceRecoveryBody: "建议今明两天安排低强度或休息。仅供参考，如伴随不适请咨询专业人员。",
+            .wellnessAdviceRecoveryHRVSuffix: "，且心率变异性同步走低",
+            .wellnessAdviceActiveWeekTitle: "本周活动达标",
+            .wellnessAdviceActiveWeekEvidence: "本周锻炼合计 %d 分钟",
+            .wellnessAdviceActiveWeekBody: "已达到世界卫生组织建议的每周 150 分钟，给自己一点肯定。",
             .routeCollection: "导入路线",
             .routeCollectionMenuTitle: "路线",
             .routeCollectionEmptyMessage: "还没有导入路线",
@@ -782,6 +1189,7 @@ enum AppLocalization {
             .privacyPolicy: "プライバシー",
             .proCodeRedemption: "コードを使う",
             .proFeatureHeatmap: "ルートヒートマップ",
+            .proFeatureWellnessRecap: "運動データに基づくガイドと提案",
             .proFeatureICloudRouteSync: "読み込んだルートを iCloud で同期",
             .proFeatureMultiLivePhotoExport: "複数の軌跡アニメーション共有に対応",
             .proFeatureMoreComing: "今後の機能",
@@ -813,6 +1221,207 @@ enum AppLocalization {
             .routeSlopeColorHint: "緑寄りの区間は緩やかで、赤寄りの区間は急です",
             .routeStyle3DFollowColor: "カラー連動",
             .routeStyle3DSlopeColor: "勾配カラー",
+            .wellnessRecapSheetTitle: "ガイドと提案",
+            .wellnessHeaderTip: "👆 ここをタップすると、運動データに基づく提案が見られます",
+            .wellnessRangeThreeDays: "3日",
+            .wellnessRangeWeek: "1週間",
+            .wellnessRangeMonth: "1か月",
+            .wellnessRangeHalfYear: "半年",
+            .wellnessRangeYear: "1年",
+            .wellnessSectionFacts: "データ概要",
+            .wellnessSectionTrends: "トレンド",
+            .wellnessSectionAdvice: "アドバイス",
+            .wellnessChartSleep: "睡眠時間（時間）",
+            .wellnessChartSteps: "1日の歩数",
+            .wellnessChartLoad: "運動負荷",
+            .wellnessTableHeaderMetric: "指標",
+            .wellnessTableHeaderCurrent: "今期",
+            .wellnessTableHeaderReference: "参照",
+            .wellnessTableHeaderChange: "変化",
+            .wellnessMetricSleep: "睡眠時間",
+            .wellnessMetricSteps: "平均歩数",
+            .wellnessMetricExercise: "運動時間(分)",
+            .wellnessMetricWorkouts: "運動回数",
+            .wellnessMetricDistance: "運動距離",
+            .wellnessMetricRHR: "安静時心拍",
+            .wellnessMetricHRV: "心拍変動",
+            .wellnessAdviceSleepTrendUpTitle: "睡眠が改善傾向",
+            .wellnessAdviceSleepTrendUpEvidence: "今期は前期より平均約 %@ 時間多く睡眠",
+            .wellnessAdviceSleepTrendUpBody: "意識的な調整でも自然な流れでも、良い方向です。維持しましょう。",
+            .wellnessAdviceSleepTrendDownTitle: "睡眠が減少傾向",
+            .wellnessAdviceSleepTrendDownEvidence: "今期は前期より平均約 %@ 時間少ない睡眠",
+            .wellnessAdviceSleepTrendDownBody: "数週間続く減少は単日の変動より注意が必要です。この期間の生活の変化を振り返ってみましょう。",
+            .wellnessAdviceVolumeUpTitle: "運動量が増加",
+            .wellnessAdviceVolumeUpEvidence: "今期の運動量は前期より約 %d%% 増",
+            .wellnessAdviceVolumeUpBody: "増やすときは段階的に。回復日も十分確保しましょう。",
+            .wellnessAdviceVolumeDownTitle: "運動量が減少",
+            .wellnessAdviceVolumeDownEvidence: "今期の運動量は前期より約 %d%% 減",
+            .wellnessAdviceVolumeDownBody: "減ること自体は問題ではありません。間隔を空けすぎず、まず軽い 1 回から。",
+            .wellnessAdviceConsistencyGoodTitle: "とても規則的な運動習慣",
+            .wellnessAdviceConsistencyGoodEvidence: "%d/%d 週で運動記録あり",
+            .wellnessAdviceConsistencyGoodBody: "規則性は長期的な効果の核心で、単発の強度より重要です。この調子で。",
+            .wellnessAdviceConsistencyLowTitle: "規則性に改善の余地",
+            .wellnessAdviceConsistencyLowEvidence: "運動記録があるのは %d/%d 週のみ",
+            .wellnessAdviceConsistencyLowBody: "たまの高強度より、毎週決まった時間帯の軽い運動の方が続けやすいです。",
+            .wellnessAdvicePBTitle: "記録更新",
+            .wellnessAdvicePBEvidence: "今期の 1 回最長距離は %@ km で前期を上回りました",
+            .wellnessAdvicePBBody: "距離の記録更新は基礎が厚くなっている証拠です。",
+            .wellnessAdviceDaylightTitle: "日中の光が不足気味",
+            .wellnessAdviceDaylightEvidence: "直近の屋外光は 1 日平均約 %d 分",
+            .wellnessAdviceDaylightBody: "日中の自然光は体内時計を整える最も有効な信号です。午前中に 15 分外に出る方が、夜に早寝を頑張るより効果的です。",
+            .wellnessAdviceMidpointLateTitle: "就寝が全体的に後ろ倒し",
+            .wellnessAdviceMidpointLateEvidence: "直近の睡眠中間点が普段より約 %d 分遅れています",
+            .wellnessAdviceMidpointLateBody: "後ろ倒しは気づかぬうちに進みます。今夜 20 分だけ早めるのが、週末の寝だめより有効です。",
+            .wellnessAdviceDeepSleepTitle: "深い睡眠の割合が低め",
+            .wellnessAdviceDeepSleepEvidence: "直近の深い睡眠は全体の約 %d%%",
+            .wellnessAdviceDeepSleepBody: "デバイスの深睡眠は推定値で参考程度に。就寝 1 時間前のカフェインと強い光を避けるのが最も直接的です。",
+            .wellnessAdviceRHRImprovedTitle: "心肺機能が向上中",
+            .wellnessAdviceRHRImprovedEvidence: "安静時心拍数が普段より約 %d bpm 低下（現在約 %d bpm）",
+            .wellnessAdviceRHRImprovedBody: "安静時心拍数の低下は有酸素能力向上の最も確かな信号の一つ。最近のトレーニングが効いています。",
+            .wellnessAdviceStepsUpTitle: "日常の活動量が増加",
+            .wellnessAdviceStepsUpEvidence: "今期の 1 日平均歩数は前期より約 %d%% 増",
+            .wellnessAdviceStepsUpBody: "日常の歩行の増加は意図的なトレーニングより持続しやすい、良い傾向です。",
+            .wellnessAdviceStepsDownTitle: "日常の活動量が減少",
+            .wellnessAdviceStepsDownEvidence: "今期の 1 日平均歩数は前期より約 %d%% 減",
+            .wellnessAdviceStepsDownBody: "運動以外の日常活動も同じく大切です。通勤や午後に少し歩くのが、最も取り戻しやすい部分です。",
+            .wellnessAdviceHabitDayTitle: "あなたの運動日は%@",
+            .wellnessAdviceHabitDayEvidence: "%d 回の運動日が%@に集中",
+            .wellnessAdviceHabitDayBody: "決まった運動日は最も過小評価されている継続のコツ。「やるかどうか」を「時間が来たらやる」に変えてくれます。",
+            .wellnessAdviceStepsConsistentTitle: "歩数が安定",
+            .wellnessAdviceStepsConsistentEvidence: "直近 %2$d 日のうち %1$d 日で普段の水準を達成",
+            .wellnessAdviceStepsConsistentBody: "安定は瞬発力より得がたいもの。日常活動の土台がしっかりしています。",
+            .wellnessAdviceHRVHighTitle: "回復状態は良好",
+            .wellnessAdviceHRVHighEvidence: "心拍変動が普段より約 %d%% 高い状態",
+            .wellnessAdviceHRVHighBody: "体はよく回復しています。強度の高い練習を予定しているなら、今が良いタイミングです。",
+            .wellnessAdviceWorkoutGapTitle: "間隔が空き気味",
+            .wellnessAdviceWorkoutGapEvidence: "%d 日連続で運動記録なし",
+            .wellnessAdviceWorkoutGapBody: "普段運動習慣のあるあなたにとって、間隔が長引くと再開が難しくなります。今日は軽めの 1 回で十分。",
+            .wellnessAdviceStreakTitle: "連続で動けています",
+            .wellnessAdviceStreakEvidence: "%d 日連続で運動記録あり",
+            .wellnessAdviceStreakBody: "良い勢いです。回復日も忘れずに——連続後の軽い日もトレーニングの一部です。",
+            .wellnessAdviceRHRTrendGoodTitle: "安静時心拍数が低下傾向",
+            .wellnessAdviceRHRTrendGoodEvidence: "今期は前期より約 %d bpm 低下（現在約 %d bpm）",
+            .wellnessAdviceRHRTrendGoodBody: "長期的な低下は有酸素の基礎が厚くなっているサイン。この傾向を維持しましょう。",
+            .wellnessAdviceRHRTrendBadTitle: "安静時心拍数が上昇傾向",
+            .wellnessAdviceRHRTrendBadEvidence: "今期は前期より約 %d bpm 上昇（現在約 %d bpm）",
+            .wellnessAdviceRHRTrendBadBody: "長期的な上昇はストレス・睡眠・回復不足と関連する場合があります。参考情報です。不調を伴う場合は専門家にご相談ください。",
+            .wellnessAdviceCarbTitle: "長時間運動後はまず炭水化物",
+            .wellnessAdviceCarbEvidence: "今期は 60 分以上の運動が %d 回、最長約 %d 分",
+            .wellnessAdviceCarbBody: "60 分を超える運動はグリコーゲンを大きく消費します。終了後 1〜2 時間以内に主食系の炭水化物（ご飯・麺・オートミール・果物）を摂ると回復効率が高まります。",
+            .wellnessAdviceProteinTitle: "たんぱく質は夕食だけに偏らせない",
+            .wellnessAdviceProteinEvidence: "今期の運動は合計約 %d 分",
+            .wellnessAdviceProteinBody: "運動後は 20〜30g のたんぱく質（手のひら大の肉、卵 2 個、ギリシャヨーグルト 1 カップ程度）で十分。3 食に分けた方が効果的です。",
+            .wellnessAdviceHydrationTitle: "水分はこまめに、一気飲みはしない",
+            .wellnessAdviceHydrationEvidence: "今期の 1 日最大消費カロリーは約 %d kcal",
+            .wellnessAdviceHydrationEvidenceLong: "今期は 90 分を超える長時間運動あり",
+            .wellnessAdviceHydrationBody: "大量発汗後に水だけを一気に飲むと電解質が薄まります。少量ずつ頻回に、1 時間を超える運動ではナトリウムを含む飲料や食品を。",
+            .wellnessAdviceLateMealTitle: "睡眠不足だと食欲が増えやすい",
+            .wellnessAdviceLateMealEvidence: "今期の平均睡眠は約 %@ 時間",
+            .wellnessAdviceLateMealBody: "睡眠不足は空腹感を高め満腹感を弱めます。特に夜に顕著です。食事を就寝 2 時間前までに済ませる方が我慢するより楽です。",
+            .wellnessAdviceLightWeekTitle: "運動が少ない時期は普段どおりで",
+            .wellnessAdviceLightWeekEvidence: "今期は運動量が少なめ",
+            .wellnessAdviceLightWeekBody: "トレーニング量が少ない時期に追加の補食は不要です。たんぱく質と野菜の基本量を保ち、量が戻ってから調整しましょう。",
+            .wellnessAdviceSleepRoutineTitle: "睡眠リズムは良好",
+            .wellnessAdviceSleepRoutineEvidence: "今期の平均睡眠は約 %@ 時間",
+            .wellnessAdviceSleepRoutineBody: "目立った乱れはありません。就寝時刻を一定に保つことは、たまの長時間睡眠より価値があります。",
+            .wellnessAdviceMixTitle: "強度に変化をつけてみる",
+            .wellnessAdviceMixEvidence: "今期の運動は合計約 %d 分",
+            .wellnessAdviceMixBody: "大半を楽な有酸素に、一部を高強度に——持久力向上で繰り返し検証された構成です。すべて中強度が最も効率が低くなります。",
+            .wellnessAdviceRestDayTitle: "回復日も計画に入れる",
+            .wellnessAdviceRestDayEvidence: "回復もトレーニングの一部です",
+            .wellnessAdviceRestDayBody: "体は休んでいる間に強くなります。週に 1〜2 日は低強度か完全休養を入れると、長期的な進歩が安定します。",
+            .wellnessAdviceCarbNowTitle: "この 1〜2 日はグリコーゲンの回復を",
+            .wellnessAdviceCarbNowEvidence: "直近の長時間運動は約 %d 分",
+            .wellnessAdviceCarbNowBody: "長時間運動後の 24 時間は、たんぱく質より炭水化物の補給が重要です。次の食事で主食をしっかり摂る方が、鶏むね肉を足すより効果的です。",
+            .wellnessAdviceProteinNowTitle: "次の 2 食にたんぱく質を",
+            .wellnessAdviceProteinNowEvidence: "直近 3 日の運動は合計約 %d 分",
+            .wellnessAdviceProteinNowBody: "運動直後の 1〜2 日は筋肉の修復が最も活発です。毎食に 1 品（卵・大豆製品・魚など）加える方が、1 食に集中させるより効果的です。",
+            .wellnessAdviceFuelGrowthTitle: "運動量が増えた分、食事も",
+            .wellnessAdviceFuelGrowthEvidence: "週あたり約 %d 分に相当し、前期を大きく上回ります",
+            .wellnessAdviceFuelGrowthBody: "運動量が一段上がるとき、よくある問題は食べ過ぎではなく食べ不足で、練るほど力が出ない形で現れます。主食もたんぱく質も同時に増やしましょう。",
+            .wellnessAdviceNutritionBaseTitle: "この運動量に見合う食事の土台",
+            .wellnessAdviceNutritionBaseEvidence: "週あたり約 %d 分に相当",
+            .wellnessAdviceNutritionBaseBody: "この量を維持するなら、日々の主食・たんぱく質・野菜の安定がどんなサプリより重要です。長期の調子を決めるのは基礎的な食事の安定性です。",
+            .wellnessAdviceNutritionBaseYearBody: "1 年を通してこの量を維持できるのは、直前の詰め込みではなく持続可能な日常の食事があるからです。安定した 3 食の構成が最良の長期戦略です。",
+            .wellnessAdviceMilestoneTitle: "この期間のマイルストーン",
+            .wellnessAdviceMilestoneEvidence: "累計 %@ km、運動 %d 回",
+            .wellnessAdviceMilestoneBody: "この累計は 1 回ずつの積み重ねです。振り返れば、続けること自体が最も難しい部分でした。",
+            .wellnessAdviceMilestoneYearBody: "1 年の累計は圧巻ですが、その中身は普通に外へ出た 1 回 1 回です。それが長期の積み上げの姿です。",
+            .wellnessAdviceSeasonalTitle: "運動量に季節性あり",
+            .wellnessAdviceSeasonalEvidence: "%@ が最も活発で、%@ が最少",
+            .wellnessAdviceSeasonalBody: "季節変動は自然なことです。閑散期の代替案——室内・短時間・別種目——を用意しておくと、基礎を落とさずに済みます。",
+            .wellnessAdviceTonightTitle: "今夜は早めに就寝を",
+            .wellnessAdviceTonightEvidence: "昨夜の睡眠は約 %@ 時間、普段は %@ 時間",
+            .wellnessAdviceTonightBody: "今夜は %@ までに就寝を。普段より約 %d 分早めです。不足はその日のうちに補うのが最も効果的で、週末まで持ち越すと効果が薄れます。",
+            .wellnessTipSleep1: "就寝時刻より起床時刻を固定する方が実行しやすく、体内時計も安定します。",
+            .wellnessTipSleep2: "就寝 1 時間前に照明を落とす方が、羊を数えるよりずっと有効です。光は最も強い覚醒信号です。",
+            .wellnessTipSleep3: "カフェインの半減期は約 5 時間。午後 3 時以降の 1 杯が深い睡眠を減らす原因になりがちです。",
+            .wellnessTipSleep4: "就寝前の入浴後、体温が下がる過程そのものが入眠の合図になります。",
+            .wellnessTipSleep5: "横になって 20 分眠れなければ、一度起きて静かなことをしてから戻る方が効果的です。",
+            .wellnessTipActivity1: "前夜のうちにウェアを玄関に置くのは、開始のハードルを下げる最も検証された方法です。",
+            .wellnessTipActivity2: "時間を短くしてでも飛ばさない——10 分の運動は習慣にとってゼロよりはるかに価値があります。",
+            .wellnessTipActivity3: "コースや種目を変える方が、量を無理に増やすより興味が続きます。",
+            .wellnessTipActivity4: "ウォームアップは複雑でなくてよく、最初の 5 分をゆっくり動くこと自体が最良の準備です。",
+            .wellnessTipActivity5: "週に 1 回誰かと一緒に運動すると、継続率が明らかに上がります。",
+            .wellnessTipNutrition1: "運動後はまず水分を。脱水状態では食欲の信号が正確でないことが多いです。",
+            .wellnessTipNutrition2: "果物を見える場所に置くのは、最も低コストな食習慣の調整です。",
+            .wellnessTipNutrition3: "トレーニング日と休養日で食べる量が違うのは自然なこと。毎日同じにする必要はありません。",
+            .wellnessTipNutrition4: "加工度の低い炭水化物ほど、満腹感も血糖の変動も穏やかになりやすいです。",
+            .wellnessTipNutrition5: "夕食が遅いと深い睡眠の時間を圧迫します。就寝 2 時間前が良い目安です。",
+            .wellnessTipRecovery1: "回復は寝ているだけではありません。散歩やストレッチなど低強度の活動の方が回復が早いことも多いです。",
+            .wellnessTipRecovery2: "2 週間続く不調は、トレーニング以外の要因（仕事・睡眠・気分）が関わっていることが多いです。",
+            .wellnessTipRecovery3: "安静時心拍数や心拍変動は飲酒や体調に大きく左右されます。単日でなく傾向で見ましょう。",
+            .wellnessTipRecovery4: "脚が重いときは頻度を保ったまま強度だけ下げる方が、完全に止めるより戻りやすいです。",
+            .wellnessTipPositive1: "進歩は直線的ではありません。停滞期も強くなる過程の一部です。",
+            .wellnessTipPositive2: "この状態を記録しておくと、次に落ち込んだとき見返す価値があります。",
+            .wellnessTipPositive3: "調子が良いときほど増やしすぎがち。翌週に余裕を残しておきましょう。",
+            .wellnessTipPositive4: "長く続く運動は、最も効率的なものではなく、あなたが嫌いでないものです。",
+            .wellnessSummaryRisk: "今週は注意すべきサインがあります。まず先頭の項目をご覧ください。",
+            .wellnessSummaryAttention: "全体的に良好です。いくつか微調整できる点があります。",
+            .wellnessSummaryGood: "良い状態です。この調子で続けましょう。",
+            .wellnessSummaryCold: "データを蓄積中です。まず今週の事実をご覧ください。",
+            .wellnessFactSleepFormat: "睡眠：直近 7 日平均 %@ 時間（記録 %d 日）",
+            .wellnessFactStepsFormat: "歩数：1 日平均 %@ 歩",
+            .wellnessFactWorkoutsFormat: "ワークアウト：%d 回 · 計 %@ km · %d 分",
+            .wellnessFactExerciseFormat: "エクササイズ時間：今週合計 %d 分",
+            .wellnessCoverageNoteFormat: "未記録の日があります（睡眠 %d/%d 日、歩数 %d/%d 日）。未記録は 0 として扱いません。",
+            .wellnessDisclaimer: "以上はあなたのデータに基づく生活習慣の参考情報で、本体内で生成されます。医療上の助言ではありません。",
+            .wellnessAuthPromptTitle: "運動をもっと知ってみませんか",
+            .wellnessAuthPromptBody: "よろしければ、ヘルスケアデータの読み取りを許可してください。睡眠・歩数・ワークアウトをもとに、あなた専用のサマリーと提案をこの端末内で作成します。解析はすべて端末内で完結し、アップロードも共有もされません。設定はいつでも変更できます。",
+            .wellnessAuthButton: "試してみる",
+            .wellnessLoading: "今週のガイドを生成中…",
+            .wellnessEmptyBody: "データを蓄積中です。数日記録すると、ここにあなた専用のサマリーが表示されます。",
+            .wellnessAdviceSleepDebtTitle: "睡眠負債を返しましょう",
+            .wellnessAdviceSleepDebtEvidence: "直近 7 日で普段より合計約 %@ 時間睡眠が不足",
+            .wellnessAdviceSleepDebtBody: "今後 3 晩は約 %d 分早めの就寝を。今夜は %@ までに休みましょう。",
+            .wellnessAdviceSleepIrregularTitle: "就寝リズムの乱れ",
+            .wellnessAdviceSleepIrregularEvidence: "直近 7 日の就寝時刻のばらつきは約 ±%d 分",
+            .wellnessAdviceSleepIrregularBody: "時間を補うより就寝時刻を固定する方が効果的です。%@–%@ の間の就寝を試してみてください。",
+            .wellnessAdviceSleepShortTitle: "睡眠時間が継続的に不足",
+            .wellnessAdviceSleepShortEvidence: "直近 7 日平均 %@ 時間で、普段の %@ 時間を下回っています",
+            .wellnessAdviceSleepShortBody: "不足が続くと回復が遅れ、その後調子に影響します。今週はまず 1 晩から取り戻しましょう。",
+            .wellnessAdviceWeekendJetlagTitle: "週末の寝だめ傾向",
+            .wellnessAdviceWeekendJetlagEvidence: "週末は平日より平均約 %@ 時間長く睡眠",
+            .wellnessAdviceWeekendJetlagBody: "寝だめは平日の不足のサインです。平日の就寝を 15–30 分ずつ前倒ししてみましょう。",
+            .wellnessAdviceSleepStableTitle: "睡眠は安定しています",
+            .wellnessAdviceSleepStableEvidence: "直近 7 日平均 %@ 時間、リズムも規則的",
+            .wellnessAdviceSleepStableBody: "時間もリズムも普段の範囲内です。今のペースを保ちましょう。",
+            .wellnessAdviceLoadSpikeTitle: "負荷の増やし方が急です",
+            .wellnessAdviceLoadSpikeEvidence: "直近 7 日の運動負荷は月間平均の約 %@ 倍",
+            .wellnessAdviceLoadSpikeBody: "短期間の急な増量はけがのリスクと関連します。来週は普段の水準に戻し、低強度を優先しましょう。",
+            .wellnessAdviceLoadDropTitle: "運動量が大きく減少",
+            .wellnessAdviceLoadDropEvidence: "今週の負荷は普段の 6 割未満",
+            .wellnessAdviceLoadDropBody: "一度に取り戻す必要はありません。週 2 回・1 回約 %d 分からリズムを戻しましょう。",
+            .wellnessAdviceSedentaryTitle: "活動量が連続して低下",
+            .wellnessAdviceSedentaryEvidence: "%d 日連続で歩数が %@ を下回っています",
+            .wellnessAdviceSedentaryBody: "今日はまず %@ 歩を目標に。あなた自身の普段の水準から決めた目標です。",
+            .wellnessAdviceRecoveryTitle: "回復のサインが弱め",
+            .wellnessAdviceRecoveryEvidence: "安静時心拍数が %d 日連続で普段より約 %d bpm 高い状態%@",
+            .wellnessAdviceRecoveryBody: "今日と明日は低強度か休息をおすすめします。参考情報です。不調を伴う場合は専門家にご相談ください。",
+            .wellnessAdviceRecoveryHRVSuffix: "、心拍変動も低下傾向",
+            .wellnessAdviceActiveWeekTitle: "今週の活動量は達成",
+            .wellnessAdviceActiveWeekEvidence: "今週のエクササイズ合計 %d 分",
+            .wellnessAdviceActiveWeekBody: "WHO 推奨の週 150 分に到達しました。自分を褒めてあげましょう。",
             .routeCollection: "ルート読み込み",
             .routeCollectionMenuTitle: "ルート",
             .routeCollectionEmptyMessage: "読み込んだルートはまだありません",
@@ -1037,6 +1646,7 @@ enum AppLocalization {
             .privacyPolicy: "개인정보",
             .proCodeRedemption: "코드 등록",
             .proFeatureHeatmap: "경로 히트맵 보기",
+            .proFeatureWellnessRecap: "운동 데이터 기반 맞춤 가이드",
             .proFeatureICloudRouteSync: "가져온 경로를 iCloud로 동기화",
             .proFeatureMultiLivePhotoExport: "여러 경로 애니메이션 공유 지원",
             .proFeatureMoreComing: "더 많은 기능 예정",
@@ -1068,6 +1678,207 @@ enum AppLocalization {
             .routeSlopeColorHint: "초록색에 가까운 구간은 완만하고, 빨간색에 가까운 구간은 가파릅니다",
             .routeStyle3DFollowColor: "색상 연동",
             .routeStyle3DSlopeColor: "경사 색상",
+            .wellnessRecapSheetTitle: "가이드와 제안",
+            .wellnessHeaderTip: "👆 여기를 눌러 운동 데이터 기반 가이드를 확인해 보세요",
+            .wellnessRangeThreeDays: "3일",
+            .wellnessRangeWeek: "1주",
+            .wellnessRangeMonth: "1개월",
+            .wellnessRangeHalfYear: "6개월",
+            .wellnessRangeYear: "1년",
+            .wellnessSectionFacts: "데이터 개요",
+            .wellnessSectionTrends: "트렌드",
+            .wellnessSectionAdvice: "제안",
+            .wellnessChartSleep: "수면 시간(시간)",
+            .wellnessChartSteps: "일일 걸음 수",
+            .wellnessChartLoad: "운동 부하",
+            .wellnessTableHeaderMetric: "지표",
+            .wellnessTableHeaderCurrent: "이번",
+            .wellnessTableHeaderReference: "참조",
+            .wellnessTableHeaderChange: "변화",
+            .wellnessMetricSleep: "수면 시간",
+            .wellnessMetricSteps: "일평균 걸음",
+            .wellnessMetricExercise: "운동 분",
+            .wellnessMetricWorkouts: "운동 횟수",
+            .wellnessMetricDistance: "운동 거리",
+            .wellnessMetricRHR: "안정 심박수",
+            .wellnessMetricHRV: "심박 변이도",
+            .wellnessAdviceSleepTrendUpTitle: "수면이 좋아지는 중",
+            .wellnessAdviceSleepTrendUpEvidence: "이번 기간 평균 수면이 지난 기간보다 약 %@시간 증가",
+            .wellnessAdviceSleepTrendUpBody: "의식적인 조정이든 자연스러운 흐름이든 좋은 방향입니다. 유지하세요.",
+            .wellnessAdviceSleepTrendDownTitle: "수면이 줄어드는 중",
+            .wellnessAdviceSleepTrendDownEvidence: "이번 기간 평균 수면이 지난 기간보다 약 %@시간 감소",
+            .wellnessAdviceSleepTrendDownBody: "몇 주간 이어지는 감소는 단일 변동보다 주의가 필요합니다. 이 기간 생활의 변화를 돌아보세요.",
+            .wellnessAdviceVolumeUpTitle: "운동량 증가",
+            .wellnessAdviceVolumeUpEvidence: "이번 기간 운동량이 지난 기간보다 약 %d%% 증가",
+            .wellnessAdviceVolumeUpBody: "늘릴 때는 점진적으로, 회복일도 충분히 확보하세요.",
+            .wellnessAdviceVolumeDownTitle: "운동량 감소",
+            .wellnessAdviceVolumeDownEvidence: "이번 기간 운동량이 지난 기간보다 약 %d%% 감소",
+            .wellnessAdviceVolumeDownBody: "감소 자체는 문제가 아닙니다. 간격이 너무 길어지지 않게 가벼운 한 번부터 시작하세요.",
+            .wellnessAdviceConsistencyGoodTitle: "매우 규칙적인 운동 습관",
+            .wellnessAdviceConsistencyGoodEvidence: "%d/%d주에 운동 기록 있음",
+            .wellnessAdviceConsistencyGoodBody: "규칙성은 장기 효과의 핵심으로, 단발성 강도보다 중요합니다. 계속 유지하세요.",
+            .wellnessAdviceConsistencyLowTitle: "규칙성을 높일 여지",
+            .wellnessAdviceConsistencyLowEvidence: "운동 기록이 있는 주는 %d/%d주뿐",
+            .wellnessAdviceConsistencyLowBody: "가끔의 고강도보다 매주 정해진 시간대의 가벼운 운동이 지속하기 쉽습니다.",
+            .wellnessAdvicePBTitle: "기록 경신",
+            .wellnessAdvicePBEvidence: "이번 기간 1회 최장 거리 %@km로 지난 기간을 넘어섰습니다",
+            .wellnessAdvicePBBody: "거리 기록 경신은 기초가 탄탄해지고 있다는 증거입니다.",
+            .wellnessAdviceDaylightTitle: "낮 시간 햇빛 부족",
+            .wellnessAdviceDaylightEvidence: "최근 일평균 야외 햇빛 약 %d분",
+            .wellnessAdviceDaylightBody: "낮의 자연광은 생체 시계를 맞추는 가장 효과적인 신호입니다. 오전에 15분 나가는 것이 밤에 억지로 일찍 자는 것보다 효과적입니다.",
+            .wellnessAdviceMidpointLateTitle: "취침이 전반적으로 늦어짐",
+            .wellnessAdviceMidpointLateEvidence: "최근 수면 중간점이 평소보다 약 %d분 늦음",
+            .wellnessAdviceMidpointLateBody: "늦어짐은 모르는 사이에 진행됩니다. 오늘 밤 20분만 앞당기는 것이 주말 몰아자기보다 효과적입니다.",
+            .wellnessAdviceDeepSleepTitle: "깊은 수면 비율이 낮음",
+            .wellnessAdviceDeepSleepEvidence: "최근 깊은 수면이 전체의 약 %d%%",
+            .wellnessAdviceDeepSleepBody: "기기의 깊은 수면은 추정치로 참고용입니다. 취침 1시간 전 카페인과 강한 빛을 피하는 것이 가장 직접적입니다.",
+            .wellnessAdviceRHRImprovedTitle: "심폐 능력 향상 중",
+            .wellnessAdviceRHRImprovedEvidence: "안정 시 심박수가 평소보다 약 %d bpm 낮음(현재 약 %d bpm)",
+            .wellnessAdviceRHRImprovedBody: "안정 시 심박수 하락은 유산소 능력 향상의 가장 확실한 신호 중 하나입니다. 최근 훈련이 효과를 내고 있습니다.",
+            .wellnessAdviceStepsUpTitle: "일상 활동량 증가",
+            .wellnessAdviceStepsUpEvidence: "이번 기간 일평균 걸음이 지난 기간보다 약 %d%% 증가",
+            .wellnessAdviceStepsUpBody: "일상 걷기의 증가는 의도적인 훈련보다 지속하기 쉽습니다. 좋은 흐름입니다.",
+            .wellnessAdviceStepsDownTitle: "일상 활동량 감소",
+            .wellnessAdviceStepsDownEvidence: "이번 기간 일평균 걸음이 지난 기간보다 약 %d%% 감소",
+            .wellnessAdviceStepsDownBody: "운동 외의 일상 활동도 똑같이 중요합니다. 출퇴근이나 오후 산책이 가장 되찾기 쉬운 부분입니다.",
+            .wellnessAdviceHabitDayTitle: "당신의 운동일은 %@",
+            .wellnessAdviceHabitDayEvidence: "운동일 %d회가 %@에 집중",
+            .wellnessAdviceHabitDayBody: "고정된 운동일은 가장 저평가된 꾸준함의 기술입니다. \u{201C}할까 말까\u{201D}를 \u{201C}시간 되면 한다\u{201D}로 바꿔 줍니다.",
+            .wellnessAdviceStepsConsistentTitle: "걸음 수가 안정적",
+            .wellnessAdviceStepsConsistentEvidence: "최근 %2$d일 중 %1$d일이 평소 수준 이상",
+            .wellnessAdviceStepsConsistentBody: "안정은 폭발력보다 얻기 어렵습니다. 일상 활동의 기반이 탄탄합니다.",
+            .wellnessAdviceHRVHighTitle: "회복 상태 양호",
+            .wellnessAdviceHRVHighEvidence: "심박 변이도가 평소보다 약 %d%% 높음",
+            .wellnessAdviceHRVHighBody: "몸이 잘 회복되고 있습니다. 고강도 세션을 계획 중이라면 지금이 좋은 타이밍입니다.",
+            .wellnessAdviceWorkoutGapTitle: "간격이 길어지는 중",
+            .wellnessAdviceWorkoutGapEvidence: "%d일 연속 운동 기록 없음",
+            .wellnessAdviceWorkoutGapBody: "평소 운동 습관이 있는 분에게 간격이 길어지면 재시작이 어려워집니다. 오늘은 가벼운 한 번이면 충분합니다.",
+            .wellnessAdviceStreakTitle: "연속으로 움직이는 중",
+            .wellnessAdviceStreakEvidence: "%d일 연속 운동 기록",
+            .wellnessAdviceStreakBody: "좋은 흐름입니다. 회복일도 잊지 마세요—연속 후의 가벼운 날도 훈련의 일부입니다.",
+            .wellnessAdviceRHRTrendGoodTitle: "안정 시 심박수 하락 추세",
+            .wellnessAdviceRHRTrendGoodEvidence: "이번 기간이 지난 기간보다 약 %d bpm 낮음(현재 약 %d bpm)",
+            .wellnessAdviceRHRTrendGoodBody: "장기적인 하락은 유산소 기반이 두터워지고 있다는 신호입니다. 이 추세를 유지하세요.",
+            .wellnessAdviceRHRTrendBadTitle: "안정 시 심박수 상승 추세",
+            .wellnessAdviceRHRTrendBadEvidence: "이번 기간이 지난 기간보다 약 %d bpm 높음(현재 약 %d bpm)",
+            .wellnessAdviceRHRTrendBadBody: "장기적인 상승은 스트레스·수면·회복 부족과 관련될 수 있습니다. 참고용이며, 불편함이 동반되면 전문가와 상담하세요.",
+            .wellnessAdviceCarbTitle: "장시간 운동 후엔 탄수화물 먼저",
+            .wellnessAdviceCarbEvidence: "이번 기간 60분 이상 운동 %d회, 최장 약 %d분",
+            .wellnessAdviceCarbBody: "60분이 넘는 운동은 글리코겐을 크게 소모합니다. 종료 후 1~2시간 이내에 주식류 탄수화물(밥·면·오트밀·과일)을 먹으면 회복 효율이 높아집니다.",
+            .wellnessAdviceProteinTitle: "단백질을 저녁에만 몰아 먹지 않기",
+            .wellnessAdviceProteinEvidence: "이번 기간 운동 합계 약 %d분",
+            .wellnessAdviceProteinBody: "운동 후 20~30g의 단백질(손바닥 크기 육류, 계란 2개, 그릭요거트 1컵 정도)이면 충분합니다. 세 끼에 나누는 편이 더 효과적입니다.",
+            .wellnessAdviceHydrationTitle: "수분은 조금씩 자주",
+            .wellnessAdviceHydrationEvidence: "이번 기간 일일 최대 활동 소모 약 %d kcal",
+            .wellnessAdviceHydrationEvidenceLong: "이번 기간 90분 이상 장시간 운동 있음",
+            .wellnessAdviceHydrationBody: "땀을 많이 흘린 뒤 물만 한 번에 많이 마시면 전해질이 희석됩니다. 소량씩 자주, 1시간 이상 운동에는 나트륨이 포함된 음료나 음식을 곁들이세요.",
+            .wellnessAdviceLateMealTitle: "잠이 부족하면 식욕이 늘기 쉽습니다",
+            .wellnessAdviceLateMealEvidence: "이번 기간 평균 수면 약 %@시간",
+            .wellnessAdviceLateMealBody: "수면 부족은 공복감을 높이고 포만감을 약하게 만듭니다. 특히 밤에 두드러집니다. 취침 2시간 전까지 식사를 마치는 편이 참는 것보다 수월합니다.",
+            .wellnessAdviceLightWeekTitle: "운동이 적은 시기엔 평소대로",
+            .wellnessAdviceLightWeekEvidence: "이번 기간 운동량이 적은 편",
+            .wellnessAdviceLightWeekBody: "훈련량이 적은 시기에는 추가 보충식이 필요 없습니다. 단백질과 채소의 기본량만 유지하고, 훈련량이 돌아오면 조정하세요.",
+            .wellnessAdviceSleepRoutineTitle: "수면 리듬 양호",
+            .wellnessAdviceSleepRoutineEvidence: "이번 기간 평균 수면 약 %@시간",
+            .wellnessAdviceSleepRoutineBody: "눈에 띄는 문제는 없습니다. 일정한 취침 시각을 유지하는 것이 가끔의 긴 수면보다 가치 있습니다.",
+            .wellnessAdviceMixTitle: "강도에 변화를 줘 보세요",
+            .wellnessAdviceMixEvidence: "이번 기간 운동 합계 약 %d분",
+            .wellnessAdviceMixBody: "대부분은 편안한 유산소로, 일부만 고강도로—지구력 향상에서 반복 검증된 구성입니다. 전부 중강도가 가장 효율이 낮습니다.",
+            .wellnessAdviceRestDayTitle: "회복일도 계획에 넣기",
+            .wellnessAdviceRestDayEvidence: "회복도 훈련의 일부입니다",
+            .wellnessAdviceRestDayBody: "몸은 쉬는 동안 강해집니다. 주 1~2일 저강도나 완전 휴식을 두면 장기적인 발전이 안정적입니다.",
+            .wellnessAdviceCarbNowTitle: "이번 1~2일은 글리코겐 회복부터",
+            .wellnessAdviceCarbNowEvidence: "최근 장시간 운동 약 %d분",
+            .wellnessAdviceCarbNowBody: "장시간 운동 후 24시간은 단백질보다 탄수화물 보충이 더 중요합니다. 다음 식사에서 주식을 충분히 먹는 편이 닭가슴살을 추가하는 것보다 효과적입니다.",
+            .wellnessAdviceProteinNowTitle: "다음 두 끼에 단백질을",
+            .wellnessAdviceProteinNowEvidence: "최근 3일 운동 합계 약 %d분",
+            .wellnessAdviceProteinNowBody: "운동 직후 1~2일은 근육 회복이 가장 활발합니다. 매 끼니에 한 가지(계란·콩류·생선 등)를 더하는 편이 한 끼에 몰아 먹는 것보다 효과적입니다.",
+            .wellnessAdviceFuelGrowthTitle: "운동량이 늘었으니 식사도",
+            .wellnessAdviceFuelGrowthEvidence: "주당 약 %d분에 해당하며 지난 기간보다 크게 증가",
+            .wellnessAdviceFuelGrowthBody: "운동량이 한 단계 오를 때 흔한 문제는 과식이 아니라 부족한 섭취이며, 훈련할수록 힘이 없는 형태로 나타납니다. 주식과 단백질을 함께 늘리세요.",
+            .wellnessAdviceNutritionBaseTitle: "이 운동량에 맞는 식사의 기초",
+            .wellnessAdviceNutritionBaseEvidence: "주당 약 %d분에 해당",
+            .wellnessAdviceNutritionBaseBody: "이 수준을 유지한다면 매일의 주식·단백질·채소의 안정이 어떤 보충제보다 중요합니다. 장기 컨디션을 결정하는 것은 기본 식사의 일관성입니다.",
+            .wellnessAdviceNutritionBaseYearBody: "1년 내내 이 수준을 유지할 수 있는 건 벼락치기가 아니라 지속 가능한 일상 식사 덕분입니다. 안정된 세 끼 구성이 최고의 장기 전략입니다.",
+            .wellnessAdviceMilestoneTitle: "이 기간의 마일스톤",
+            .wellnessAdviceMilestoneEvidence: "누적 %@km, 운동 %d회",
+            .wellnessAdviceMilestoneBody: "이 누적은 한 번 한 번이 쌓인 결과입니다. 돌아보면 계속하는 것 자체가 가장 어려운 부분이었습니다.",
+            .wellnessAdviceMilestoneYearBody: "1년 누적은 놀랍지만, 그 내용은 평범하게 나선 한 번 한 번입니다. 그것이 장기적 축적의 모습입니다.",
+            .wellnessAdviceSeasonalTitle: "운동량에 계절성이 있습니다",
+            .wellnessAdviceSeasonalEvidence: "%@에 가장 활발하고 %@에 가장 적음",
+            .wellnessAdviceSeasonalBody: "계절 변동은 자연스럽습니다. 비수기 대안—실내·짧은 시간·다른 종목—을 준비해 두면 기초를 크게 잃지 않습니다.",
+            .wellnessAdviceTonightTitle: "오늘 밤은 일찍 자기",
+            .wellnessAdviceTonightEvidence: "어젯밤 수면 약 %@시간, 평소는 %@시간",
+            .wellnessAdviceTonightBody: "오늘 밤은 %@ 전에 잠자리에 드세요. 평소보다 약 %d분 이릅니다. 부족분은 당일에 채우는 것이 가장 효과적이며, 주말로 미루면 효과가 떨어집니다.",
+            .wellnessTipSleep1: "취침 시각보다 기상 시각을 고정하는 편이 실천하기 쉽고 생체 시계도 안정됩니다.",
+            .wellnessTipSleep2: "취침 1시간 전 조명을 낮추는 것이 양을 세는 것보다 훨씬 효과적입니다. 빛은 가장 강한 각성 신호입니다.",
+            .wellnessTipSleep3: "카페인의 반감기는 약 5시간. 오후 3시 이후의 한 잔이 깊은 수면을 줄이는 원인이 되곤 합니다.",
+            .wellnessTipSleep4: "자기 전 온욕 후 체온이 내려가는 과정 자체가 잠드는 신호가 됩니다.",
+            .wellnessTipSleep5: "누운 지 20분이 지나도 잠들지 않으면, 일어나 조용한 일을 하다 돌아오는 편이 더 낫습니다.",
+            .wellnessTipActivity1: "전날 밤 운동복을 현관에 두는 것은 시작 문턱을 낮추는 가장 검증된 방법입니다.",
+            .wellnessTipActivity2: "시간을 줄일지언정 건너뛰지 마세요. 10분의 운동도 습관에는 0보다 훨씬 가치 있습니다.",
+            .wellnessTipActivity3: "코스나 종목을 바꾸는 편이 억지로 양을 늘리는 것보다 흥미를 오래 유지시킵니다.",
+            .wellnessTipActivity4: "워밍업은 복잡할 필요 없습니다. 처음 5분을 천천히 움직이는 것 자체가 최고의 준비입니다.",
+            .wellnessTipActivity5: "주 1회 누군가와 함께 운동하면 지속률이 눈에 띄게 올라갑니다.",
+            .wellnessTipNutrition1: "운동 후에는 수분부터. 탈수 상태에서는 식욕 신호가 정확하지 않은 경우가 많습니다.",
+            .wellnessTipNutrition2: "과일을 눈에 보이는 곳에 두는 것은 가장 비용이 낮은 식습관 조정입니다.",
+            .wellnessTipNutrition3: "훈련일과 휴식일의 식사량이 다른 건 자연스럽습니다. 매일 똑같을 필요는 없습니다.",
+            .wellnessTipNutrition4: "가공도가 낮은 탄수화물일수록 포만감과 혈당 변동이 대체로 더 완만합니다.",
+            .wellnessTipNutrition5: "저녁을 늦게 먹으면 깊은 수면 시간을 잠식합니다. 취침 2시간 전이 좋은 기준입니다.",
+            .wellnessTipRecovery1: "회복은 누워 있는 것만이 아닙니다. 산책이나 스트레칭 같은 저강도 활동이 더 빠른 회복을 돕기도 합니다.",
+            .wellnessTipRecovery2: "2주간 이어지는 컨디션 저하는 훈련 외 요인(업무·수면·기분)이 작용하는 경우가 많습니다.",
+            .wellnessTipRecovery3: "안정 시 심박수와 심박 변이도는 음주나 컨디션에 크게 좌우됩니다. 하루가 아닌 추세로 보세요.",
+            .wellnessTipRecovery4: "다리가 무거울 때는 빈도를 유지하고 강도만 낮추는 편이 완전히 쉬는 것보다 회복이 빠릅니다.",
+            .wellnessTipPositive1: "발전은 대개 직선이 아닙니다. 정체기도 강해지는 과정의 일부입니다.",
+            .wellnessTipPositive2: "이 상태를 기록해 두면 다음 슬럼프 때 돌아보는 데 큰 도움이 됩니다.",
+            .wellnessTipPositive3: "컨디션이 좋을 때일수록 과하게 늘리기 쉽습니다. 다음 주에 여유를 남겨 두세요.",
+            .wellnessTipPositive4: "오래 지속되는 운동은 가장 효율적인 운동이 아니라, 당신이 싫어하지 않는 운동입니다.",
+            .wellnessSummaryRisk: "이번 주 주의가 필요한 신호가 있습니다. 맨 위 항목을 먼저 확인하세요.",
+            .wellnessSummaryAttention: "전반적으로 좋습니다. 몇 가지 조정할 점이 있습니다.",
+            .wellnessSummaryGood: "좋은 상태입니다. 지금처럼 유지하세요.",
+            .wellnessSummaryCold: "데이터를 수집 중입니다. 먼저 이번 주 기록을 확인하세요.",
+            .wellnessFactSleepFormat: "수면: 최근 7일 평균 %@시간 (기록 %d일)",
+            .wellnessFactStepsFormat: "걸음 수: 일평균 %@보",
+            .wellnessFactWorkoutsFormat: "운동: %d회 · 총 %@km · %d분",
+            .wellnessFactExerciseFormat: "운동 시간: 이번 주 합계 %d분",
+            .wellnessCoverageNoteFormat: "기록이 없는 날이 있습니다(수면 %d/%d일, 걸음 %d/%d일). 미기록은 0으로 계산하지 않습니다.",
+            .wellnessDisclaimer: "위 내용은 개인 데이터 기반의 생활 참고 정보이며 기기 내에서 생성됩니다. 의료 조언이 아닙니다.",
+            .wellnessAuthPromptTitle: "내 운동을 더 알아볼까요",
+            .wellnessAuthPromptBody: "괜찮으시다면 건강 데이터 읽기를 허용해 주세요. 수면·걸음·운동을 바탕으로 나만의 요약과 제안을 이 기기 안에서 만들어 드립니다. 모든 분석은 기기에서만 이뤄지며 업로드하거나 공유하지 않습니다. 설정은 언제든 바꿀 수 있습니다.",
+            .wellnessAuthButton: "네, 해볼게요",
+            .wellnessLoading: "이번 주 가이드를 생성하는 중…",
+            .wellnessEmptyBody: "데이터를 수집 중입니다. 며칠 기록하면 나만의 요약이 표시됩니다.",
+            .wellnessAdviceSleepDebtTitle: "수면 부채 갚기",
+            .wellnessAdviceSleepDebtEvidence: "최근 7일간 평소보다 총 약 %@시간 수면 부족",
+            .wellnessAdviceSleepDebtBody: "앞으로 3일은 약 %d분 일찍 잠자리에 드세요. 오늘 밤은 %@ 전에 쉬는 것을 권합니다.",
+            .wellnessAdviceSleepIrregularTitle: "취침 리듬이 불규칙",
+            .wellnessAdviceSleepIrregularEvidence: "최근 7일 취침 시각 변동 약 ±%d분",
+            .wellnessAdviceSleepIrregularBody: "시간을 보충하기보다 취침 시각을 고정하는 것이 효과적입니다. %@–%@ 사이 취침을 시도해 보세요.",
+            .wellnessAdviceSleepShortTitle: "수면이 계속 부족",
+            .wellnessAdviceSleepShortEvidence: "최근 7일 평균 %@시간으로 평소 %@시간보다 부족",
+            .wellnessAdviceSleepShortBody: "부족이 이어지면 회복이 느려지고 컨디션에 영향을 줍니다. 이번 주 가장 쉬운 하루부터 되찾으세요.",
+            .wellnessAdviceWeekendJetlagTitle: "주말 몰아자기 경향",
+            .wellnessAdviceWeekendJetlagEvidence: "주말에 평일보다 평균 약 %@시간 더 수면",
+            .wellnessAdviceWeekendJetlagBody: "몰아자기는 평일 수면 부족의 신호입니다. 평일 취침을 15–30분씩 앞당겨 보세요.",
+            .wellnessAdviceSleepStableTitle: "수면 상태 안정",
+            .wellnessAdviceSleepStableEvidence: "최근 7일 평균 %@시간, 리듬도 규칙적",
+            .wellnessAdviceSleepStableBody: "시간과 리듬 모두 평소 범위입니다. 지금 페이스를 유지하세요.",
+            .wellnessAdviceLoadSpikeTitle: "이번 주 운동량 증가가 빠름",
+            .wellnessAdviceLoadSpikeEvidence: "최근 7일 운동 부하가 월 평균의 약 %@배",
+            .wellnessAdviceLoadSpikeBody: "단기간 급격한 증량은 부상 위험과 관련됩니다. 다음 주는 평소 수준으로 줄이고 저강도를 우선하세요.",
+            .wellnessAdviceLoadDropTitle: "운동량이 크게 감소",
+            .wellnessAdviceLoadDropEvidence: "이번 주 부하가 평소의 60% 미만",
+            .wellnessAdviceLoadDropBody: "한 번에 되돌릴 필요는 없습니다. 주 2회, 회당 약 %d분부터 리듬을 되찾으세요.",
+            .wellnessAdviceSedentaryTitle: "활동량이 연속 저조",
+            .wellnessAdviceSedentaryEvidence: "%d일 연속 걸음 수가 %@보 미만",
+            .wellnessAdviceSedentaryBody: "오늘은 %@보를 목표로 하세요. 본인의 평소 수준에 맞춘 목표입니다.",
+            .wellnessAdviceRecoveryTitle: "회복 신호가 약함",
+            .wellnessAdviceRecoveryEvidence: "안정 시 심박수가 %d일 연속 평소보다 약 %d bpm 높음%@",
+            .wellnessAdviceRecoveryBody: "오늘과 내일은 저강도 운동이나 휴식을 권합니다. 참고용이며, 불편함이 동반되면 전문가와 상담하세요.",
+            .wellnessAdviceRecoveryHRVSuffix: ", 심박 변이도도 함께 하락",
+            .wellnessAdviceActiveWeekTitle: "이번 주 활동 목표 달성",
+            .wellnessAdviceActiveWeekEvidence: "이번 주 운동 합계 %d분",
+            .wellnessAdviceActiveWeekBody: "WHO 권장 주 150분에 도달했습니다. 스스로를 칭찬해 주세요.",
             .routeCollection: "경로 가져오기",
             .routeCollectionMenuTitle: "경로",
             .routeCollectionEmptyMessage: "아직 가져온 경로가 없습니다",
@@ -1292,6 +2103,7 @@ enum AppLocalization {
             .privacyPolicy: "Privacy",
             .proCodeRedemption: "Redeem Code",
             .proFeatureHeatmap: "View route heatmaps",
+            .proFeatureWellnessRecap: "Guidance built from your own activity data",
             .proFeatureICloudRouteSync: "Sync imported routes with iCloud",
             .proFeatureMultiLivePhotoExport: "Share multiple animated routes",
             .proFeatureMoreComing: "More features soon",
@@ -1323,6 +2135,207 @@ enum AppLocalization {
             .routeSlopeColorHint: "Greener sections are gentler; redder sections are steeper",
             .routeStyle3DFollowColor: "Match Color",
             .routeStyle3DSlopeColor: "Slope Colors",
+            .wellnessRecapSheetTitle: "Guidance",
+            .wellnessHeaderTip: "👆 Tap here for guidance built from your activity",
+            .wellnessRangeThreeDays: "3 Days",
+            .wellnessRangeWeek: "Week",
+            .wellnessRangeMonth: "Month",
+            .wellnessRangeHalfYear: "6 Months",
+            .wellnessRangeYear: "Year",
+            .wellnessSectionFacts: "Overview",
+            .wellnessSectionTrends: "Trends",
+            .wellnessSectionAdvice: "Advice",
+            .wellnessChartSleep: "Sleep (hours)",
+            .wellnessChartSteps: "Daily Steps",
+            .wellnessChartLoad: "Training Load",
+            .wellnessTableHeaderMetric: "Metric",
+            .wellnessTableHeaderCurrent: "Current",
+            .wellnessTableHeaderReference: "Ref.",
+            .wellnessTableHeaderChange: "Change",
+            .wellnessMetricSleep: "Sleep",
+            .wellnessMetricSteps: "Avg Steps",
+            .wellnessMetricExercise: "Exercise Min",
+            .wellnessMetricWorkouts: "Workouts",
+            .wellnessMetricDistance: "Distance",
+            .wellnessMetricRHR: "Resting HR",
+            .wellnessMetricHRV: "HRV",
+            .wellnessAdviceSleepTrendUpTitle: "Sleep Is Improving",
+            .wellnessAdviceSleepTrendUpEvidence: "About %@h more sleep on average than last period",
+            .wellnessAdviceSleepTrendUpBody: "Whether by design or by rhythm, this is the right direction. Keep it going.",
+            .wellnessAdviceSleepTrendDownTitle: "Sleep Is Slipping",
+            .wellnessAdviceSleepTrendDownEvidence: "About %@h less sleep on average than last period",
+            .wellnessAdviceSleepTrendDownBody: "A slide lasting weeks matters more than any single night. Think about what changed in your routine.",
+            .wellnessAdviceVolumeUpTitle: "Training Volume Is Up",
+            .wellnessAdviceVolumeUpEvidence: "About %d%% more exercise than last period",
+            .wellnessAdviceVolumeUpBody: "Build gradually as volume rises, and keep enough recovery days.",
+            .wellnessAdviceVolumeDownTitle: "Training Volume Is Down",
+            .wellnessAdviceVolumeDownEvidence: "About %d%% less exercise than last period",
+            .wellnessAdviceVolumeDownBody: "The dip itself isn't a problem — just don't let the gap stretch. Start with one easy session.",
+            .wellnessAdviceConsistencyGoodTitle: "Remarkably Consistent",
+            .wellnessAdviceConsistencyGoodEvidence: "Workouts recorded in %d of %d weeks",
+            .wellnessAdviceConsistencyGoodBody: "Consistency drives long-term gains more than any single hard session. Keep the streak alive.",
+            .wellnessAdviceConsistencyLowTitle: "Room for More Consistency",
+            .wellnessAdviceConsistencyLowEvidence: "Workouts recorded in only %d of %d weeks",
+            .wellnessAdviceConsistencyLowBody: "A small session at a fixed weekly time beats occasional big efforts for staying power.",
+            .wellnessAdvicePBTitle: "New Record",
+            .wellnessAdvicePBEvidence: "Longest single distance this period: %@ km, beating last period",
+            .wellnessAdvicePBBody: "A new distance record means the base is getting stronger.",
+            .wellnessAdviceDaylightTitle: "Low on Daylight",
+            .wellnessAdviceDaylightEvidence: "About %d minutes of outdoor daylight per day recently",
+            .wellnessAdviceDaylightBody: "Daylight is the strongest signal for your body clock. Fifteen minutes outside in the morning beats forcing an early bedtime.",
+            .wellnessAdviceMidpointLateTitle: "Sleep Is Drifting Later",
+            .wellnessAdviceMidpointLateEvidence: "Sleep midpoint about %d minutes later than your norm",
+            .wellnessAdviceMidpointLateBody: "The drift happens without noticing. Pulling bedtime back 20 minutes tonight works better than weekend catch-up.",
+            .wellnessAdviceDeepSleepTitle: "Deep Sleep Share Is Low",
+            .wellnessAdviceDeepSleepEvidence: "Deep sleep at about %d%% of total recently",
+            .wellnessAdviceDeepSleepBody: "Device deep-sleep numbers are estimates. Skipping caffeine and bright screens in the last hour before bed is the most direct lever.",
+            .wellnessAdviceRHRImprovedTitle: "Your Engine Is Getting Stronger",
+            .wellnessAdviceRHRImprovedEvidence: "Resting heart rate about %d bpm below your norm (now ~%d bpm)",
+            .wellnessAdviceRHRImprovedBody: "A falling resting heart rate is one of the most reliable signs of improving aerobic fitness. The training is working.",
+            .wellnessAdviceStepsUpTitle: "Everyday Activity Is Up",
+            .wellnessAdviceStepsUpEvidence: "Daily steps about %d%% higher than last period",
+            .wellnessAdviceStepsUpBody: "Gains in everyday walking tend to stick better than planned workouts. Good momentum.",
+            .wellnessAdviceStepsDownTitle: "Everyday Activity Is Down",
+            .wellnessAdviceStepsDownEvidence: "Daily steps about %d%% lower than last period",
+            .wellnessAdviceStepsDownBody: "Movement outside workouts matters just as much. A walk on the commute or after lunch is the easiest piece to win back.",
+            .wellnessAdviceHabitDayTitle: "%@ Is Your Training Day",
+            .wellnessAdviceHabitDayEvidence: "%d training days landed on %@",
+            .wellnessAdviceHabitDayBody: "A fixed training day is the most underrated consistency trick — it turns \u{201C}should I?\u{201D} into \u{201C}it's time.\u{201D}",
+            .wellnessAdviceStepsConsistentTitle: "Steps Are Rock Steady",
+            .wellnessAdviceStepsConsistentEvidence: "%1$d of the last %2$d days at or above your norm",
+            .wellnessAdviceStepsConsistentBody: "Consistency is rarer than peaks. Your everyday activity base is solid.",
+            .wellnessAdviceHRVHighTitle: "Recovery Is Dialed In",
+            .wellnessAdviceHRVHighEvidence: "HRV about %d%% above your norm",
+            .wellnessAdviceHRVHighBody: "Your body is recovering well. If a hard session is on the plan, now is a good window for it.",
+            .wellnessAdviceWorkoutGapTitle: "The Gap Is Stretching",
+            .wellnessAdviceWorkoutGapEvidence: "%d days in a row without a workout",
+            .wellnessAdviceWorkoutGapBody: "For someone who trains regularly, long gaps make restarting harder. One easy session today is enough.",
+            .wellnessAdviceStreakTitle: "On a Streak",
+            .wellnessAdviceStreakEvidence: "%d consecutive days with workouts",
+            .wellnessAdviceStreakBody: "Great momentum. Just remember recovery days — the easy day after a streak is part of the training too.",
+            .wellnessAdviceRHRTrendGoodTitle: "Resting HR Trending Down",
+            .wellnessAdviceRHRTrendGoodEvidence: "About %d bpm lower than last period (now ~%d bpm)",
+            .wellnessAdviceRHRTrendGoodBody: "A long-term drop in resting heart rate usually means your aerobic base is deepening. Worth keeping up.",
+            .wellnessAdviceRHRTrendBadTitle: "Resting HR Trending Up",
+            .wellnessAdviceRHRTrendBadEvidence: "About %d bpm higher than last period (now ~%d bpm)",
+            .wellnessAdviceRHRTrendBadBody: "A sustained rise can relate to stress, sleep or under-recovery. For reference only — consult a professional if you feel unwell.",
+            .wellnessAdviceCarbTitle: "Carbs First After Long Sessions",
+            .wellnessAdviceCarbEvidence: "%d sessions over 60 minutes this period, longest about %d min",
+            .wellnessAdviceCarbBody: "Sessions past an hour drain glycogen. Eating starchy carbs — rice, pasta, oats or fruit — within one to two hours afterwards restores it fastest.",
+            .wellnessAdviceProteinTitle: "Spread Protein Across the Day",
+            .wellnessAdviceProteinEvidence: "About %d minutes of training this period",
+            .wellnessAdviceProteinBody: "Twenty to thirty grams after a session is enough — a palm of meat, two eggs, or a cup of Greek yoghurt. Spreading it across meals beats loading it all at dinner.",
+            .wellnessAdviceHydrationTitle: "Sip Often, Don't Chug",
+            .wellnessAdviceHydrationEvidence: "Peak daily active burn of about %d kcal this period",
+            .wellnessAdviceHydrationEvidenceLong: "Sessions over 90 minutes this period",
+            .wellnessAdviceHydrationBody: "Downing plain water after heavy sweating dilutes electrolytes. Drink small amounts often, and add sodium — a sports drink or salted food — for anything over an hour.",
+            .wellnessAdviceLateMealTitle: "Short Sleep Drives Appetite",
+            .wellnessAdviceLateMealEvidence: "Averaging about %@h of sleep this period",
+            .wellnessAdviceLateMealBody: "Too little sleep raises hunger signals and dulls fullness, most noticeably at night. Finishing meals two hours before bed takes less willpower than resisting later.",
+            .wellnessAdviceLightWeekTitle: "Lighter Training, Normal Eating",
+            .wellnessAdviceLightWeekEvidence: "Lower training volume this period",
+            .wellnessAdviceLightWeekBody: "Low-volume stretches don't call for extra fuelling. Hold your baseline protein and vegetables, and adjust again when volume returns.",
+            .wellnessAdviceSleepRoutineTitle: "Sleep Rhythm Is Holding",
+            .wellnessAdviceSleepRoutineEvidence: "Averaging about %@h of sleep this period",
+            .wellnessAdviceSleepRoutineBody: "Nothing unusual here. Keeping a steady bedtime is worth more than the occasional long night.",
+            .wellnessAdviceMixTitle: "Vary Your Intensities",
+            .wellnessAdviceMixEvidence: "About %d minutes of training this period",
+            .wellnessAdviceMixBody: "Mostly easy aerobic work with a small share of hard efforts is the structure endurance research keeps validating. Living in the middle zone returns the least.",
+            .wellnessAdviceRestDayTitle: "Schedule the Recovery Days",
+            .wellnessAdviceRestDayEvidence: "Recovery is part of the training",
+            .wellnessAdviceRestDayBody: "You get stronger while resting, not while training. One or two easy or full-rest days a week keeps long-term progress steadier.",
+            .wellnessAdviceCarbNowTitle: "Refill Glycogen Over the Next Day",
+            .wellnessAdviceCarbNowEvidence: "Most recent long session about %d minutes",
+            .wellnessAdviceCarbNowBody: "In the 24 hours after a long session, carbs matter more than protein. A proper portion of starch at your next meal does more than adding another chicken breast.",
+            .wellnessAdviceProteinNowTitle: "Protein in Your Next Two Meals",
+            .wellnessAdviceProteinNowEvidence: "About %d minutes of training in the last three days",
+            .wellnessAdviceProteinNowBody: "Muscle repair runs hottest in the day or two after training. One protein source per meal — eggs, tofu, fish — beats loading it all into one sitting.",
+            .wellnessAdviceFuelGrowthTitle: "Volume Is Up — Fuelling Should Be Too",
+            .wellnessAdviceFuelGrowthEvidence: "Roughly %d minutes per week, well above last period",
+            .wellnessAdviceFuelGrowthBody: "When volume steps up, the usual mistake is eating too little, not too much — it shows up as feeling flat the more you train. Raise both carbs and protein to match.",
+            .wellnessAdviceNutritionBaseTitle: "The Diet Base for This Volume",
+            .wellnessAdviceNutritionBaseEvidence: "Roughly %d minutes per week",
+            .wellnessAdviceNutritionBaseBody: "At this volume, steady starch, protein and vegetables across your regular meals matter more than any supplement. Consistency in the basics decides long-term form.",
+            .wellnessAdviceNutritionBaseYearBody: "Holding this volume for a full year runs on sustainable everyday eating, not last-minute fixes. A steady three-meal structure is the best long-term plan there is.",
+            .wellnessAdviceMilestoneTitle: "Milestone for This Stretch",
+            .wellnessAdviceMilestoneEvidence: "%@ km across %d sessions",
+            .wellnessAdviceMilestoneBody: "That total was built one session at a time. Looking back, showing up repeatedly was the hard part.",
+            .wellnessAdviceMilestoneYearBody: "A year's total looks striking, but it's made entirely of ordinary days you went out anyway. That's what the long game looks like.",
+            .wellnessAdviceSeasonalTitle: "Your Training Has Seasons",
+            .wellnessAdviceSeasonalEvidence: "Busiest in %@, quietest in %@",
+            .wellnessAdviceSeasonalBody: "Seasonal swings are normal. What helps is planning the quiet months — indoors, shorter sessions, or a different sport — so the base doesn't slide too far.",
+            .wellnessAdviceTonightTitle: "Head to Bed Early Tonight",
+            .wellnessAdviceTonightEvidence: "About %@h last night against your usual %@h",
+            .wellnessAdviceTonightBody: "Aim to be in bed by %@ tonight, roughly %d minutes earlier than usual. Closing the gap the same day works best; saving it for the weekend costs you most of the benefit.",
+            .wellnessTipSleep1: "A fixed wake time is easier to hold than a fixed bedtime — and it steadies your body clock more.",
+            .wellnessTipSleep2: "Dimming the lights an hour before bed beats counting sheep. Light is the strongest wakefulness signal there is.",
+            .wellnessTipSleep3: "Caffeine has a half-life of roughly five hours, so the mid-afternoon cup is often what's eating your deep sleep.",
+            .wellnessTipSleep4: "A warm bath before bed helps because the temperature drop afterwards is itself a sleep cue.",
+            .wellnessTipSleep5: "If you're still awake after 20 minutes, getting up for something quiet and returning works better than lying there.",
+            .wellnessTipActivity1: "Laying out your kit the night before is the best-evidenced way to lower the barrier to starting.",
+            .wellnessTipActivity2: "Shorten the session rather than skip it — ten minutes is worth far more to the habit than zero.",
+            .wellnessTipActivity3: "Changing the route or the sport sustains interest better than forcing the volume up.",
+            .wellnessTipActivity4: "A warm-up needn't be elaborate. Going slowly for the first five minutes is the warm-up.",
+            .wellnessTipActivity5: "One session a week with someone else measurably improves the odds you keep going.",
+            .wellnessTipNutrition1: "Rehydrate before you eat after training — appetite signals are unreliable when you're dehydrated.",
+            .wellnessTipNutrition2: "Putting fruit where you can see it is the cheapest dietary change there is.",
+            .wellnessTipNutrition3: "Eating differently on training and rest days is normal. It doesn't have to look the same every day.",
+            .wellnessTipNutrition4: "Less-processed carbs generally bring steadier fullness and gentler blood-sugar swings.",
+            .wellnessTipNutrition5: "A late dinner eats into deep sleep. Two hours before bed is a sensible line.",
+            .wellnessTipRecovery1: "Recovery isn't only lying down — walking and stretching often restore you faster than doing nothing.",
+            .wellnessTipRecovery2: "A dip lasting two weeks usually traces back to something outside training — work, sleep or mood.",
+            .wellnessTipRecovery3: "Resting heart rate and HRV swing with alcohol and illness. Read the trend, not any single day.",
+            .wellnessTipRecovery4: "When your legs feel heavy, dropping intensity while keeping frequency gets you back faster than stopping entirely.",
+            .wellnessTipPositive1: "Progress is rarely linear. Plateaus are part of getting stronger, not a break from it.",
+            .wellnessTipPositive2: "Note this stretch down somewhere — it's worth rereading during the next low patch.",
+            .wellnessTipPositive3: "Feeling good is exactly when people overreach. Leave some room in next week's plan.",
+            .wellnessTipPositive4: "The training that lasts is usually the kind you don't dislike, not the kind that's most efficient.",
+            .wellnessSummaryRisk: "One signal needs your attention this week — see the top item first.",
+            .wellnessSummaryAttention: "Looking good overall, with a few things worth tuning.",
+            .wellnessSummaryGood: "You're in good shape. Keep it up.",
+            .wellnessSummaryCold: "Still gathering data — here are this week's facts.",
+            .wellnessFactSleepFormat: "Sleep: %@h average over the last 7 days (%d days recorded)",
+            .wellnessFactStepsFormat: "Steps: %@ per day on average",
+            .wellnessFactWorkoutsFormat: "Workouts: %d sessions · %@ km · %d min",
+            .wellnessFactExerciseFormat: "Exercise time: %d min total this week",
+            .wellnessCoverageNoteFormat: "Some days lack records (sleep %d/%d, steps %d/%d). Missing days are never counted as zero.",
+            .wellnessDisclaimer: "This is lifestyle guidance based on your own data, generated on-device. It is not medical advice.",
+            .wellnessAuthPromptTitle: "Curious About Your Own Patterns?",
+            .wellnessAuthPromptBody: "If you'd like, you can let Movinn read your Health data. It builds a summary and suggestions from your sleep, steps and workouts right here on this device — nothing is uploaded, nothing is shared, and you can change your mind any time in Settings.",
+            .wellnessAuthButton: "Sure, let's try",
+            .wellnessLoading: "Building your weekly guide…",
+            .wellnessEmptyBody: "Still gathering data. Record a few days with your device and your personal summary will appear here.",
+            .wellnessAdviceSleepDebtTitle: "Pay Back Some Sleep Debt",
+            .wellnessAdviceSleepDebtEvidence: "About %@h less sleep than your norm over the last 7 days",
+            .wellnessAdviceSleepDebtBody: "Try going to bed about %d minutes earlier for the next 3 nights — tonight, wind down before %@.",
+            .wellnessAdviceSleepIrregularTitle: "Irregular Sleep Schedule",
+            .wellnessAdviceSleepIrregularEvidence: "Bedtime varied by about ±%d minutes this week",
+            .wellnessAdviceSleepIrregularBody: "A fixed bedtime window beats catching up on hours: try falling asleep between %@ and %@.",
+            .wellnessAdviceSleepShortTitle: "Consistently Short Sleep",
+            .wellnessAdviceSleepShortEvidence: "Averaging %@h recently, below your usual %@h",
+            .wellnessAdviceSleepShortBody: "Short sleep slows recovery first, then performance. Start by reclaiming your easiest night this week.",
+            .wellnessAdviceWeekendJetlagTitle: "Weekend Catch-Up Sleep",
+            .wellnessAdviceWeekendJetlagEvidence: "About %@h more sleep on weekends than weekdays",
+            .wellnessAdviceWeekendJetlagBody: "Catching up means weekdays are running a deficit. Nudge weekday bedtime earlier by 15–30 minutes.",
+            .wellnessAdviceSleepStableTitle: "Sleep Is Steady",
+            .wellnessAdviceSleepStableEvidence: "Averaging %@h with a regular rhythm this week",
+            .wellnessAdviceSleepStableBody: "Duration and rhythm are both within your normal range. Keep the current pace.",
+            .wellnessAdviceLoadSpikeTitle: "Ramping Up Too Fast",
+            .wellnessAdviceLoadSpikeEvidence: "This week's training load is about %@× your monthly norm",
+            .wellnessAdviceLoadSpikeBody: "Rapid spikes in load are linked to injury risk. Ease back to your normal level next week and favour low intensity.",
+            .wellnessAdviceLoadDropTitle: "Training Has Dropped Off",
+            .wellnessAdviceLoadDropEvidence: "This week's load is under 60% of your norm",
+            .wellnessAdviceLoadDropBody: "No need to make it all up at once: two sessions of about %d minutes will get the rhythm back.",
+            .wellnessAdviceSedentaryTitle: "Activity Running Low",
+            .wellnessAdviceSedentaryEvidence: "Steps below %2$@ for %1$d days in a row",
+            .wellnessAdviceSedentaryBody: "Aim for %@ steps today — a target based on your own norm, not a generic 10,000.",
+            .wellnessAdviceRecoveryTitle: "Weak Recovery Signals",
+            .wellnessAdviceRecoveryEvidence: "Resting heart rate about %2$d bpm above your norm for %1$d days%3$@",
+            .wellnessAdviceRecoveryBody: "Consider low intensity or rest today and tomorrow. For reference only — consult a professional if you feel unwell.",
+            .wellnessAdviceRecoveryHRVSuffix: ", with HRV trending down too",
+            .wellnessAdviceActiveWeekTitle: "Active Week — Target Met",
+            .wellnessAdviceActiveWeekEvidence: "%d minutes of exercise this week",
+            .wellnessAdviceActiveWeekBody: "You've hit the WHO-recommended 150 minutes per week. Take the win.",
             .routeCollection: "Imported Routes",
             .routeCollectionMenuTitle: "Routes",
             .routeCollectionEmptyMessage: "No imported routes yet",

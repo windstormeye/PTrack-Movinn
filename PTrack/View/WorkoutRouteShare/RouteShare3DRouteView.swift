@@ -209,14 +209,6 @@ final class RouteShare3DRouteView: UIView {
         installDotAnimations()
     }
 
-    /// 逐帧导出时刷新静态快照(需先 setSnapshotCaptureActive(true))。
-    func refreshSnapshotForCapture() {
-        guard isSnapshotCaptureActive, sceneView.scene != nil else {
-            return
-        }
-        snapshotImageView.image = sceneView.snapshot()
-    }
-
     private func position(atArcProgress progress: Float) -> SCNVector3 {
         guard projectedPoints.count > 1, arcProgress.count == projectedPoints.count else {
             return projectedPoints.first ?? SCNVector3(0, 0, 0)
@@ -607,7 +599,7 @@ final class RouteShare3DRouteView: UIView {
         }
 
         let colors: [UIColor]? = colorMode == .slope
-            ? smoothedSlopes.map(Self.color(forSlope:))
+            ? smoothedSlopes.map { Self.color(forSlope: $0) }
             : nil
         routeTubeNode.geometry = Self.makeTubeGeometry(
             points: projectedPoints,

@@ -158,6 +158,7 @@ class ViewController: UIViewController {
     private let headerBlurView = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
     private let titleLabel = UILabel()
     private let titleAccentLabel = UILabel()
+    private weak var headerTitleTipView: HeaderTitleTipView?
     private let totalDistanceLabel = UILabel()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
     private let moreButton = UIButton(type: .system)
@@ -311,6 +312,9 @@ class ViewController: UIViewController {
         store.progressHandler = { message in
             PTrackLog.synchronization.debug("PTrack HealthKit: \(message)")
         }
+        WellnessRecapStore.shared.markFreshInsightForNewAppVersionIfNeeded()
+        WellnessRecapStore.shared.prepareIfNeeded()
+        registerWellnessRecapObserver()
         importPendingSharedRoutesIfNeeded()
         restorePersistedRouteBookModeIfNeeded()
         loadCachedWorkoutsThenSynchronize()
@@ -370,6 +374,8 @@ class ViewController: UIViewController {
         updateFullScreenInsets(force: true)
         presentRouteBookPanelSheetIfNeeded()
         openRouteCollectionIfRequested()
+        playHeaderTitleShimmerIfNeeded()
+        showHeaderTitleTipIfNeeded()
         DispatchQueue.main.async { [weak self] in
             guard let self else {
                 return
@@ -854,6 +860,16 @@ class ViewController: UIViewController {
         titleAccentLabel.textColor = AppColors.movinnGreen
         titleAccentLabel.adjustsFontForContentSizeCategory = true
 
+        // 点击 title 弹出每周指导页。
+        titleLabel.isUserInteractionEnabled = true
+        titleAccentLabel.isUserInteractionEnabled = true
+        titleLabel.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(handleHeaderTitleTap))
+        )
+        titleAccentLabel.addGestureRecognizer(
+            UITapGestureRecognizer(target: self, action: #selector(handleHeaderTitleTap))
+        )
+
         totalDistanceLabel.textColor = .secondaryLabel
         totalDistanceLabel.font = .systemFont(ofSize: 11, weight: .medium)
         totalDistanceLabel.adjustsFontForContentSizeCategory = true
@@ -1318,6 +1334,73 @@ class ViewController: UIViewController {
         }
 
         return image?.withTintColor(AppColors.movinnGreen, renderingMode: .alwaysOriginal)
+    }
+
+    private func registerWellnessRecapObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWellnessRecapHasFreshInsight),
+            name: WellnessRecapStore.hasFreshInsightNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleWellnessRecapHasFreshInsight() {
+        playHeaderTitleShimmerIfNeeded()
+    }
+
+    /// 有未查看的新分析、或用户尚未解锁高级功能时,在标题上扫光提示。
+    func playHeaderTitleShimmerIfNeeded() {
+        guard view.window != nil else {
+            return
+        }
+        let hasFreshInsight = WellnessRecapStore.shared.hasFreshInsight
+        let shouldTeasePro = !ProSubscriptionManager.shared.isProUser
+        guard hasFreshInsight || shouldTeasePro else {
+            return
+        }
+        HeaderTitleShimmer.start(on: [titleLabel, titleAccentLabel])
+    }
+
+    private func stopHeaderTitleShimmer() {
+        HeaderTitleShimmer.stop(on: [titleLabel, titleAccentLabel])
+    }
+
+    /// 新老用户各展示一次的引导气泡:告知点击标题可查看指导建议。
+    private func showHeaderTitleTipIfNeeded() {
+        guard !HeaderTitleTipView.hasShown, view.window != nil else {
+            return
+        }
+        headerTitleTipView = HeaderTitleTipView.showOnce(
+            in: view,
+            below: titleLabel,
+            message: AppLocalization.text(.wellnessHeaderTip)
+        )
+    }
+
+    @objc private func handleHeaderTitleTap() {
+        WellnessRecapStore.shared.clearFreshInsight()
+        stopHeaderTitleShimmer()
+        headerTitleTipView?.dismiss()
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await ProSubscriptionManager.shared.ensureAccessResolved()
+            guard ProSubscriptionManager.shared.isProUser else {
+                presentProPaywall { [weak self] in
+                    self?.presentWellnessRecap()
+                }
+                return
+            }
+
+            presentWellnessRecap()
+        }
+    }
+
+    private func presentWellnessRecap() {
+        WellnessRecapViewController.present(from: self)
     }
 
     @objc private func handleHeaderMoreButtonTap() {
@@ -3919,6 +4002,9 @@ class ViewController: UIViewController {
         guard !incomingWorkouts.isEmpty else {
             return
         }
+
+        // 有新运动入库,指导建议的缓存作废并后台重算。
+        WellnessRecapStore.shared.invalidateCaches()
 
         let previousItemCount = workouts.count
         let incomingWorkoutIDs = Set(incomingWorkouts.map(\.id))
