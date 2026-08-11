@@ -58,6 +58,7 @@ final class HeaderTitleTipView: UIView {
         }
 
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
+        registerColorTraitChanges()
     }
 
     required init?(coder: NSCoder) {
@@ -69,9 +70,10 @@ final class HeaderTitleTipView: UIView {
         updateBubblePath()
     }
 
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        bubbleLayer.fillColor = AppColors.solidForeground.cgColor
+    private func registerColorTraitChanges() {
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: HeaderTitleTipView, _) in
+            view.bubbleLayer.fillColor = AppColors.solidForeground.cgColor
+        }
     }
 
     private func updateBubblePath() {

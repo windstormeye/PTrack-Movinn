@@ -75,7 +75,7 @@ nonisolated enum WellnessRuleEngine {
         blocks.append(.paragraph(summary))
 
         // 指标表:本期 vs 常态/上期。
-        let tableRows = makeMetricRows(current: currentProfile, reference: referenceProfile, range: range)
+        let tableRows = makeMetricRows(current: currentProfile, reference: referenceProfile)
         if tableRows.count >= 2 {
             blocks.append(.heading(AppLocalization.text(.wellnessSectionFacts)))
             blocks.append(.metricTable(tableRows))
@@ -147,8 +147,7 @@ nonisolated enum WellnessRuleEngine {
 
     private static func makeMetricRows(
         current: PeriodProfile,
-        reference: PeriodProfile,
-        range: WellnessRecapRange
+        reference: PeriodProfile
     ) -> [RecapMetricRow] {
         var rows: [RecapMetricRow] = []
 
@@ -1397,7 +1396,9 @@ nonisolated enum WellnessRuleEngine {
             return nil
         }
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        formatter.locale = Locale(
+            identifier: AppLanguageStore.resolveLanguage(in: .standard).rawValue
+        )
         let peakName = formatter.standaloneMonthSymbols[(peak.key - 1) % 12]
         let troughName = formatter.standaloneMonthSymbols[(trough.key - 1) % 12]
         return RecapAdvice(
@@ -1425,7 +1426,9 @@ nonisolated enum WellnessRuleEngine {
             return nil
         }
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: AppLanguageStore.shared.language.rawValue)
+        formatter.locale = Locale(
+            identifier: AppLanguageStore.resolveLanguage(in: .standard).rawValue
+        )
         let weekdayName = formatter.weekdaySymbols[(topWeekday - 1) % 7]
         return RecapAdvice(
             category: .positive,

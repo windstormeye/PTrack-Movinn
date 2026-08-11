@@ -103,7 +103,7 @@ enum HeaderTitleShimmer {
         region: CGRect
     ) -> UIImage? {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
+        format.scale = container.traitCollection.displayScale
         format.opaque = false
         return UIGraphicsImageRenderer(size: region.size, format: format).image { context in
             for label in labels {

@@ -37,6 +37,9 @@ final class RecapBarChartView: UIView {
         snp.makeConstraints { make in
             make.height.equalTo(Metrics.chartHeight)
         }
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: RecapBarChartView, _) in
+            view.setNeedsDisplay()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -185,7 +188,7 @@ final class RecapMetricTableView: UIView {
             separator.backgroundColor = UIColor.separator.withAlphaComponent(0.35)
             stackView.addArrangedSubview(separator)
             separator.snp.makeConstraints { make in
-                make.height.equalTo(1.0 / UIScreen.main.scale)
+                make.height.equalTo(1.0 / traitCollection.displayScale)
             }
             let deltaColor: UIColor
             switch row.deltaDirection {

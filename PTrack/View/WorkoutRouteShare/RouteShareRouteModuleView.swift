@@ -78,10 +78,6 @@ final class RouteShareRouteModuleView: UIView {
         route3DView.setSnapshotCaptureActive(active)
     }
 
-    var isShowing3DRoute: Bool {
-        displayMode == .threeD
-    }
-
     func setModuleVisibilityPaused(_ paused: Bool) {
         guard displayMode == .threeD else {
             return

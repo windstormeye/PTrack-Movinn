@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum AppLanguage: String, CaseIterable {
+nonisolated enum AppLanguage: String, CaseIterable, Sendable {
     case chinese = "zh-Hans"
     case japanese = "ja"
     case korean = "ko"
@@ -27,7 +27,7 @@ enum AppLanguage: String, CaseIterable {
     }
 }
 
-enum AppTextKey: String {
+nonisolated enum AppTextKey: String, Sendable {
     case all
     case applyToAll
     case appleFitnessDownloadCTA
@@ -489,9 +489,9 @@ final class AppLanguageStore {
     static let shared = AppLanguageStore()
     static let languageDidChangeNotification = Notification.Name("studio.pj.PTrack.languageDidChange")
 
-    private static let fallbackLanguage: AppLanguage = .chinese
-    private static let appleLanguagesKey = "AppleLanguages"
-    private static let legacyLanguageKey = "studio.pj.PTrack.appLanguage"
+    private nonisolated static let fallbackLanguage: AppLanguage = .chinese
+    private nonisolated static let appleLanguagesKey = "AppleLanguages"
+    private nonisolated static let legacyLanguageKey = "studio.pj.PTrack.appLanguage"
 
     private let defaults: UserDefaults
     private var lastResolvedLanguage: AppLanguage
@@ -535,7 +535,7 @@ final class AppLanguageStore {
         return true
     }
 
-    private static func resolveLanguage(in defaults: UserDefaults) -> AppLanguage {
+    nonisolated static func resolveLanguage(in defaults: UserDefaults) -> AppLanguage {
         if let language = preferredSupportedLanguage(from: defaults.array(forKey: appleLanguagesKey) as? [String]) {
             return language
         }
@@ -556,11 +556,11 @@ final class AppLanguageStore {
         return fallbackLanguage
     }
 
-    private static func preferredSupportedLanguage(from identifiers: [String]?) -> AppLanguage? {
+    private nonisolated static func preferredSupportedLanguage(from identifiers: [String]?) -> AppLanguage? {
         identifiers?.compactMap { language(for: $0) }.first
     }
 
-    private static func language(for identifier: String) -> AppLanguage? {
+    private nonisolated static func language(for identifier: String) -> AppLanguage? {
         let normalizedIdentifier = Locale(identifier: identifier)
             .identifier
             .replacingOccurrences(of: "_", with: "-")
@@ -592,15 +592,18 @@ final class AppLanguageStore {
     }
 }
 
-enum AppLocalization {
-    static func text(_ key: AppTextKey, language: AppLanguage = AppLanguageStore.shared.language) -> String {
+nonisolated enum AppLocalization {
+    static func text(
+        _ key: AppTextKey,
+        language: AppLanguage = AppLanguageStore.resolveLanguage(in: .standard)
+    ) -> String {
         translations[language]?[key] ?? translations[.chinese]?[key] ?? key.rawValue
     }
 
     static func format(
         _ key: AppTextKey,
         _ arguments: CVarArg...,
-        language: AppLanguage = AppLanguageStore.shared.language
+        language: AppLanguage = AppLanguageStore.resolveLanguage(in: .standard)
     ) -> String {
         String(format: text(key, language: language), arguments: arguments)
     }

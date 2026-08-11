@@ -453,7 +453,7 @@ final class WellnessRecapViewController: UIViewController {
             separator.snp.makeConstraints { make in
                 make.top.equalToSuperview().offset(16)
                 make.leading.trailing.equalToSuperview()
-                make.height.equalTo(1.0 / UIScreen.main.scale)
+                make.height.equalTo(1.0 / view.traitCollection.displayScale)
             }
             contentView.snp.makeConstraints { make in
                 make.top.equalTo(separator.snp.bottom).offset(16)

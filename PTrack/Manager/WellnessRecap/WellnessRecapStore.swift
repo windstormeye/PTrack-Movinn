@@ -188,11 +188,6 @@ final class WellnessRecapStore {
         }
     }
 
-    /// 兼容旧调用点:等同于作废缓存并重算。
-    func regenerate() {
-        invalidateCaches()
-    }
-
     func generate(range: WellnessRecapRange, completion: ((WellnessRecapReport?) -> Void)?) {
         // 已有同范围的生成在跑:把回调排队,别直接返回可能为 nil 的缓存。
         if generatingRanges.contains(range) {
