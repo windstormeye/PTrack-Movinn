@@ -275,6 +275,11 @@ final class ProPaywallViewController: UIViewController {
             view.removeFromSuperview()
         }
         featuresStackView.addArrangedSubview(ProFeatureRowView(
+            iconName: "sparkles.rectangle.stack",
+            fallbackIconName: "text.badge.star",
+            title: AppLocalization.text(.proFeatureWellnessRecap)
+        ))
+        featuresStackView.addArrangedSubview(ProFeatureRowView(
             iconName: "map",
             title: AppLocalization.text(.proFeatureHeatmap)
         ))
